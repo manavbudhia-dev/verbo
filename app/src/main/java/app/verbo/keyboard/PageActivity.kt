@@ -217,7 +217,7 @@ class PageActivity : Activity() {
         column.addView(ui.section(R.drawable.ic_shield, "What leaves your phone"))
         column.addView(ui.rows(
             ui.row(R.drawable.ic_keyboard, "Typing", "Never sent anywhere. Suggestions and auto-correct run on the phone"),
-            ui.row(R.drawable.ic_sparkles, "Assistant actions", "Only when you trigger one: the text in the field goes to Anthropic with your API key"),
+            ui.row(R.drawable.ic_sparkles, "Assistant actions", "Only when you trigger one: the text in the field goes to Anthropic or OpenAI, whichever model you picked"),
             ui.row(R.drawable.ic_plug, "Connections", "Called directly from the phone with the tokens you saved, only during an action"),
             ui.row(R.drawable.ic_shield, "Password fields", "Never read, dictated into or sent"),
             ui.row(R.drawable.ic_cloud, "Dashboard", if (store.deviceToken.isEmpty()) "Not paired" else "Paired: settings sync from your own server"),

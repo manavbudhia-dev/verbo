@@ -17,8 +17,9 @@ An Android keyboard that acts on what you type.
   from a browser; pair the keyboard with a one-time code and it syncs.
 - **Export / import** – settings and skills as a JSON file (keys and tokens are left out).
 
-Actions use the Claude API with your own key (entered in the app, stored on the phone).
-Text is only sent when you trigger an action, and never from password fields.
+Actions run on your own API key, either Claude (Anthropic) or GPT (OpenAI); pick the model in
+the app and enter the matching key. Keys are stored on the phone. Text is only sent when you
+trigger an action, and never from password fields.
 
 ## Build
 
@@ -46,7 +47,8 @@ Tests (typing logic, plus screenshots of every screen written to `app/build/shot
 - `KeyboardView.kt` – the keys: drawing, themes and touch handling
 - `Dictionary.kt` – word list lookups for suggestions and auto-correct
 - `Ui.kt`, `PageActivity.kt` – settings look and detail screens
-- `Ai.kt` – the Claude request and result parsing
+- `Ai.kt` – the Claude request, prompts and result parsing
+- `OpenAi.kt` – the same action on OpenAI's Responses API
 - `Connections.kt` – connected apps and APIs as assistant tools
 - `Sync.kt` – pairing and syncing with the dashboard
 - `Store.kt` – settings and skills

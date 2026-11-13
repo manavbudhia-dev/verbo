@@ -30,6 +30,16 @@ class Store(context: Context) {
     var model: String get() = str("model", Ai.DEFAULT_MODEL); set(v) = put("model", v)
     var webSearch: Boolean get() = bool("web_search", true); set(v) = put("web_search", v)
 
+    /** "anthropic" or "openai": which service runs actions. */
+    var provider: String get() = str("provider", "anthropic"); set(v) = put("provider", v)
+    var openaiKey: String get() = str("openai_key"); set(v) = put("openai_key", v.trim())
+    var openaiModel: String get() = str("openai_model", Ai.DEFAULT_OPENAI_MODEL); set(v) = put("openai_model", v.trim())
+    val isOpenAi get() = provider == "openai"
+    /** The key and model of whichever provider is selected. */
+    val activeKey get() = if (isOpenAi) openaiKey else apiKey
+    val activeModel get() = if (isOpenAi) openaiModel else model
+    val providerName get() = if (isOpenAi) "OpenAI" else "Claude"
+
     // keyboard behaviour
     var assistantOn: Boolean get() = bool("assistant_on", true); set(v) = put("assistant_on", v)
     /** "auto" applies results straight away, "ask" shows them first, "manual" only runs skill keys. */
@@ -59,6 +69,9 @@ class Store(context: Context) {
         prefs?.edit()
             ?.putString("api_key", o.optString("apiKey"))
             ?.putString("model", o.optString("model", Ai.DEFAULT_MODEL))
+            ?.putString("provider", if (o.optString("provider") == "openai") "openai" else "anthropic")
+            ?.putString("openai_key", o.optString("openaiKey"))
+            ?.putString("openai_model", o.optString("openaiModel", Ai.DEFAULT_OPENAI_MODEL))
             ?.putBoolean("web_search", o.optBoolean("webSearch", true))
             ?.putBoolean("weather", o.optBoolean("weather", true))
             ?.putString("notion_token", o.optString("notionToken"))
@@ -110,7 +123,7 @@ class Store(context: Context) {
 
     fun exportJson(): String = JSONObject()
         .put("verbo", 1)
-        .put("model", model).put("webSearch", webSearch).put("assistantOn", assistantOn).put("agentMode", agentMode)
+        .put("model", model).put("provider", provider).put("openaiModel", openaiModel).put("webSearch", webSearch).put("assistantOn", assistantOn).put("agentMode", agentMode)
         .put("theme", theme).put("customAccent", customAccent).put("heightPercent", heightPercent)
         .put("sound", sound).put("haptic", haptic).put("autoCorrect", autoCorrect).put("suggestions", suggestions)
         .put("weather", weather).put("skills", skillsJson(skills))
@@ -121,6 +134,8 @@ class Store(context: Context) {
         val o = try { JSONObject(text) } catch (e: Exception) { return false }
         if (!o.has("verbo")) return false
         if (o.has("model") && Ai.MODELS.any { it.first == o.optString("model") }) model = o.getString("model")
+        if (o.optString("provider") in listOf("anthropic", "openai")) provider = o.getString("provider")
+        if (o.optString("openaiModel").matches(Regex("[A-Za-z0-9._:-]{1,80}"))) openaiModel = o.getString("openaiModel")
         if (o.has("webSearch")) webSearch = o.optBoolean("webSearch")
         if (o.has("assistantOn")) assistantOn = o.optBoolean("assistantOn")
         if (o.optString("agentMode") in listOf("auto", "ask", "manual")) agentMode = o.getString("agentMode")

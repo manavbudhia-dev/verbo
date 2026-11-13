@@ -590,8 +590,8 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             showStatus("Verbo doesn't read password fields")
             return
         }
-        if (store.apiKey.isBlank()) {
-            showStatus("Add your API key to use actions", "Set up" to { openApp() })
+        if (store.activeKey.isBlank()) {
+            showStatus("Add your ${store.providerName} API key to use actions", "Set up" to { openApp() })
             return
         }
         val target = readTarget() ?: return
@@ -614,8 +614,9 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         busy = true
         undo = null
         val token = ++generation
-        val key = store.apiKey
-        val model = store.model
+        val openAi = store.isOpenAi
+        val key = store.activeKey
+        val model = store.activeModel
         val web = connected && store.webSearch
         val tools = if (connected) store.tools() else emptyList()
         showStatus(label, "Cancel" to {
@@ -625,7 +626,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         })
         worker.execute {
             val outcome = try {
-                Result.success(Ai.run(key, model, web, task, input, tools))
+                Result.success(if (openAi) OpenAi.run(key, model, web, task, input, tools) else Ai.run(key, model, web, task, input, tools))
             } catch (e: AiException) {
                 Result.failure(e)
             } catch (e: Exception) {
@@ -736,7 +737,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             showStatus("This phone has no speech recognition service")
             return
         }
-        val smart = assistantOn && store.apiKey.isNotBlank()
+        val smart = assistantOn && store.activeKey.isNotBlank()
         if (command && !smart) {
             showStatus("Voice commands need the assistant and an API key", "Set up" to { openApp() })
             return

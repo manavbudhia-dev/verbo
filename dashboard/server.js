@@ -47,7 +47,7 @@ const DEFAULT_SKILLS = [
 ].map(([emoji, name, instruction, category]) => ({ emoji, name, instruction, category }));
 
 const defaultConfig = () => ({
-  apiKey: '', model: MODELS[0], webSearch: true, weather: true,
+  apiKey: '', model: MODELS[0], provider: 'anthropic', openaiKey: '', openaiModel: 'gpt-5.5', webSearch: true, weather: true,
   notionToken: '', calendlyToken: '', customApis: [], skills: DEFAULT_SKILLS,
 });
 
@@ -98,7 +98,8 @@ function saveConfig(userId, config) {
 // What the browser gets: secrets are never sent back, only whether they are set.
 function publicConfig(config) {
   return {
-    model: config.model, webSearch: config.webSearch, weather: config.weather, skills: config.skills,
+    model: config.model, provider: config.provider, openaiModel: config.openaiModel, openaiKeySet: !!config.openaiKey,
+    webSearch: config.webSearch, weather: config.weather, skills: config.skills,
     apiKeySet: !!config.apiKey, notionSet: !!config.notionToken, calendlySet: !!config.calendlyToken,
     customApis: config.customApis.map(({ headerValue, ...rest }) => ({ ...rest, headerValueSet: !!headerValue })),
   };
@@ -123,8 +124,16 @@ function applyUpdate(config, body) {
     if (!MODELS.includes(body.model)) throw new Bad(400, 'Unknown model');
     next.model = body.model;
   }
+  if ('provider' in body) {
+    if (!['anthropic', 'openai'].includes(body.provider)) throw new Bad(400, 'Unknown provider');
+    next.provider = body.provider;
+  }
+  if ('openaiModel' in body) {
+    if (typeof body.openaiModel !== 'string' || !/^[A-Za-z0-9._:-]{1,80}$/.test(body.openaiModel.trim())) throw new Bad(400, 'That does not look like a model ID');
+    next.openaiModel = body.openaiModel.trim();
+  }
   for (const flag of ['webSearch', 'weather']) if (flag in body) next[flag] = body[flag] === true;
-  for (const secret of ['apiKey', 'notionToken', 'calendlyToken']) {
+  for (const secret of ['apiKey', 'openaiKey', 'notionToken', 'calendlyToken']) {
     if (typeof body[secret] === 'string') next[secret] = str(body[secret], 500, 'Token');
   }
   if ('skills' in body) {

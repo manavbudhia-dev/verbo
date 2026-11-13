@@ -197,21 +197,33 @@ function connectionsTab() {
   ];
 }
 
+function keyCard(title, help, isSet, field, hint) {
+  const key = h('input', { type: 'password', placeholder: isSet ? 'Saved. Paste a new key to replace it' : hint, autocomplete: 'off' });
+  return h('div', { class: 'card' },
+    h('div', { class: 'row' }, h('div', { class: 'grow' }, h('h3', null, title), h('p', { class: 'muted' }, help)),
+      h('span', { class: 'pill' + (isSet ? '' : ' off') }, isSet ? 'Saved' : 'Missing')),
+    h('div', { class: 'row', style: 'margin-top:12px' }, h('div', { class: 'grow' }, key),
+      h('button', { class: 'btn primary', onclick: () => key.value.trim() ? save({ [field]: key.value }, 'Key saved') : toast('Paste a key first') }, 'Save'),
+      isSet && h('button', { class: 'btn ghost danger', onclick: () => save({ [field]: '' }, 'Key removed') }, 'Remove')));
+}
+
 function assistantTab() {
   const c = state.config;
-  const key = h('input', { type: 'password', placeholder: c.apiKeySet ? 'Saved. Paste a new key to replace it' : 'sk-ant-…', autocomplete: 'off' });
+  const openai = c.provider === 'openai';
+  const provider = h('select', { onchange: (e) => save({ provider: e.target.value }) },
+    [['anthropic', 'Claude (Anthropic)'], ['openai', 'GPT (OpenAI)']].map(([id, name]) => h('option', { value: id, selected: id === c.provider }, name)));
   const model = h('select', { onchange: (e) => save({ model: e.target.value }) },
     MODELS.map(([id, name]) => h('option', { value: id, selected: id === c.model }, name)));
+  const openaiModel = h('input', { type: 'text', value: c.openaiModel, placeholder: 'gpt-5.5' });
   return [
     h('div', null, h('h2', null, 'Assistant'), h('p', { class: 'muted' }, 'The model behind your keyboard’s actions.')),
-    h('div', { class: 'card' },
-      h('div', { class: 'row' }, h('div', { class: 'grow' }, h('h3', null, 'Claude API key'),
-        h('p', { class: 'muted' }, 'Actions run on your own key. It is stored encrypted here and sent only to your paired keyboards.')),
-        h('span', { class: 'pill' + (c.apiKeySet ? '' : ' off') }, c.apiKeySet ? 'Saved' : 'Missing')),
-      h('div', { class: 'row', style: 'margin-top:12px' }, h('div', { class: 'grow' }, key),
-        h('button', { class: 'btn primary', onclick: () => key.value.trim() ? save({ apiKey: key.value }, 'Key saved') : toast('Paste a key first') }, 'Save'),
-        c.apiKeySet && h('button', { class: 'btn ghost danger', onclick: () => save({ apiKey: '' }, 'Key removed') }, 'Remove'))),
-    h('div', { class: 'card' }, h('h3', null, 'Model'), h('label', null, 'Used for every action', model)),
+    h('div', { class: 'card' }, h('h3', null, 'Provider'), h('label', null, 'Which service runs actions', provider),
+      openai
+        ? h('label', null, 'OpenAI model ID', h('div', { class: 'row' }, h('div', { class: 'grow' }, openaiModel),
+            h('button', { class: 'btn primary', onclick: () => save({ openaiModel: openaiModel.value }) }, 'Save')))
+        : h('label', null, 'Claude model', model)),
+    keyCard('Claude API key', 'From console.anthropic.com. Stored encrypted here and sent only to your paired keyboards.', c.apiKeySet, 'apiKey', 'sk-ant-…'),
+    keyCard('OpenAI API key', 'From platform.openai.com. Stored encrypted here and sent only to your paired keyboards.', c.openaiKeySet, 'openaiKey', 'sk-…'),
     h('div', { class: 'card' }, h('label', { class: 'switch' },
       h('input', { type: 'checkbox', checked: c.webSearch, onchange: (e) => save({ webSearch: e.target.checked }) }),
       'Search the web when an action needs fresh facts')),

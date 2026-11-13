@@ -42,6 +42,13 @@ object Ai {
         "claude-haiku-5-5" to "Haiku 5.5 — fastest",
     )
 
+    /** OpenAI models offered in the picker; any other model ID can be typed in. */
+    const val DEFAULT_OPENAI_MODEL = "gpt-5.5"
+    val OPENAI_MODELS = listOf(
+        "gpt-5.5" to "GPT-5.5",
+        "gpt-6-astra" to "GPT-6 Astra",
+    )
+
     private const val BASE_PROMPT = """You are the engine inside a phone keyboard. The user typed text into a text field in some other app (a chat, an email, a note, a search box) and then pressed an action key. Whatever you return is placed in that field, so it must be ready to send or use as it stands.
 
 Return only the replacement text. No preamble, no explanation of what you did, no surrounding quotes, and no markdown, since the field shows plain text. Write in the language the user wrote in unless the task says otherwise. Keep it as short as the situation allows: this is usually a chat message, not a document.

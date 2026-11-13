@@ -106,12 +106,16 @@ class MainActivity : Activity() {
             setOnClickListener { v ->
                 PopupMenu(this@MainActivity, v).apply {
                     Ai.MODELS.forEach { (id, label) ->
-                        menu.add(label).setOnMenuItemClickListener { store.model = id; modelName.text = shortModel(); true }
+                        menu.add("Claude " + label).setOnMenuItemClickListener { store.provider = "anthropic"; store.model = id; recreate(); true }
                     }
+                    Ai.OPENAI_MODELS.forEach { (id, label) ->
+                        menu.add("OpenAI $label").setOnMenuItemClickListener { store.provider = "openai"; store.openaiModel = id; recreate(); true }
+                    }
+                    menu.add("Other OpenAI model…").setOnMenuItemClickListener { customOpenAiModel(); true }
                 }.show()
             }
         }
-        val keyState = if (store.apiKey.isEmpty()) "Tap to add your Claude API key" else "Choose the brain for your keyboard"
+        val keyState = if (store.activeKey.isEmpty()) "Tap to add your ${store.providerName} API key" else "Choose the brain for your keyboard"
         column.addView(ui.rows(ui.row(R.drawable.ic_sparkles, "AI Model", keyState, modelPill, tile = true) { editApiKey() }))
 
         // ---- agent mode ----
@@ -287,7 +291,23 @@ class MainActivity : Activity() {
         refreshSetup()
     }
 
-    private fun shortModel() = (Ai.MODELS.firstOrNull { it.first == store.model } ?: Ai.MODELS[0]).second.substringBefore(" —")
+    private fun shortModel() =
+        if (store.isOpenAi) Ai.OPENAI_MODELS.firstOrNull { it.first == store.openaiModel }?.second ?: store.openaiModel
+        else (Ai.MODELS.firstOrNull { it.first == store.model } ?: Ai.MODELS[0]).second.substringBefore(" —")
+
+    private fun customOpenAiModel() {
+        val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(ui.dp(22), ui.dp(8), ui.dp(22), 0) }
+        form.addView(ui.text("Type the model ID exactly as OpenAI lists it.", 13.5f, ui.muted))
+        val field = ui.field("e.g. gpt-5.5", if (store.isOpenAi) store.openaiModel else "")
+        form.addView(field)
+        AlertDialog.Builder(this).setTitle("OpenAI model").setView(form)
+            .setPositiveButton("Use") { _, _ ->
+                val id = field.text.toString().trim()
+                if (id.matches(Regex("[A-Za-z0-9._:-]{1,80}"))) { store.provider = "openai"; store.openaiModel = id; recreate() }
+                else ui.toast("That doesn't look like a model ID")
+            }
+            .setNegativeButton("Cancel", null).show()
+    }
 
     private fun refreshSetup() {
         val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
@@ -311,13 +331,18 @@ class MainActivity : Activity() {
 
     private fun editApiKey() {
         val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(ui.dp(22), ui.dp(8), ui.dp(22), 0) }
-        form.addView(ui.text("Actions run on your own key from console.anthropic.com. It stays on this phone and is only sent to Anthropic.", 13.5f, ui.muted))
-        val field = ui.field("sk-ant-…", store.apiKey, secret = true)
-        form.addView(field)
-        AlertDialog.Builder(this).setTitle("Claude API key").setView(form)
+        form.addView(ui.text("Actions run on your own key. Keys stay on this phone and are only sent to the service they belong to. The model you pick decides which key is used.", 13.5f, ui.muted))
+        form.addView(ui.text("Claude (console.anthropic.com)", 13.5f, bold = true).apply { setPadding(0, ui.dp(14), 0, 0) })
+        val claude = ui.field("sk-ant-…", store.apiKey, secret = true)
+        form.addView(claude)
+        form.addView(ui.text("OpenAI (platform.openai.com)", 13.5f, bold = true).apply { setPadding(0, ui.dp(10), 0, 0) })
+        val openai = ui.field("sk-…", store.openaiKey, secret = true)
+        form.addView(openai)
+        AlertDialog.Builder(this).setTitle("API keys").setView(form)
             .setPositiveButton("Save") { _, _ ->
-                store.apiKey = field.text.toString()
-                ui.toast(if (store.apiKey.isEmpty()) "Key removed" else "Key saved")
+                store.apiKey = claude.text.toString()
+                store.openaiKey = openai.text.toString()
+                ui.toast("Keys saved")
                 recreate()
             }
             .setNegativeButton("Cancel", null).show()
