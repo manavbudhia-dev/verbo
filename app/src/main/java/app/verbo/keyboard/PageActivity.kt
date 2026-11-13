@@ -37,6 +37,8 @@ class PageActivity : Activity() {
             page == "privacy" -> privacyPage(column)
             page == "languages" -> languagesPage(column)
             page == "dashboard" -> dashboardPage(column)
+            page == "skins" -> skinsPage(column)
+            page == "templates" -> templatesPage(column)
             else -> tryPage(column)
         }
     }
@@ -126,6 +128,7 @@ class PageActivity : Activity() {
             ui.row(R.drawable.ic_globe, "Web search", "Look up fresh facts when needed", ui.toggle(store.webSearch) { store.webSearch = it }),
             ui.row(R.drawable.ic_sun, "Weather", "Forecasts from Open-Meteo, no account", ui.toggle(store.weather) { store.weather = it }),
         ))
+        column.addView(ui.rows(ui.row(R.drawable.ic_pencil_line, "Gmail", "Writes the email and opens it as a ready draft in Gmail. No sign-in needed. Reading your inbox is not available yet", ui.icon(R.drawable.ic_check, 20, Color.parseColor("#4ADE80")))))
         column.addView(ui.rows(
             ui.row(R.drawable.ic_square_terminal, "Notion", if (store.notionToken.isEmpty()) "Not connected" else "Connected", ui.chevron()) {
                 editToken("Notion", "Paste an internal integration token from notion.so/my-integrations, then share the pages you want with that integration.", store.notionToken) { store.notionToken = it }
@@ -268,13 +271,103 @@ class PageActivity : Activity() {
         }.start()
     }
 
+    // ---------- skins ----------
+
+    private fun choice(icon: Int, title: String, subtitle: String?, selected: Boolean, onPick: () -> Unit) =
+        ui.row(icon, title, subtitle, if (selected) ui.icon(R.drawable.ic_check, 20, ui.iconTint) else null) { onPick(); render() }
+
+    private fun skinsPage(column: LinearLayout) {
+        column.addView(ui.topBar("Skins & key style", "Change how the keyboard looks"))
+        column.addView(ui.section(R.drawable.ic_palette, "Skin"))
+        val skins = listOf(
+            "system" to "Follow phone (light or dark)", "dark" to "Dark", "light" to "Light", "amoled" to "Amoled black",
+            "ocean" to "Ocean blue", "forest" to "Forest green", "sunset" to "Sunset", "rose" to "Rose (light)", "mint" to "Mint (light)",
+            "custom" to "Custom accent colour",
+        )
+        column.addView(ui.rows(*skins.map { (id, name) ->
+            val t = KeyTheme.of(this, id, store.customAccent)
+            // A small preview: one key in the skin's colours on the skin's background.
+            val swatch = LinearLayout(this).apply {
+                gravity = Gravity.CENTER
+                background = ui.shape(t.bg, 8, ui.line)
+                addView(ui.text("a", 13f, t.text).apply { gravity = Gravity.CENTER; background = ui.shape(t.key, 5); layoutParams = LinearLayout.LayoutParams(ui.dp(20), ui.dp(22)).apply { rightMargin = ui.dp(3) } })
+                addView(android.view.View(this@PageActivity).apply { background = ui.shape(t.accent, 5); layoutParams = LinearLayout.LayoutParams(ui.dp(14), ui.dp(22)) })
+            }
+            val row = ui.row(R.drawable.ic_palette, name, null, if (store.theme == id) ui.icon(R.drawable.ic_check, 20, ui.iconTint) else null) { store.theme = id; render() }
+            row.removeViewAt(0)
+            row.addView(swatch, 0, LinearLayout.LayoutParams(ui.dp(52), ui.dp(34)))
+            row
+        }.toTypedArray()))
+
+        column.addView(ui.section(R.drawable.ic_keyboard, "Key shape"))
+        column.addView(ui.rows(
+            choice(R.drawable.ic_keyboard, "Rounded", "Soft corners", store.keyShape == "rounded") { store.keyShape = "rounded" },
+            choice(R.drawable.ic_keyboard, "Square", "Sharp corners, widest keys", store.keyShape == "square") { store.keyShape = "square" },
+            choice(R.drawable.ic_keyboard, "Bubble", "Fully round keys", store.keyShape == "bubble") { store.keyShape = "bubble" },
+            choice(R.drawable.ic_keyboard, "Flat", "Letters only, no key outlines", store.keyShape == "flat") { store.keyShape = "flat" },
+        ))
+        column.addView(ui.section(R.drawable.ic_sliders_horizontal, "Layout"))
+        column.addView(ui.rows(ui.row(R.drawable.ic_keyboard, "Number row", "Show 1–0 above the letters", ui.toggle(store.numberRow) { store.numberRow = it })))
+        note(column, "Key height is set on the main screen. Changes apply the next time the keyboard opens.")
+    }
+
+    // ---------- templates ----------
+
+    private class Template(val icon: Int, val app: String, val example: String, val skill: Skill?)
+
+    private val templates = listOf(
+        Template(R.drawable.ic_pencil_line, "Gmail: write an email", "email priya@example.com that the invoice is attached and payment is due friday, polite",
+            Skill("📧", "Email", "Turn the text into a complete email with a greeting and sign-off. Return the email body, and add a mailto link carrying a short subject and the body so it opens as a draft.", "write")),
+        Template(R.drawable.ic_message_square, "WhatsApp: send a message", "whatsapp mom that i reached safely and will call at night",
+            Skill("🟢", "WhatsApp", "Rewrite the text as a short, natural WhatsApp message and add a wa.me link carrying it.", "write")),
+        Template(R.drawable.ic_list, "Calendar: add an event", "add dentist appointment tomorrow 5pm for 30 minutes to my calendar",
+            Skill("📅", "Event", "The text describes an event. Return a one-line summary of it and add a Google Calendar link with the title, start and end time, and place.", "write")),
+        Template(R.drawable.ic_globe, "Maps: find a place", "find a pharmacy open now near me", null),
+        Template(R.drawable.ic_sun, "Weather", "will it rain in mumbai tomorrow evening", null),
+        Template(R.drawable.ic_globe, "Web: quick answer", "what time does the india match start today", null),
+        Template(R.drawable.ic_zap, "YouTube: search", "open youtube for 10 minute morning yoga", null),
+        Template(R.drawable.ic_message_square_more, "X: post", "post on x: just shipped my first android keyboard", null),
+        Template(R.drawable.ic_square_terminal, "Notion: save a note", "save this to my notion notes: buy milk, call the bank, renew insurance", null),
+        Template(R.drawable.ic_list, "Calendly: share booking link", "send my 30 minute meeting link with a friendly line", null),
+        Template(R.drawable.ic_pencil_line, "Reply to a message", "say yes to the invite but ask if i can come an hour late", null),
+        Template(R.drawable.ic_languages, "Translate", "translate to hindi: can we meet tomorrow at 10", null),
+        Template(R.drawable.ic_list, "Shopping or to-do list", "make a list: eggs bread 2 litre milk detergent and phone recharge", null),
+        Template(R.drawable.ic_sliders_horizontal, "Leave or sick note", "write a short message to my manager that i'm unwell and taking today off", null),
+    )
+
+    private fun templatesPage(column: LinearLayout) {
+        column.addView(ui.topBar("Templates", "Ready-made daily actions for your apps"))
+        note(column, "Type something like these in any app, then hold the wide bar. Where an app is involved, a button appears above the keys to open it with everything filled in. Tap a template to try it.")
+        val have = store.skills.map { it.name }
+        for (t in templates) {
+            val box = ui.rows(ui.row(t.icon, t.app, "“${t.example}”", ui.chevron()) {
+                startActivity(android.content.Intent(this, PageActivity::class.java).putExtra("page", "try").putExtra("text", t.example))
+            })
+            val skill = t.skill
+            if (skill != null && skill.name !in have) {
+                box.addView(ui.divider())
+                box.addView(ui.row(R.drawable.ic_plus, "Add “${skill.emoji} ${skill.name}” as a skill key", null) {
+                    store.skills = store.skills + skill
+                    ui.toast("${skill.name} key added")
+                    render()
+                })
+            }
+            column.addView(box)
+        }
+        note(column, "\nNotion and Calendly need a token under Automate. Gmail, WhatsApp, Calendar, Maps, YouTube and X open the app with a draft, so nothing is sent until you press send there.")
+    }
+
     // ---------- try it ----------
 
     private fun tryPage(column: LinearLayout) {
         column.addView(ui.topBar("Try the keyboard"))
         note(column, "Type a request, then hold the wide bar. Or type a sentence and tap a skill key.")
         val box = ui.cardBox().apply { setPadding(ui.dp(14), ui.dp(8), ui.dp(14), ui.dp(12)) }
-        box.addView(ui.field("tell sam i'm running 15 min late, friendly", lines = 4).apply { gravity = Gravity.TOP; requestFocus() })
+        box.addView(ui.field("tell sam i'm running 15 min late, friendly", intent.getStringExtra("text") ?: "", lines = 4).apply {
+            gravity = Gravity.TOP
+            requestFocus()
+            setSelection(text.length)
+        })
         column.addView(box)
     }
 }

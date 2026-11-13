@@ -31,6 +31,11 @@ class KeyTheme(
                 "light" -> KeyTheme(c("#E6E9EF"), c("#FFFFFF"), c("#C6CBD6"), c("#DDD6FE"), c("#D5DAE3"), c("#2B2F38"), c("#7A8090"), PURPLE, Color.WHITE)
                 "amoled" -> KeyTheme(Color.BLACK, c("#17181C"), Color.BLACK, c("#2E2A45"), c("#0D0E11"), c("#ECEEF2"), c("#8E94A3"), PURPLE, Color.WHITE)
                 "custom" -> KeyTheme(c("#16181D"), c("#2B2E36"), c("#0C0D10"), c("#3A3D48"), c("#20232A"), c("#ECEEF2"), c("#8E94A3"), customAccent, Color.WHITE)
+                "ocean" -> KeyTheme(c("#0B1E2D"), c("#16344A"), c("#061521"), c("#1F5A7A"), c("#0F293B"), c("#E6F4FF"), c("#7FA6BF"), c("#38BDF8"), c("#062033"))
+                "rose" -> KeyTheme(c("#FBE9EE"), c("#FFFFFF"), c("#E8C3CD"), c("#FBCFE0"), c("#F3D3DB"), c("#4A2030"), c("#9A6A78"), c("#E11D74"), Color.WHITE)
+                "forest" -> KeyTheme(c("#0F1F17"), c("#1D3528"), c("#07130D"), c("#2C5A40"), c("#152A1F"), c("#E6F5EC"), c("#86A996"), c("#34D399"), c("#06281A"))
+                "sunset" -> KeyTheme(c("#2A1420"), c("#45233A"), c("#1A0B14"), c("#6A3350"), c("#351A2A"), c("#FFEDE2"), c("#C39AA8"), c("#FB923C"), c("#3A1500"))
+                "mint" -> KeyTheme(c("#E6F4EF"), c("#FFFFFF"), c("#BFDCD1"), c("#C8EEDF"), c("#D1E7DF"), c("#17352B"), c("#5F8577"), c("#10B981"), Color.WHITE)
                 else -> KeyTheme(c("#16181D"), c("#2B2E36"), c("#0C0D10"), c("#3B3560"), c("#20232A"), c("#ECEEF2"), c("#8E94A3"), PURPLE, Color.WHITE)
             }
         }
@@ -43,7 +48,10 @@ class KeyTheme(
  * the next finger lands (so quick two-thumb typing never drops or reorders letters).
  */
 @SuppressLint("ViewConstructor")
-class KeyboardView(context: Context, private var theme: KeyTheme, private val scale: Float) : View(context) {
+class KeyboardView(
+    context: Context, private var theme: KeyTheme, private val scale: Float,
+    private val shape: String = "rounded", private val numberRow: Boolean = false,
+) : View(context) {
 
     enum class Mode { LETTERS, SYMBOLS, MORE_SYMBOLS }
     enum class Type { CHAR, SHIFT, BACKSPACE, MODE, BAR, ENTER }
@@ -60,6 +68,7 @@ class KeyboardView(context: Context, private var theme: KeyTheme, private val sc
     private class Key(val type: Type, val label: String, val weight: Float, val target: Mode? = null) {
         val rect = RectF()
         var row = 0
+        var inset = false
     }
 
     private class Press(var key: Key) { var done = false }
@@ -75,10 +84,12 @@ class KeyboardView(context: Context, private var theme: KeyTheme, private val sc
         set(value) { if (field != value) { field = value; invalidate() } }
 
     private val d = resources.displayMetrics.density
-    private val rowHeight = 54 * d * scale
-    private val gapX = 3 * d
-    private val gapY = 4.5f * d
-    private val radius = 9 * d
+    // Keys are kept wide: thin gaps between them and almost no margin at the screen edges.
+    private val rowHeight = 51 * d * scale
+    private val gapX = 1.75f * d
+    private val gapY = 3.5f * d
+    private val flat = shape == "flat"
+    private val radius = when (shape) { "square" -> 3 * d; "bubble" -> rowHeight; else -> 8 * d }
     private val rows = ArrayList<List<Key>>()
     private val presses = HashMap<Int, Press>()
     private val handler = Handler(Looper.getMainLooper())
@@ -100,8 +111,9 @@ class KeyboardView(context: Context, private var theme: KeyTheme, private val sc
         rows.clear()
         when (mode) {
             Mode.LETTERS -> {
+                if (numberRow) rows += chars("1234567890")
                 rows += chars("qwertyuiop")
-                rows += chars("asdfghjkl")
+                rows += chars("asdfghjkl").onEach { it.inset = true }
                 rows += listOf(Key(Type.SHIFT, "", 1.5f)) + chars("zxcvbnm") + Key(Type.BACKSPACE, "", 1.5f)
             }
             Mode.SYMBOLS -> {
@@ -126,10 +138,10 @@ class KeyboardView(context: Context, private var theme: KeyTheme, private val sc
 
     private fun place(width: Int) {
         if (width == 0) return
-        val side = 3 * d
+        val side = 1.5f * d
         rows.forEachIndexed { r, row ->
             // The second letter row is one key narrower, so it sits half a key in from each side.
-            val inset = if (mode == Mode.LETTERS && r == 1) (width - 2 * side) / 20f else 0f
+            val inset = if (row[0].inset) (width - 2 * side) / 20f else 0f
             val unit = (width - 2 * side - 2 * inset) / row.sumOf { it.weight.toDouble() }.toFloat()
             var x = side + inset
             val top = r * rowHeight
@@ -166,20 +178,24 @@ class KeyboardView(context: Context, private var theme: KeyTheme, private val sc
         for (row in rows) for (key in row) {
             val down = key in pressed
             val r = key.rect
-            face.color = theme.keyShadow
-            canvas.drawRoundRect(r.left, r.top + 1.5f * d, r.right, r.bottom, radius, radius, face)
+            // The flat skin shows letters only: a key gets a background just while pressed (and for enter).
+            val bare = flat && !down && key.type != Type.ENTER && key.type != Type.BAR
+            if (!flat) {
+                face.color = theme.keyShadow
+                canvas.drawRoundRect(r.left, r.top + 1.5f * d, r.right, r.bottom, radius, radius, face)
+            }
             face.color = when {
                 key.type == Type.ENTER -> if (down) theme.accentPressed else theme.accent
                 down -> theme.keyPressed
                 key.type == Type.CHAR || key.type == Type.BAR -> theme.key
                 else -> theme.fnKey
             }
-            canvas.drawRoundRect(r.left, r.top, r.right, r.bottom - 1.5f * d, radius, radius, face)
+            if (!bare) canvas.drawRoundRect(r.left, r.top, r.right, r.bottom - 1.5f * d, radius, radius, face)
 
             when (key.type) {
                 Type.CHAR -> {
                     letters.color = theme.text
-                    letters.textSize = 23 * d * minOf(scale, 1.1f)
+                    letters.textSize = 24 * d * minOf(scale, 1.1f)
                     val label = if (mode == Mode.LETTERS && shift > 0) key.label.uppercase() else key.label
                     canvas.drawText(label, r.centerX(), r.centerY() - d * 0.75f - (letters.descent() + letters.ascent()) / 2, letters)
                 }

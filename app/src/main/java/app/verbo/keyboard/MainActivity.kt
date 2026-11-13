@@ -31,8 +31,12 @@ class MainActivity : Activity() {
         build()
     }
 
+    private var shownTheme = ""
+
     override fun onResume() {
         super.onResume()
+        if (shownTheme.isNotEmpty() && shownTheme != store.theme) return recreate() // a skin was picked on another screen
+        shownTheme = store.theme
         refreshSetup()
     }
 
@@ -209,6 +213,7 @@ class MainActivity : Activity() {
         }
         paintThemes()
         column.addView(themes)
+        column.addView(ui.rows(ui.row(R.drawable.ic_palette, "Skins & key style", "More colours, key shape, number row", ui.chevron()) { open("skins") }))
 
         // ---- height ----
         column.addView(ui.section(R.drawable.ic_keyboard, "Keyboard Height").apply { setPadding(ui.dp(2), ui.dp(22), 0, 0) })
@@ -267,6 +272,7 @@ class MainActivity : Activity() {
             ui.row(R.drawable.ic_languages, "Translate", "Translate into other languages", ui.chevron()) { open("category:translate") },
             ui.row(R.drawable.ic_list, "Summarize", "Turn long text into key points", ui.chevron()) { open("category:summarize") },
             ui.row(R.drawable.ic_zap, "Automate", "Connect apps and APIs for actions", ui.chevron()) { open("automate") },
+            ui.row(R.drawable.ic_layers, "Templates", "Ready-made daily actions for your apps", ui.chevron()) { open("templates") },
         ))
 
         // ---- advanced ----

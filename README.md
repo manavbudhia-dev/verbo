@@ -12,6 +12,9 @@ An Android keyboard that acts on what you type.
 - **Voice** – tap 🎙 to dictate (filler words, self-corrections and punctuation are tidied up);
   hold 🎙 to speak a request.
 - **Connections** – web search, Weather, Notion and Calendly (paste a token), and any HTTPS API.
+- **Templates** – ready-made daily requests that open Gmail, WhatsApp, Calendar, Maps, YouTube or X
+  with a draft filled in; some can be added as skill keys.
+- **Skins** – ten colour skins, four key shapes (rounded, square, bubble, flat) and an optional number row.
 - **Appearance** – System, Dark, Light, Amoled or a custom accent colour, and adjustable key height.
 - **Dashboard** – optional web app (see `dashboard/`) to manage skills and connections
   from a browser; pair the keyboard with a one-time code and it syncs.

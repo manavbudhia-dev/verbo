@@ -226,15 +226,27 @@ class KeyboardTest {
         val light = ime.keys!!.parent as View
         layout(light)
         snap(light, "keyboard-light")
-        store.theme = "system"
+        store.theme = "ocean"
         store.heightPercent = 100
+        store.keyShape = "flat"
+        store.numberRow = true
+        ime.onStartInputView(field.info, false)
+        val skin = ime.keys!!.parent as View
+        layout(skin)
+        snap(skin, "keyboard-ocean-flat")
+        store.theme = "dark"
+        store.keyShape = "rounded"
+        store.numberRow = false
+        ime.onStartInputView(field.info, false)
+        (ime.keys!!.parent as View).let { layout(it); snap(it, "keyboard-dark-wide") }
+        store.theme = "system"
 
         val main = Robolectric.buildActivity(MainActivity::class.java).setup().get()
         val scroll = content(main)
         val column = (scroll as ViewGroup).getChildAt(0)
         scroll.layout(0, 0, 1080, column.measuredHeight)
         snap(scroll, "settings")
-        for (page in listOf("prompts", "automate", "shortcuts", "privacy", "dashboard", "category:edit")) {
+        for (page in listOf("skins", "templates", "prompts", "automate", "shortcuts", "privacy", "dashboard", "category:edit")) {
             val a = Robolectric.buildActivity(PageActivity::class.java, android.content.Intent().putExtra("page", page)).setup().get()
             val s = content(a)
             s.layout(0, 0, 1080, maxOf((s as ViewGroup).getChildAt(0).measuredHeight, 900))

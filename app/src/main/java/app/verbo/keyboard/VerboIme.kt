@@ -109,7 +109,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
 
     // ---------- view construction ----------
 
-    private fun signature() = "${store.theme}/${store.customAccent}/${store.heightPercent}/${resources.configuration.uiMode}"
+    private fun signature() = "${store.theme}/${store.customAccent}/${store.heightPercent}/${store.keyShape}/${store.numberRow}/${resources.configuration.uiMode}"
 
     override fun onCreateInputView(): View {
         builtWith = signature()
@@ -166,7 +166,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         top.addView(mic, LinearLayout.LayoutParams(dp(42), dp(36)).apply { setMargins(dp(4), 0, dp(6), 0) })
         root.addView(top, LinearLayout.LayoutParams(-1, dp(46)))
 
-        keys = KeyboardView(this, p, store.heightPercent / 100f).also {
+        keys = KeyboardView(this, p, store.heightPercent / 100f, store.keyShape, store.numberRow).also {
             it.listener = this
             root.addView(it, LinearLayout.LayoutParams(-1, -2))
         }
@@ -704,7 +704,11 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     private fun openLabel(uri: String) = when {
         uri.startsWith("geo:", true) -> "Open map"
         uri.startsWith("tel:", true) -> "Call"
-        uri.startsWith("mailto:", true) -> "Email"
+        uri.startsWith("mailto:", true) -> "Open in Gmail"
+        uri.startsWith("https://wa.me", true) -> "WhatsApp"
+        uri.startsWith("https://calendar.google.com", true) -> "Add to calendar"
+        uri.startsWith("https://www.youtube.com", true) -> "YouTube"
+        uri.startsWith("https://x.com", true) -> "Post on X"
         else -> "Open link"
     }
 

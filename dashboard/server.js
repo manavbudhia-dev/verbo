@@ -33,7 +33,7 @@ db.exec(`
 `);
 
 const CATEGORIES = ['write', 'edit', 'translate', 'summarize'];
-const MODELS = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'];
+const MODELS = ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5']; // first is the default: cheapest
 const DEFAULT_SKILLS = [
   ['✨', 'Polish', 'Fix spelling, grammar and punctuation and smooth out awkward phrasing. Keep the meaning, the tone and the length.', 'edit'],
   ['💬', 'Reply', 'The text is either a message the user received or rough notes for an answer. Write a natural reply the user can send as their own.', 'write'],

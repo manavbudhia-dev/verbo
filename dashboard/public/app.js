@@ -38,9 +38,9 @@ const app = document.getElementById('app');
 const state = { email: null, allowSignup: true, tab: 'skills', config: null, devices: [], code: null };
 
 const MODELS = [
-  ['claude-opus-5-5', 'Opus 5.5 — most capable'],
+  ['claude-haiku-5-5', 'Haiku 5.5 — cheapest, fast'],
   ['claude-sonnet-5-5', 'Sonnet 5.5 — balanced'],
-  ['claude-haiku-5-5', 'Haiku 5.5 — fastest'],
+  ['claude-opus-5-5', 'Opus 5.5 — most capable'],
 ];
 
 async function save(patch, message) {

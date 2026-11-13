@@ -52,6 +52,9 @@ class Store(context: Context) {
     var heightPercent: Int
         get() = (prefs?.getInt("height_percent", 100) ?: 100).coerceIn(MIN_HEIGHT, MAX_HEIGHT)
         set(v) { prefs?.edit()?.putInt("height_percent", v.coerceIn(MIN_HEIGHT, MAX_HEIGHT))?.apply() }
+    /** "rounded", "square", "bubble" or "flat" (letters only, no key outlines). */
+    var keyShape: String get() = str("key_shape", "rounded"); set(v) = put("key_shape", v)
+    var numberRow: Boolean get() = bool("number_row", false); set(v) = put("number_row", v)
     var sound: Boolean get() = bool("sound", true); set(v) = put("sound", v)
     var haptic: Boolean get() = bool("haptic", true); set(v) = put("haptic", v)
     var autoCorrect: Boolean get() = bool("auto_correct", true); set(v) = put("auto_correct", v)
@@ -125,7 +128,7 @@ class Store(context: Context) {
         .put("verbo", 1)
         .put("model", model).put("provider", provider).put("openaiModel", openaiModel).put("webSearch", webSearch).put("assistantOn", assistantOn).put("agentMode", agentMode)
         .put("theme", theme).put("customAccent", customAccent).put("heightPercent", heightPercent)
-        .put("sound", sound).put("haptic", haptic).put("autoCorrect", autoCorrect).put("suggestions", suggestions)
+        .put("keyShape", keyShape).put("numberRow", numberRow).put("sound", sound).put("haptic", haptic).put("autoCorrect", autoCorrect).put("suggestions", suggestions)
         .put("weather", weather).put("skills", skillsJson(skills))
         .toString(2)
 
@@ -142,6 +145,8 @@ class Store(context: Context) {
         if (o.optString("theme") in THEMES) theme = o.getString("theme")
         if (o.has("customAccent")) customAccent = o.optInt("customAccent") or 0xFF000000.toInt()
         if (o.has("heightPercent")) heightPercent = o.optInt("heightPercent", 100)
+        if (o.optString("keyShape") in SHAPES) keyShape = o.getString("keyShape")
+        if (o.has("numberRow")) numberRow = o.optBoolean("numberRow")
         if (o.has("sound")) sound = o.optBoolean("sound")
         if (o.has("haptic")) haptic = o.optBoolean("haptic")
         if (o.has("autoCorrect")) autoCorrect = o.optBoolean("autoCorrect")
@@ -154,7 +159,8 @@ class Store(context: Context) {
     companion object {
         const val MIN_HEIGHT = 80
         const val MAX_HEIGHT = 130
-        val THEMES = listOf("system", "dark", "light", "amoled", "custom")
+        val THEMES = listOf("system", "dark", "light", "amoled", "custom", "ocean", "rose", "forest", "sunset", "mint")
+        val SHAPES = listOf("rounded", "square", "bubble", "flat")
         val CATEGORIES = listOf("write", "edit", "translate", "summarize")
 
         private fun parseSkills(arr: JSONArray) = (0 until arr.length()).map {

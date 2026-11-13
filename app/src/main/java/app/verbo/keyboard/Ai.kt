@@ -35,11 +35,11 @@ class ToolSpec(
 
 /** Talks to Claude. No Android dependencies, so it can be exercised on a plain JVM. */
 object Ai {
-    const val DEFAULT_MODEL = "claude-opus-5-5"
+    const val DEFAULT_MODEL = "claude-haiku-5-5" // the cheapest; a keyboard action costs a fraction of a cent
     val MODELS = listOf(
-        "claude-opus-5-5" to "Opus 5.5 — most capable",
+        "claude-haiku-5-5" to "Haiku 5.5 — cheapest, fast",
         "claude-sonnet-5-5" to "Sonnet 5.5 — balanced",
-        "claude-haiku-5-5" to "Haiku 5.5 — fastest",
+        "claude-opus-5-5" to "Opus 5.5 — most capable",
     )
 
     /** OpenAI models offered in the picker; any other model ID can be typed in. */
@@ -55,7 +55,14 @@ Return only the replacement text. No preamble, no explanation of what you did, n
 
 If the request needs current or factual information you are not sure of (places, scores, schedules, prices, weather, news), use web search when it is available rather than guessing, and put the useful facts directly in the text. If you cannot do what was asked, return one short sentence saying why.
 
-Sometimes the most helpful outcome is also opening something on the phone: a map search, a phone number, a new email, or a web page. In that case add one final line in exactly this form: [[open:URI]] using a geo:0,0?q=..., tel:, mailto: or https: URI. The keyboard strips that line from the text and offers the link to the user. Only add it when it clearly helps. To let the user post on X, use https://x.com/intent/post?text=... with the text URL-encoded.
+Sometimes the most helpful outcome is also opening something on the phone: a map search, a phone number, a new email, or a web page. In that case add one final line in exactly this form: [[open:URI]] using a geo:0,0?q=..., tel:, mailto: or https: URI. The keyboard strips that line from the text and offers the link to the user. Only add it when it clearly helps. Useful link forms, with every value URL-encoded:
+- Email draft (opens Gmail or the user's mail app): mailto:ADDRESS?subject=...&body=... (leave ADDRESS empty if you don't know it)
+- WhatsApp message: https://wa.me/?text=... (or https://wa.me/NUMBER?text=... when the user gave a phone number with country code)
+- Calendar event: https://calendar.google.com/calendar/render?action=TEMPLATE&text=TITLE&dates=YYYYMMDDTHHMMSS/YYYYMMDDTHHMMSS&details=...&location=...
+- Map search or directions: geo:0,0?q=...
+- YouTube search: https://www.youtube.com/results?search_query=...
+- Post on X: https://x.com/intent/post?text=...
+When the link carries the whole message (an email or WhatsApp draft), still return the message text itself as well.
 
 You may also have tools for apps and APIs the user connected. Use them when the request is about that app or needs its data. When a tool changes something for the user (for example creating a page), say in the returned text what was done, in one short line."""
 
@@ -65,7 +72,10 @@ You may also have tools for apps and APIs the user connected. Use them when the 
 
     fun skillTask(instruction: String) = "Task: apply this skill to the user's text. $instruction"
 
-    fun systemPrompt(task: String?): String = BASE_PROMPT + "\n\n" + (task ?: BAR_TASK)
+    /** The phone's date and time go in so requests like "tomorrow at 5" can be turned into real dates. */
+    fun systemPrompt(task: String?): String = BASE_PROMPT + "\n\n" + (task ?: BAR_TASK) +
+        "\n\nThe user's current date and time: " +
+        java.time.ZonedDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("EEEE d MMMM yyyy, HH:mm (xxx)", java.util.Locale.ENGLISH))
 
     /** Blocking; call from a background thread. */
     fun run(apiKey: String, model: String, webSearch: Boolean, task: String?, userText: String, tools: List<ToolSpec> = emptyList()): ActionResult {
