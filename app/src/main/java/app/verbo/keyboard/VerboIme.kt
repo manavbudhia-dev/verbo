@@ -55,7 +55,11 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     private var panel: LinearLayout? = null // takes the place of the keys while an action runs and to show its result
     private var typingViews: List<View> = emptyList()
     private var contextBox: LinearLayout? = null
-    private var contextText: String? = null // a copied message the user chose to give the assistant as context
+    private var contextText: String? = null
+    private var wheelIds: List<String> = emptyList()
+    private var voiceCommand = false
+    private var levels: LevelView? = null
+    private var heardView: TextView? = null // a copied message the user chose to give the assistant as context
     private var recognizer: SpeechRecognizer? = null
     private var builtWith = ""
 
@@ -193,7 +197,23 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         assistantOn = store.assistantOn
         agentMode = store.agentMode
         skills = store.skills
-        keys?.barLabel = if (assistantOn && agentMode != "manual") "hold to act" else ""
+        val barActive = assistantOn && agentMode != "manual"
+        wheelIds = if (barActive && store.wheelOn) store.wheel else emptyList()
+        keys?.wheelItems = wheelIds.map { id ->
+            when (id) {
+                "ai" -> KeyboardView.WheelItem("Ask AI", R.drawable.ic_sparkles)
+                "translate" -> KeyboardView.WheelItem("Translate", R.drawable.ic_languages)
+                "rewrite" -> KeyboardView.WheelItem("Rewrite", R.drawable.ic_pencil_line)
+                "voice" -> KeyboardView.WheelItem("Voice", R.drawable.ic_mic)
+                "clips" -> KeyboardView.WheelItem("Clips", R.drawable.ic_clipboard)
+                else -> {
+                    val name = id.removePrefix("skill:")
+                    val skill = skills.firstOrNull { it.name == name }
+                    if (skill != null && skill.emoji.isNotEmpty()) KeyboardView.WheelItem(name, 0, skill.emoji) else KeyboardView.WheelItem(name, R.drawable.ic_zap)
+                }
+            }
+        }
+        keys?.barLabel = if (!barActive) "" else if (wheelIds.isEmpty()) "hold to act" else "hold for wheel"
         keys?.bound = if (assistantOn) skills.mapNotNull { it.key.firstOrNull() }.toSet() else emptySet()
     }
 
@@ -386,6 +406,20 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     override fun onBarHeld() {
         feedback(KeyboardView.Type.ENTER)
         runAction(null)
+    }
+
+    /** A shortcut on the wheel was chosen. */
+    override fun onWheel(index: Int) {
+        val id = wheelIds.getOrNull(index) ?: return
+        feedback(KeyboardView.Type.ENTER)
+        when (id) {
+            "ai" -> runAction(null)
+            "translate" -> showLanguages()
+            "rewrite" -> showRewrite()
+            "voice" -> startVoice(false)
+            "clips" -> showClips()
+            else -> skills.firstOrNull { it.name == id.removePrefix("skill:") }?.let { runAction(it) } ?: showStatus("That skill no longer exists")
+        }
     }
 
     /** A letter with a skill bound to it was held: run that skill instead of typing the letter. */
@@ -685,6 +719,16 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     }
 
     private fun runAction(skill: Skill?) {
+        // Requests typed for the bar are answers to look at first, so they open as a card with Copy and Insert.
+        // Skill keys rewrite your own text, so they apply straight away unless Agent Mode is "Ask first".
+        runTask(
+            if (skill == null) "Working on it…" else "${skill.name}…",
+            skill?.let { Ai.skillTask(it.instruction) }, card = skill == null || agentMode == "ask",
+        ) { runAction(skill) }
+    }
+
+    /** Runs [task] (null = "do what the text says") on the field's text, with the copied context if one is attached. */
+    private fun runTask(label: String, task: String?, card: Boolean, retry: () -> Unit) {
         if (busy) return
         if (isPasswordField()) {
             showStatus("Verbo doesn't read password fields")
@@ -697,23 +741,122 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         val target = readTarget() ?: return
         val context = contextText
         if (target.text.isBlank() && context == null) {
-            showStatus(if (skill == null) "Type what you want, then hold the bar" else "Type something first")
+            showStatus("Type something first, or copy a message and tap “Use copied text”")
             return
         }
         if (target.text.length >= MAX_CHARS) {
             showStatus("That's too much text for one action. Select a part of it")
             return
         }
-        // Requests typed for the bar are answers to look at first, so they open as a card with Copy and Insert.
-        // Skill keys rewrite your own text, so they apply straight away unless Agent Mode is "Ask first".
-        val card = skill == null || agentMode == "ask"
-        launch(
-            if (skill == null) "Working on it…" else "${skill.name}…",
-            skill?.let { Ai.skillTask(it.instruction) }, Ai.userMessage(target.text, context), connected = true, card = card,
-        ) { result ->
-            if (card) showResult(result, { deliver(target, result) }) { hidePanel(); runAction(skill) }
+        launch(label, task, Ai.userMessage(target.text, context), connected = true, card = card) { result ->
+            if (card) showResult(result, { deliver(target, result) }) { hidePanel(); retry() }
             else deliver(target, result)
         }
+    }
+
+    // ---------- wheel tools: translate, rewrite, clips ----------
+
+    /** A panel with a title and a two-column grid of choices. */
+    private fun showChoices(title: String, choices: List<Pair<String, () -> Unit>>, highlightFirst: Boolean = false) = showPanel {
+        val header = LinearLayout(this@VerboIme).apply { gravity = Gravity.CENTER_VERTICAL }
+        header.addView(iconButton(R.drawable.ic_chevron_right, "Back to keyboard") { hidePanel(); showTyping() }.apply { rotation = 180f },
+            LinearLayout.LayoutParams(dp(40), dp(40)))
+        header.addView(TextView(this@VerboIme).apply {
+            text = title
+            setTextColor(p.text)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(dp(4), 0, 0, 0)
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        addView(header)
+        val grid = LinearLayout(this@VerboIme).apply { orientation = LinearLayout.VERTICAL }
+        choices.chunked(2).forEachIndexed { r, pair ->
+            val row = LinearLayout(this@VerboIme)
+            pair.forEachIndexed { c, (label, onTap) ->
+                val strong = highlightFirst && r == 0 && c == 0
+                val chip = chipView(label, if (strong) p.accent else p.key, if (strong) p.accentPressed else p.keyPressed, if (strong) p.onAccent else p.text)
+                chip.ellipsize = TextUtils.TruncateAt.END
+                chip.setOnClickListener { feedback(KeyboardView.Type.MODE); onTap() }
+                row.addView(chip, LinearLayout.LayoutParams(0, dp(44), 1f).apply { setMargins(dp(3), dp(3), dp(3), dp(3)) })
+            }
+            if (pair.size == 1) row.addView(View(this@VerboIme), LinearLayout.LayoutParams(0, 1, 1f).apply { setMargins(dp(3), 0, dp(3), 0) })
+            grid.addView(row)
+        }
+        addView(android.widget.ScrollView(this@VerboIme).apply { addView(grid) }, LinearLayout.LayoutParams(-1, 0, 1f))
+    }
+
+    private fun showLanguages() {
+        val mine = store.languages
+        fun go(languages: List<String>) {
+            hidePanel()
+            runTask(if (languages.size == 1) "Into ${languages[0]}…" else "Translating…", Ai.translateTask(languages), card = true) { showLanguages() }
+        }
+        val choices = ArrayList<Pair<String, () -> Unit>>()
+        if (mine.size > 1) choices += "All ${mine.size} of my languages" to { go(mine) }
+        mine.forEach { choices += it to { go(listOf(it)) } }
+        Store.ALL_LANGUAGES.filter { it !in mine }.forEach { choices += it to { go(listOf(it)) } }
+        showChoices("Translate into", choices, highlightFirst = mine.size > 1)
+    }
+
+    private fun showRewrite() {
+        val styles = skills.filter { it.category == "edit" }
+        if (styles.isEmpty()) {
+            showStatus("No rewrite skills yet. Add one in the Verbo app")
+            return
+        }
+        showChoices("Rewrite as", styles.map { skill -> (skill.emoji + " " + skill.name).trim() to { hidePanel(); runAction(skill) } })
+    }
+
+    private fun showClips(): Unit = showPanel {
+        val clipboard = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        val current = try { clipboard.primaryClip?.getItemAt(0)?.coerceToText(this@VerboIme)?.toString()?.trim().orEmpty() } catch (e: Exception) { "" }
+        val saved = store.clips
+        val header = LinearLayout(this@VerboIme).apply { gravity = Gravity.CENTER_VERTICAL }
+        header.addView(iconButton(R.drawable.ic_chevron_right, "Back to keyboard") { hidePanel(); showTyping() }.apply { rotation = 180f },
+            LinearLayout.LayoutParams(dp(40), dp(40)))
+        header.addView(TextView(this@VerboIme).apply {
+            text = "Clips"
+            setTextColor(p.text)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(dp(4), 0, 0, 0)
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        addView(header)
+        val list = LinearLayout(this@VerboIme).apply { orientation = LinearLayout.VERTICAL }
+        fun row(text: String, action: String, onAction: () -> Unit) {
+            val row = LinearLayout(this@VerboIme).apply {
+                gravity = Gravity.CENTER_VERTICAL
+                background = pressable(p.key, p.keyPressed, 12)
+                setPadding(dp(12), dp(8), dp(4), dp(8))
+                setOnClickListener {
+                    feedback(KeyboardView.Type.MODE)
+                    hidePanel()
+                    currentInputConnection?.commitText(text, 1)
+                    showTyping()
+                }
+            }
+            row.addView(TextView(this@VerboIme).apply {
+                this.text = text
+                setTextColor(p.text)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
+                maxLines = 2
+                ellipsize = TextUtils.TruncateAt.END
+            }, LinearLayout.LayoutParams(0, -2, 1f))
+            val button = chipView(action, Color.TRANSPARENT, p.keyPressed, p.accent)
+            button.typeface = Typeface.DEFAULT_BOLD
+            button.setOnClickListener { feedback(KeyboardView.Type.MODE); onAction() }
+            row.addView(button, LinearLayout.LayoutParams(-2, dp(36)))
+            list.addView(row, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(6) })
+        }
+        if (current.isNotEmpty() && current !in saved) row(current.take(2000), "Save") { store.clips = listOf(current.take(2000)) + saved; showClips() }
+        saved.forEach { clip -> row(clip, "Remove") { store.clips = saved - clip; showClips() } }
+        if (current.isEmpty() && saved.isEmpty()) list.addView(TextView(this@VerboIme).apply {
+            text = "Nothing copied yet. Copy some text, then save it here to paste it any time."
+            setTextColor(p.muted)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setPadding(dp(8), dp(16), dp(8), 0)
+        })
+        addView(android.widget.ScrollView(this@VerboIme).apply { addView(list) }, LinearLayout.LayoutParams(-1, 0, 1f))
     }
 
     /** Runs one assistant request off the main thread and hands the result back, unless it was cancelled. */
@@ -972,7 +1115,10 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
 
     // ---------- voice ----------
 
-    /** Tap: dictation, cleaned up by the assistant. Hold: speak a request and get the result. */
+    /**
+     * Opens the listening panel. "Transcribe" turns speech into tidy text; "Command" treats it as a request.
+     * [command] picks which of the two happens if the user just stops talking.
+     */
     private fun startVoice(command: Boolean) {
         if (busy || listening) return
         if (isPasswordField()) {
@@ -988,28 +1134,22 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             return
         }
         val smart = assistantOn && store.activeKey.isNotBlank()
-        if (command && !smart) {
-            showStatus("Voice commands need the assistant and an API key", "Set up" to { openApp() })
-            return
-        }
+        voiceCommand = command && smart
         val rec = recognizer ?: SpeechRecognizer.createSpeechRecognizer(this).also { recognizer = it }
-        val heading = if (command) "Say what you want…" else "Listening…"
-        val buttons = arrayOf<Pair<String, () -> Unit>>(
-            "Done" to { rec.stopListening() },
-            "Cancel" to { rec.cancel(); listening = false; showTyping() },
-        )
         rec.setRecognitionListener(object : RecognitionListener {
             override fun onPartialResults(partial: Bundle?) {
                 val heard = partial?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
-                if (!heard.isNullOrBlank()) showStatus(heard.takeLast(60), *buttons)
+                if (!heard.isNullOrBlank()) heardView?.text = heard
             }
             override fun onResults(results: Bundle?) {
                 listening = false
+                hidePanel()
                 val heard = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
-                if (heard.isNullOrBlank()) showStatus("Didn't catch that") else onHeard(heard, command, smart)
+                if (heard.isNullOrBlank()) showStatus("Didn't catch that") else onHeard(heard, voiceCommand, smart)
             }
             override fun onError(error: Int) {
                 listening = false
+                hidePanel()
                 showStatus(when (error) {
                     SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Didn't catch that"
                     SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "No connection for speech"
@@ -1017,19 +1157,59 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
                     else -> "Voice input failed"
                 })
             }
+            override fun onRmsChanged(rmsdB: Float) { levels?.push(rmsdB) }
             override fun onReadyForSpeech(params: Bundle?) {}
             override fun onBeginningOfSpeech() {}
-            override fun onRmsChanged(rmsdB: Float) {}
             override fun onBufferReceived(buffer: ByteArray?) {}
             override fun onEndOfSpeech() {}
             override fun onEvent(eventType: Int, params: Bundle?) {}
         })
-        showStatus(heading, *buttons)
+        showListening(rec, smart)
         listening = true
         rec.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
         })
+    }
+
+    private fun showListening(rec: SpeechRecognizer, smart: Boolean) = showPanel {
+        val header = LinearLayout(this@VerboIme).apply { gravity = Gravity.CENTER_VERTICAL }
+        header.addView(TextView(this@VerboIme).apply {
+            text = "Listening…"
+            setTextColor(p.muted)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setPadding(dp(8), 0, 0, 0)
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        header.addView(iconButton(R.drawable.ic_x, "Stop listening", p.muted) {
+            rec.cancel()
+            listening = false
+            hidePanel()
+            showTyping()
+        }, LinearLayout.LayoutParams(dp(40), dp(40)))
+        addView(header)
+        levels = LevelView(this@VerboIme, p.accent)
+        addView(levels, LinearLayout.LayoutParams(-1, 0, 1f))
+        heardView = TextView(this@VerboIme).apply {
+            gravity = Gravity.CENTER
+            setTextColor(p.text)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            maxLines = 2
+            ellipsize = TextUtils.TruncateAt.START
+            setPadding(dp(8), 0, dp(8), dp(8))
+        }
+        addView(heardView, LinearLayout.LayoutParams(-1, dp(48)))
+        // Tapping either button stops listening and decides what happens to the words.
+        val footer = LinearLayout(this@VerboIme).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, 0, 0, dp(2)) }
+        fun mode(label: String, asCommand: Boolean, weight: Float) {
+            val on = voiceCommand == asCommand
+            val chip = chipView(label, if (on) p.accent else p.key, if (on) p.accentPressed else p.keyPressed, if (on) p.onAccent else p.text)
+            chip.typeface = Typeface.DEFAULT_BOLD
+            chip.setOnClickListener { feedback(KeyboardView.Type.MODE); voiceCommand = asCommand; rec.stopListening() }
+            footer.addView(chip, LinearLayout.LayoutParams(0, dp(46), weight).apply { setMargins(dp(4), 0, dp(4), 0) })
+        }
+        if (smart) mode("Command", true, 1f)
+        mode(if (smart) "Transcribe" else "Done", false, 1.3f)
+        addView(footer)
     }
 
     private fun onHeard(heard: String, command: Boolean, smart: Boolean) {
@@ -1092,5 +1272,32 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
 
     companion object {
         private const val MAX_CHARS = 20000
+    }
+}
+
+/** A row of bars that rise and fall with the microphone level while listening. */
+private class LevelView(context: android.content.Context, color: Int) : View(context) {
+    private val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { this.color = color }
+    private val bars = FloatArray(15) { 0.08f }
+
+    /** [rms] is the recogniser's loudness reading, roughly -2 (silence) to 10 (loud). */
+    fun push(rms: Float) {
+        System.arraycopy(bars, 1, bars, 0, bars.size - 1)
+        bars[bars.size - 1] = ((rms + 2f) / 12f).coerceIn(0.08f, 1f)
+        invalidate()
+    }
+
+    override fun onDraw(canvas: android.graphics.Canvas) {
+        val d = resources.displayMetrics.density
+        val w = 6 * d
+        val gap = 6 * d
+        val total = bars.size * w + (bars.size - 1) * gap
+        var x = (width - total) / 2
+        val mid = height / 2f
+        val max = height * 0.42f
+        for (b in bars) {
+            canvas.drawRoundRect(x, mid - b * max, x + w, mid + b * max, w / 2, w / 2, paint)
+            x += w + gap
+        }
     }
 }

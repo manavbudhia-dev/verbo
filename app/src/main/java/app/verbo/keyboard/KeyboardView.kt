@@ -63,6 +63,7 @@ class KeyboardView(
         fun onShift()
         fun onBarHeld()
         fun onKeyHeld(letter: Char)
+        fun onWheel(index: Int)
         fun onPress(type: Type)
     }
 
@@ -74,12 +75,21 @@ class KeyboardView(
 
     private class Press(var key: Key) { var done = false }
 
+    /** One shortcut on the wheel: an icon, or an emoji when [icon] is 0. */
+    class WheelItem(val label: String, val icon: Int, val emoji: String = "")
+
     var listener: Listener? = null
     var mode = Mode.LETTERS
         set(value) { if (field != value) { field = value; build(); requestLayout(); invalidate() } }
     /** 0 off, 1 next letter, 2 caps lock. */
     var shift = 0
         set(value) { if (field != value) { field = value; invalidate() } }
+    /** Shortcuts shown on the wheel when the bar is held. Empty means holding the bar runs the assistant directly. */
+    var wheelItems: List<WheelItem> = emptyList()
+    private var wheelOpen = false
+    private var wheelPointer = -1
+    private var wheelPick = -1
+
     /** Letters that run a skill when held. They are marked with a small glow. */
     var bound: Set<Char> = emptySet()
         set(value) { if (field != value) { field = value; invalidate() } }
@@ -268,6 +278,7 @@ class KeyboardView(
                 }
             }
         }
+        if (wheelOpen) drawWheel(canvas)
     }
 
     // ---------- touch ----------
@@ -307,12 +318,99 @@ class KeyboardView(
     }
 
     private val barHold = Runnable {
-        val press = presses.values.firstOrNull { it.key.type == Type.BAR && !it.done } ?: return@Runnable
-        press.done = true
-        listener?.onBarHeld()
+        val entry = presses.entries.firstOrNull { it.value.key.type == Type.BAR && !it.value.done } ?: return@Runnable
+        entry.value.done = true
+        if (wheelItems.isEmpty()) {
+            listener?.onBarHeld()
+        } else {
+            // Open the wheel under the finger that is still holding the bar; sliding picks, lifting runs.
+            wheelOpen = true
+            wheelPointer = entry.key
+            wheelPick = -1
+            listener?.onPress(Type.ENTER)
+            invalidate()
+        }
+    }
+
+    // ---------- the wheel ----------
+
+    private val wheelCx get() = width / 2f
+    private val wheelCy get() = height.toFloat()
+    private val wheelR get() = minOf(width * 0.47f, height * 0.80f)
+
+    /** Which shortcut a point is over, or -1 for the cancel zone in the middle (and anything outside the wheel). */
+    private fun wheelAt(x: Float, y: Float): Int {
+        val dx = x - wheelCx
+        val dy = wheelCy - y
+        val dist = kotlin.math.hypot(dx, dy)
+        if (dist < wheelR * 0.36f || dist > wheelR * 1.25f || dy < 0) return -1
+        val angle = Math.toDegrees(kotlin.math.atan2(dy, dx).toDouble()) // 0 = right, 180 = left
+        return ((180 - angle) / (180.0 / wheelItems.size)).toInt().coerceIn(0, wheelItems.size - 1)
+    }
+
+    private fun drawWheel(canvas: Canvas) {
+        val n = wheelItems.size
+        val cx = wheelCx
+        val cy = wheelCy
+        val r = wheelR
+        val arc = RectF(cx - r, cy - r, cx + r, cy + r)
+        face.shader = null
+        face.color = (theme.bg and 0x00FFFFFF) or 0xF2000000.toInt()
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), face)
+        face.color = theme.key
+        canvas.drawArc(arc, 180f, 180f, true, face)
+        val step = 180f / n
+        if (wheelPick >= 0) {
+            face.color = (theme.accent and 0x00FFFFFF) or 0x33000000
+            canvas.drawArc(arc, 180f + wheelPick * step, step, true, face)
+            edge.color = theme.accent
+            edge.strokeWidth = 3.5f * d
+            canvas.drawArc(arc, 180f + wheelPick * step, step, false, edge)
+            edge.strokeWidth = 1.2f * d
+        }
+        for (i in 0 until n) {
+            val item = wheelItems[i]
+            val angle = Math.toRadians((180 - (i + 0.5) * step))
+            val x = cx + (r * 0.68f * kotlin.math.cos(angle)).toFloat()
+            val y = cy - (r * 0.68f * kotlin.math.sin(angle)).toFloat()
+            val size = (if (i == wheelPick) 25 else 21) * d
+            face.color = if (i == wheelPick) theme.accent else theme.fnKey
+            canvas.drawCircle(x, y, size, face)
+            val tint = if (i == wheelPick) theme.onAccent else theme.text
+            if (item.icon != 0) {
+                val half = 11 * d
+                icon(item.icon).apply {
+                    setTint(tint)
+                    setBounds((x - half).toInt(), (y - half).toInt(), (x + half).toInt(), (y + half).toInt())
+                    draw(canvas)
+                }
+            } else {
+                letters.color = tint
+                letters.textSize = 20 * d
+                canvas.drawText(item.emoji.ifEmpty { item.label.take(1) }, x, y - (letters.descent() + letters.ascent()) / 2, letters)
+            }
+        }
+        // The middle is where the finger starts: lifting there does nothing.
+        face.color = theme.bg
+        canvas.drawArc(RectF(cx - r * 0.34f, cy - r * 0.34f, cx + r * 0.34f, cy + r * 0.34f), 180f, 180f, true, face)
+        letters.color = theme.muted
+        letters.textSize = 13 * d
+        canvas.drawText("Cancel", cx, cy - r * 0.12f, letters)
+        // What lifting the finger will do, in a pill above the wheel.
+        val label = if (wheelPick >= 0) wheelItems[wheelPick].label else "Slide to choose · release to cancel"
+        letters.textSize = 14.5f * d
+        letters.typeface = Typeface.DEFAULT_BOLD
+        val w = letters.measureText(label) + 26 * d
+        val top = (cy - r - 34 * d).coerceAtLeast(3 * d)
+        face.color = if (wheelPick >= 0) theme.accent else theme.fnKey
+        canvas.drawRoundRect(cx - w / 2, top, cx + w / 2, top + 28 * d, 14 * d, 14 * d, face)
+        letters.color = if (wheelPick >= 0) theme.onAccent else theme.muted
+        canvas.drawText(label, cx, top + 14 * d - (letters.descent() + letters.ascent()) / 2, letters)
+        letters.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
     }
 
     private fun down(id: Int, x: Float, y: Float) {
+        if (wheelOpen) return // other fingers are ignored while the wheel is up
         val key = keyAt(x, y) ?: return
         // A second finger landing means the first key was meant: commit it now, in order.
         // Committing can switch the layout (space in the symbols page), which rebuilds the keys and
@@ -344,6 +442,14 @@ class KeyboardView(
     }
 
     private fun up(id: Int) {
+        if (wheelOpen && id == wheelPointer) {
+            val pick = wheelPick
+            wheelOpen = false
+            wheelPick = -1
+            presses.remove(id)
+            if (pick >= 0) listener?.onWheel(pick)
+            return
+        }
         val press = presses.remove(id) ?: return
         if (press.key.type == Type.BAR) handler.removeCallbacks(barHold)
         if (press.key.type == Type.CHAR) handler.removeCallbacks(keyHold)
@@ -356,7 +462,16 @@ class KeyboardView(
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN ->
                 down(e.getPointerId(e.actionIndex), e.getX(e.actionIndex), e.getY(e.actionIndex))
-            MotionEvent.ACTION_MOVE -> for (i in 0 until e.pointerCount) {
+            MotionEvent.ACTION_MOVE -> if (wheelOpen) {
+                val i = e.findPointerIndex(wheelPointer)
+                if (i >= 0) {
+                    val pick = wheelAt(e.getX(i), e.getY(i))
+                    if (pick != wheelPick) {
+                        wheelPick = pick
+                        if (pick >= 0) listener?.onPress(Type.MODE)
+                    }
+                }
+            } else for (i in 0 until e.pointerCount) {
                 // Sliding off a letter onto its neighbour before lifting corrects a mis-hit.
                 val press = presses[e.getPointerId(i)] ?: continue
                 if (press.done || press.key.type != Type.CHAR) continue
@@ -365,6 +480,8 @@ class KeyboardView(
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> up(e.getPointerId(e.actionIndex))
             MotionEvent.ACTION_CANCEL -> {
+                wheelOpen = false
+                wheelPick = -1
                 presses.clear()
                 handler.removeCallbacks(barHold)
                 handler.removeCallbacks(keyHold)

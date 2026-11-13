@@ -29,6 +29,7 @@ class PageActivity : Activity() {
         ui = Ui(this)
         page = intent.getStringExtra("page") ?: "prompts"
         render()
+        if (savedInstanceState == null && intent.getBooleanExtra("new", false)) editSkill(-1, null)
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) = render()
@@ -44,6 +45,8 @@ class PageActivity : Activity() {
             page == "languages" -> languagesPage(column)
             page == "dashboard" -> dashboardPage(column)
             page == "skins" -> skinsPage(column)
+            page == "wheel" -> wheelPage(column)
+            page == "translate" -> translatePage(column)
             page == "feedback" -> feedbackPage(column)
             page == "battery" -> batteryPage(column)
             page == "templates" -> templatesPage(column)
@@ -207,11 +210,10 @@ class PageActivity : Activity() {
     private fun shortcutsPage(column: LinearLayout) {
         column.addView(ui.topBar("Shortcuts & Triggers", "Use / command to run actions"))
         column.addView(ui.rows(
-            ui.row(R.drawable.ic_sparkle, "Hold the wide bar", "Treats what you typed as a request and shows the answer on a card to insert or copy"),
+            ui.row(R.drawable.ic_sparkle, "Hold the wide bar", "Opens the wheel: slide to Ask AI, Translate, Rewrite, Voice or Clips and let go"),
             ui.row(R.drawable.ic_keyboard, "Hold a marked letter", "Runs the skill bound to that key; set the letter when editing a skill"),
             ui.row(R.drawable.ic_message_square, "Use copied text", "Copy a message, then tap this chip above the keys to give it to the assistant as context"),
-            ui.row(R.drawable.ic_mic, "Tap the microphone", "Dictate; filler words and slips are tidied up"),
-            ui.row(R.drawable.ic_mic, "Hold the microphone", "Speak a request instead of typing it"),
+            ui.row(R.drawable.ic_mic, "Tap the microphone", "Opens the listening panel. Transcribe tidies what you said; Command treats it as a request"),
             ui.row(R.drawable.ic_keyboard, "Space twice", "Ends the sentence with a full stop"),
             ui.row(R.drawable.ic_delete, "Backspace after a correction", "Puts back the word you typed"),
         ))
@@ -286,6 +288,49 @@ class PageActivity : Activity() {
             val message = try { work(); done } catch (e: SyncException) { e.message ?: "Failed" } catch (e: Exception) { "Something went wrong" }
             runOnUiThread { if (!isFinishing && !isDestroyed) { ui.toast(message); render() } }
         }.start()
+    }
+
+    // ---------- wheel ----------
+
+    private fun wheelLabel(id: String) = Store.WHEEL_TOOLS.firstOrNull { it.first == id }?.second ?: id.removePrefix("skill:")
+
+    private fun wheelPage(column: LinearLayout) {
+        column.addView(ui.topBar("Shortcut wheel", "Your favourite tools, one slide away"))
+        note(column, "Hold the wide bar and the wheel opens under your finger. Slide to a shortcut and let go to run it; let go in the middle to cancel.")
+        column.addView(ui.rows(ui.row(R.drawable.ic_circle_dashed, "Hold the bar for the wheel", "When off, holding the bar asks the assistant straight away", ui.toggle(store.wheelOn) { store.wheelOn = it })))
+        column.addView(ui.section(R.drawable.ic_layers, "Shortcuts, left to right"))
+        val items = store.wheel
+        val options = Store.WHEEL_TOOLS.map { it.first } + store.skills.map { "skill:" + it.name }
+        fun choose(slot: Int) {
+            val free = options.filter { it !in items || items.getOrNull(slot) == it }
+            val labels = free.map { wheelLabel(it) } + if (slot < items.size) listOf("Remove this shortcut") else emptyList()
+            AlertDialog.Builder(this).setTitle("Shortcut ${slot + 1}").setItems(labels.toTypedArray()) { _, which ->
+                val next = items.toMutableList()
+                if (which >= free.size) next.removeAt(slot) else if (slot < next.size) next[slot] = free[which] else next.add(free[which])
+                store.wheel = next
+                render()
+            }.show()
+        }
+        val rows = items.mapIndexed { i, id ->
+            ui.row(if (id.startsWith("skill:")) R.drawable.ic_zap else R.drawable.ic_sparkles, wheelLabel(id), "Shortcut ${i + 1}", ui.chevron()) { choose(i) }
+        }.toMutableList()
+        if (items.size < 5) rows += ui.row(R.drawable.ic_plus, "Add a shortcut", "Up to five") { choose(items.size) }
+        column.addView(ui.rows(*rows.toTypedArray()))
+        note(column, "Ask AI treats what you typed as a request. Translate and Rewrite open a short list to pick from. Voice starts listening. Clips pastes saved snippets.")
+    }
+
+    // ---------- translate languages ----------
+
+    private fun translatePage(column: LinearLayout) {
+        column.addView(ui.topBar("Translate languages", "Shown first when you translate"))
+        note(column, "Your languages appear at the top of the Translate list, with one button to translate into all of them at once. Every other language stays available below them.")
+        val mine = store.languages
+        column.addView(ui.rows(*Store.ALL_LANGUAGES.map { name ->
+            ui.row(R.drawable.ic_languages, name, trailing = ui.toggle(name in mine) { on ->
+                val now = store.languages
+                store.languages = if (on) (now + name).distinct() else now - name
+            })
+        }.toTypedArray()))
     }
 
     // ---------- skins ----------

@@ -295,6 +295,50 @@ class KeyboardTest {
         assertTrue(m, m.startsWith("Context") && m.contains("We're meeting David tomorrow") && m.endsWith("who is he"))
     }
 
+    // ---------- the wheel ----------
+
+    private fun holdBar(keys: KeyboardView): Triple<Int, Float, Float> {
+        val bar = Triple(0, keys.width * 0.5f, keys.height * 0.88f)
+        touch(keys, MotionEvent.ACTION_DOWN, listOf(bar))
+        org.robolectric.shadows.ShadowLooper.idleMainLooper(500, java.util.concurrent.TimeUnit.MILLISECONDS)
+        return bar
+    }
+
+    @Test
+    fun wheelRunsTheShortcutTheFingerIsReleasedOn() {
+        type("hi")
+        val keys = ime.keys!!
+        layout(root)
+        assertEquals("default wheel has five shortcuts", 5, keys.wheelItems.size)
+        holdBar(keys)
+        // Slide to the far right of the wheel (Clips is the last shortcut) and let go.
+        val clips = Triple(0, keys.width * 0.86f, keys.height * 0.80f)
+        touch(keys, MotionEvent.ACTION_MOVE, listOf(clips))
+        touch(keys, MotionEvent.ACTION_UP, listOf(clips))
+        assertEquals("the clips panel replaces the keys", View.GONE, keys.visibility)
+        assertEquals("holding the bar must not type a space", "hi", field.text.toString())
+    }
+
+    @Test
+    fun wheelReleasedInTheMiddleDoesNothingAndATapStillTypesSpace() {
+        type("hi")
+        val keys = ime.keys!!
+        layout(root)
+        val bar = holdBar(keys)
+        touch(keys, MotionEvent.ACTION_UP, listOf(bar))
+        assertEquals(View.VISIBLE, keys.visibility)
+        assertEquals("hi", field.text.toString())
+        touch(keys, MotionEvent.ACTION_DOWN, listOf(bar))
+        touch(keys, MotionEvent.ACTION_UP, listOf(bar))
+        assertEquals("hi ", field.text.toString())
+    }
+
+    @Test
+    fun translateTaskNamesTheLanguages() {
+        assertTrue(Ai.translateTask(listOf("Hindi")).contains("into Hindi"))
+        assertTrue(Ai.translateTask(listOf("Hindi", "French")).contains("Hindi, French"))
+    }
+
     // ---------- pictures for checking layout by eye ----------
 
     private fun snap(view: View, name: String) {
@@ -346,6 +390,15 @@ class KeyboardTest {
         ime.onStartInputView(field.info, false)
         val agentRoot = ime.keys!!.parent as View
         layout(agentRoot)
+        // The wheel, mid-gesture, with the finger over Translate (leftmost).
+        val wheelKeys = ime.keys!!
+        holdBar(wheelKeys)
+        touch(wheelKeys, MotionEvent.ACTION_MOVE, listOf(Triple(0, wheelKeys.width * 0.5f, wheelKeys.height * 0.25f)))
+        snap(agentRoot, "wheel")
+        touch(wheelKeys, MotionEvent.ACTION_MOVE, listOf(Triple(0, wheelKeys.width * 0.14f, wheelKeys.height * 0.80f)))
+        touch(wheelKeys, MotionEvent.ACTION_UP, listOf(Triple(0, wheelKeys.width * 0.14f, wheelKeys.height * 0.80f)))
+        layout(agentRoot)
+        snap(agentRoot, "panel-languages")
         ime.showResult(ActionResult("Starbucks\n1585 Broadway, Times Square, New York, NY 10036\nhttps://www.google.com/maps/search/?api=1&query=Starbucks+1585+Broadway", "geo:0,0?q=Starbucks+1585+Broadway", 40.7596521 to -73.9852254), {}, {})
         layout(agentRoot)
         snap(agentRoot, "panel-place")
@@ -355,12 +408,18 @@ class KeyboardTest {
         store.theme = "system"
         store.theme = "system"
 
-        val main = Robolectric.buildActivity(MainActivity::class.java).setup().get()
-        val scroll = content(main)
-        val column = (scroll as ViewGroup).getChildAt(0)
-        scroll.layout(0, 0, 1080, column.measuredHeight)
-        snap(scroll, "settings")
-        for (page in listOf("feedback", "battery", "skins", "templates", "prompts", "automate", "shortcuts", "privacy", "dashboard", "category:edit")) {
+        for (tab in listOf("keys", "library", "settings")) {
+            MainActivity.tab = tab
+            val main = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+            val frame = content(main)
+            val scroll = (frame as ViewGroup).getChildAt(0) as ViewGroup
+            val h = maxOf(scroll.getChildAt(0).measuredHeight, 1400)
+            frame.measure(View.MeasureSpec.makeMeasureSpec(1080, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(h, View.MeasureSpec.EXACTLY))
+            frame.layout(0, 0, 1080, h)
+            snap(frame, if (tab == "settings") "settings" else "home-$tab")
+        }
+        MainActivity.tab = "keys"
+        for (page in listOf("wheel", "translate", "feedback", "battery", "skins", "templates", "prompts", "automate", "shortcuts", "privacy", "dashboard", "category:edit")) {
             val a = Robolectric.buildActivity(PageActivity::class.java, android.content.Intent().putExtra("page", page)).setup().get()
             val s = content(a)
             s.layout(0, 0, 1080, maxOf((s as ViewGroup).getChildAt(0).measuredHeight, 900))

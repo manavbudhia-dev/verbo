@@ -78,6 +78,10 @@ You may also have tools for apps and APIs the user connected. Use them when the 
 
     const val DICTATION_TASK = "Task: the user's text is a raw speech-to-text transcript they dictated into the field. Turn it into what they meant to write. Add punctuation and capitalisation, drop filler words, repeats and false starts, and apply spoken self-corrections (\"at five, no, six\" becomes \"at six\"). Honour spoken formatting requests such as \"new line\" or \"make that a list\". Fix words the recogniser obviously misheard. Do not answer questions in it, do not add content, and keep their wording and language."
 
+    fun translateTask(languages: List<String>) =
+        if (languages.size == 1) "Task: translate the text into ${languages[0]}. Return only the translation, natural and idiomatic, keeping the tone, emoji and names."
+        else "Task: translate the text into each of these languages: ${languages.joinToString(", ")}. Put a short title on the first line, then one line per language in the form \"Language: translation\"."
+
     fun skillTask(instruction: String) = "Task: apply this skill to the user's text. $instruction"
 
     /** The phone's date and time go in so requests like "tomorrow at 5" can be turned into real dates. */

@@ -42,10 +42,11 @@ class Ui(val a: Activity) {
         RippleDrawable(ColorStateList.valueOf(Color.parseColor("#33FFFFFF")), content, shape(Color.WHITE, radius))
 
     /** Page scaffold: a scroll view with a soft purple glow behind the top. Returns the column to fill. */
-    fun page(): LinearLayout {
+    /** [nav], when given, floats at the bottom of the screen above the scrolling content. */
+    fun page(nav: View? = null): LinearLayout {
         val column = LinearLayout(a).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(10), dp(16), dp(36))
+            setPadding(dp(16), dp(10), dp(16), dp(if (nav == null) 36 else 110))
         }
         val glow = GradientDrawable().apply {
             gradientType = GradientDrawable.RADIAL_GRADIENT
@@ -58,7 +59,11 @@ class Ui(val a: Activity) {
             background = LayerDrawable(arrayOf(shape(bg, 0), glow))
             addView(column)
         }
-        a.setContentView(scroll)
+        if (nav == null) a.setContentView(scroll)
+        else a.setContentView(android.widget.FrameLayout(a).apply {
+            addView(scroll, android.widget.FrameLayout.LayoutParams(-1, -1))
+            addView(nav, android.widget.FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = dp(26) })
+        })
         return column
     }
 

@@ -75,6 +75,20 @@ class Store(context: Context) {
     var autoCorrect: Boolean get() = bool("auto_correct", true); set(v) = put("auto_correct", v)
     var suggestions: Boolean get() = bool("suggestions", true); set(v) = put("suggestions", v)
 
+    // the wheel, translate languages and saved clips
+    /** Holding the bar opens the shortcut wheel; when off it runs the assistant straight away. */
+    var wheelOn: Boolean get() = bool("wheel_on", true); set(v) = put("wheel_on", v)
+    /** Up to five shortcut ids: a built-in tool from WHEEL_TOOLS, or "skill:" followed by a skill's name. */
+    var wheel: List<String>
+        get() = str("wheel", DEFAULT_WHEEL.joinToString("\n")).split("\n").filter { it.isNotBlank() }.take(5)
+        set(v) = put("wheel", v.take(5).joinToString("\n"))
+    var languages: List<String>
+        get() = str("languages", DEFAULT_LANGUAGES.joinToString("\n")).split("\n").filter { it in ALL_LANGUAGES }
+        set(v) = put("languages", v.joinToString("\n"))
+    var clips: List<String>
+        get() = try { JSONArray(str("clips", "[]")).let { a -> (0 until a.length()).map { a.getString(it) } } } catch (e: Exception) { emptyList() }
+        set(v) = put("clips", JSONArray(v.take(30)).toString())
+
     // dashboard pairing
     var serverUrl: String get() = str("server_url"); set(v) = put("server_url", v)
     var deviceToken: String get() = str("device_token"); set(v) = put("device_token", v)
@@ -186,6 +200,14 @@ class Store(context: Context) {
     companion object {
         const val MIN_HEIGHT = 80
         const val MAX_HEIGHT = 130
+        val WHEEL_TOOLS = listOf("ai" to "Ask AI", "translate" to "Translate", "rewrite" to "Rewrite", "voice" to "Voice", "clips" to "Clips")
+        val DEFAULT_WHEEL = listOf("translate", "rewrite", "ai", "voice", "clips")
+        val DEFAULT_LANGUAGES = listOf("English", "Hindi", "Spanish", "French", "Chinese (Simplified)")
+        val ALL_LANGUAGES = listOf(
+            "English", "Hindi", "Spanish", "French", "Chinese (Simplified)", "Arabic", "Bengali", "Portuguese", "Russian", "Japanese",
+            "German", "Korean", "Italian", "Turkish", "Indonesian", "Urdu", "Marathi", "Tamil", "Telugu", "Gujarati", "Punjabi", "Kannada", "Malayalam",
+            "Vietnamese", "Thai", "Dutch", "Polish", "Swahili",
+        )
         val THEMES = listOf("system", "dark", "light", "amoled", "custom", "ocean", "rose", "forest", "sunset", "mint")
         val SHAPES = listOf("raised", "rounded", "square", "bubble", "glass", "outline", "flat")
         val CATEGORIES = listOf("write", "edit", "translate", "summarize")

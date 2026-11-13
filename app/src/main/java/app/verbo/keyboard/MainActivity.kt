@@ -41,6 +41,8 @@ class MainActivity : Activity() {
         super.onResume()
         if (shownTheme.isNotEmpty() && shownTheme != store.theme) return recreate() // a skin was picked on another screen
         shownTheme = store.theme
+        if (built && tab != "settings") build() // skills, the wheel or languages may have been edited on another screen
+        built = true
         refreshSetup()
         // Back from system settings with the keyboard enabled: go straight to the chooser, no extra tap.
         if (wentToSettings && isEnabled() && !isSelected()) {
@@ -57,14 +59,142 @@ class MainActivity : Activity() {
     private fun open(page: String) = startActivity(Intent(this, PageActivity::class.java).putExtra("page", page))
 
     private fun build() {
-        val column = ui.page()
+        val column = ui.page(navBar())
+        when (tab) {
+            "keys" -> buildKeys(column)
+            "library" -> buildLibrary(column)
+            else -> buildSettings(column)
+        }
+        refreshSetup()
+    }
+
+    /** The floating bar at the bottom: skill keys, skill library, settings, and a shortcut to make a new skill. */
+    private fun navBar(): View {
+        val bar = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            background = ui.shape(Color.parseColor("#201F38"), 30, ui.line)
+            setPadding(ui.dp(8), ui.dp(6), ui.dp(8), ui.dp(6))
+            elevation = ui.dp(8).toFloat()
+        }
+        fun item(id: String?, icon: Int, label: String, onTap: () -> Unit) {
+            val on = id != null && id == tab
+            bar.addView(ui.icon(icon, 26, if (on) Color.WHITE else ui.muted).apply {
+                setPadding(ui.dp(13), ui.dp(11), ui.dp(13), ui.dp(11))
+                background = ui.ripple(if (on) ui.shape(ui.accent, 22) else null, 22)
+                contentDescription = label
+                setOnClickListener { onTap() }
+            }, LinearLayout.LayoutParams(ui.dp(52), ui.dp(48)).apply { setMargins(ui.dp(4), 0, ui.dp(4), 0) })
+        }
+        item("keys", R.drawable.ic_keyboard, "Skill keys") { tab = "keys"; build() }
+        item("library", R.drawable.ic_wand_sparkles, "Skill library") { tab = "library"; build() }
+        item("settings", R.drawable.ic_settings, "Settings") { tab = "settings"; build() }
+        item(null, R.drawable.ic_plus, "New skill") { startActivity(Intent(this, PageActivity::class.java).putExtra("page", "prompts").putExtra("new", true)) }
+        return bar
+    }
+
+    private fun newSetupBox(column: LinearLayout) {
+        setupBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        column.addView(setupBox)
+    }
+
+    private fun bigTitle(column: LinearLayout, title: String, subtitle: String) {
+        column.addView(ui.text(title, 32f, bold = true).apply { setPadding(ui.dp(2), ui.dp(18), 0, 0) })
+        column.addView(ui.text(subtitle, 14.5f, ui.muted).apply { setPadding(ui.dp(2), ui.dp(2), 0, ui.dp(16)) })
+    }
+
+    /** Home: a picture of the keyboard with the shortcut keys lit, and what each one does. */
+    private fun buildKeys(column: LinearLayout) {
+        bigTitle(column, "Verbo", "Hold a lit key to run its skill. Hold the wide bar for the wheel.")
+        newSetupBox(column)
+        val skills = store.skills
+        val theme = KeyTheme.of(this, store.theme, store.customAccent)
+        val preview = KeyboardView(this, theme, 0.78f, store.keyShape, false).apply {
+            bound = skills.mapNotNull { it.key.firstOrNull() }.toSet()
+            barLabel = if (store.wheelOn) "hold for wheel" else "hold to act"
+            setOnTouchListener { _, _ -> true } // a picture, not a keyboard
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        column.addView(LinearLayout(this).apply {
+            background = ui.shape(theme.bg, 20, ui.line)
+            setPadding(ui.dp(6), ui.dp(10), ui.dp(6), ui.dp(8))
+            addView(preview, LinearLayout.LayoutParams(-1, -2))
+        }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = ui.dp(6) })
+
+        fun skillRow(skill: Skill): View {
+            val row = ui.row(R.drawable.ic_zap, (skill.emoji + "  " + skill.name).trim(), skill.instruction, ui.chevron()) { open("prompts") }
+            ((row.getChildAt(1) as LinearLayout).getChildAt(1) as TextView).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }
+            row.removeViewAt(0)
+            row.addView(ui.text(skill.key.uppercase().ifEmpty { "·" }, 19f, if (skill.key.isEmpty()) ui.muted else Color.WHITE, bold = true).apply {
+                gravity = Gravity.CENTER
+                background = ui.shape(if (skill.key.isEmpty()) Color.parseColor("#1F1E36") else ui.accent, 10)
+            }, 0, LinearLayout.LayoutParams(ui.dp(40), ui.dp(40)))
+            return row
+        }
+        val bound = skills.filter { it.key.isNotEmpty() }.sortedBy { it.key }
+        val rest = skills.filter { it.key.isEmpty() }
+        column.addView(ui.section(R.drawable.ic_keyboard, "Skill keys"))
+        if (bound.isEmpty()) column.addView(ui.text("No skill has a key yet. Open a skill and set its hold key.", 14f, ui.muted).apply { setPadding(ui.dp(2), 0, 0, ui.dp(10)) })
+        bound.forEach { column.addView(ui.rows(skillRow(it))) }
+        if (rest.isNotEmpty()) {
+            column.addView(ui.section(R.drawable.ic_sparkles, "Other skills"))
+            column.addView(ui.rows(*rest.map { skillRow(it) }.toTypedArray()))
+        }
+        column.addView(ui.section(R.drawable.ic_circle_dashed, "Tools"))
+        column.addView(ui.rows(
+            ui.row(R.drawable.ic_circle_dashed, "Shortcut wheel", "Choose the five shortcuts on the wheel", ui.chevron()) { open("wheel") },
+            ui.row(R.drawable.ic_languages, "Translate languages", store.languages.joinToString(", ").ifEmpty { "None chosen" }, ui.chevron()) { open("translate") },
+            ui.row(R.drawable.ic_zap, "Connected tools", "Notion, Calendly, weather, places, your APIs", ui.chevron()) { open("automate") },
+        ))
+    }
+
+    /** Ready-made skills, grouped on shelves, added with one tap. */
+    private fun buildLibrary(column: LinearLayout) {
+        bigTitle(column, "Skills", "Ready-made skills. Add one and it appears above your keyboard.")
+        newSetupBox(column)
+        val chips = LinearLayout(this)
+        Library.SHELVES.forEach { name ->
+            val on = name == shelf
+            chips.addView(ui.text(name, 15f, if (on) Color.WHITE else ui.muted, bold = true).apply {
+                gravity = Gravity.CENTER
+                background = ui.ripple(if (on) ui.shape(ui.accent, 20) else ui.shape(ui.card, 20, ui.line), 20)
+                setPadding(ui.dp(18), ui.dp(9), ui.dp(18), ui.dp(9))
+                setOnClickListener { shelf = name; build() }
+            }, LinearLayout.LayoutParams(-2, -2).apply { rightMargin = ui.dp(8) })
+        }
+        column.addView(android.widget.HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(chips) },
+            LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = ui.dp(12) })
+
+        val mine = store.skills
+        Library.SKILLS.filter { it.shelf == shelf }.forEach { item ->
+            val added = mine.any { it.name == item.name }
+            val button = ui.text(if (added) "Added" else "Add", 14f, if (added) ui.muted else Color.WHITE, bold = true).apply {
+                gravity = Gravity.CENTER
+                background = if (added) ui.shape(Color.TRANSPARENT, 16, ui.line) else ui.ripple(ui.shape(ui.accent, 16), 16)
+                setPadding(ui.dp(16), ui.dp(7), ui.dp(16), ui.dp(7))
+                if (!added) setOnClickListener {
+                    // Give it its suggested hold key only if no other skill is using that letter.
+                    val key = item.key.takeIf { k -> k.isNotEmpty() && mine.none { it.key == k } } ?: ""
+                    store.skills = mine + Skill(item.emoji, item.name, item.instruction, item.group, key)
+                    ui.toast(item.name + " added" + if (key.isEmpty()) "" else ", hold ${key.uppercase()} to run it")
+                    build()
+                }
+            }
+            val row = ui.row(R.drawable.ic_sparkles, item.name, item.about, button)
+            row.removeViewAt(0)
+            row.addView(ui.text(item.emoji, 22f).apply { gravity = Gravity.CENTER; background = ui.shape(ui.accentSoft, 12) }, 0, LinearLayout.LayoutParams(ui.dp(46), ui.dp(46)))
+            column.addView(ui.rows(row))
+        }
+        if (store.deviceToken.isNotEmpty()) column.addView(ui.text("This keyboard is paired with a dashboard, so skills added here are replaced at the next sync. Add them on the dashboard to keep them.", 13.5f, ui.muted).apply { setPadding(ui.dp(2), ui.dp(8), 0, 0) })
+    }
+
+    private fun buildSettings(column: LinearLayout) {
 
         // ---- header ----
         val header = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, ui.dp(8), 0, ui.dp(14)) }
         header.addView(ui.icon(R.drawable.ic_arrow_left, 26, ui.ink).apply {
             background = ui.ripple(null, 20)
             contentDescription = "Back"
-            setOnClickListener { finish() }
+            setOnClickListener { tab = "keys"; build() }
         })
         header.addView(LinearLayout(this).apply {
             gravity = Gravity.CENTER
@@ -100,8 +230,7 @@ class MainActivity : Activity() {
         column.addView(header)
 
         // ---- setup steps, shown only until the keyboard is on ----
-        setupBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        column.addView(setupBox)
+        newSetupBox(column)
 
         // ---- assistant ----
         column.addView(ui.rows(ui.row(R.drawable.ic_sparkles, "Keyboard Assistant", "Use AI to write, edit, translate and automate",
@@ -429,7 +558,12 @@ class MainActivity : Activity() {
         }
     }
 
+    private var built = false
+
     companion object {
+        /** Which tab is showing; kept across screen rebuilds. */
+        internal var tab = "keys"
+        private var shelf = "Featured"
         private const val EXPORT = 1
         private const val IMPORT = 2
     }

@@ -4,9 +4,13 @@ An Android keyboard that acts on what you type.
 
 - **Fast typing** – one custom-drawn key view with per-finger tracking, word suggestions,
   auto-correct (backspace undoes a correction), double-space full stop, key sound and vibration.
-- **Action bar** – the wide ✦ bar types a space on tap. Hold it and the text in the field is treated as
-  a request. The keys give way to a result card (with a small map for a place) and Copy / Insert buttons;
-  in chat apps whose enter key sends, Insert becomes Send.
+- **Shortcut wheel** – hold the wide ✦ bar and a wheel opens under your finger: slide to Ask AI, Translate,
+  Rewrite, Voice or Clips (or any skill you put there) and let go. Results open as a card in place of the keys
+  with Copy / Insert (Send in chat apps whose enter key sends), and a small map for a place.
+- **Translate** – pick a language, or translate into all of your languages at once.
+- **Voice panel** – a listening panel with a level meter; Transcribe tidies speech, Command treats it as a request.
+- **Clips** – save copied text and paste it any time.
+- **Skill library** – ready-made skills on shelves (Featured, Work, Social, Fun, Languages), added with one tap.
 - **Keys as shortcuts** – bind a skill to a letter and hold that key to run it (marked keys show a glow).
 - **Context** – copy a message you received and tap "Use copied text" so the assistant knows what you are answering.
 - **Skill keys** – the strip above the keys. Each one applies a saved instruction to your
@@ -57,6 +61,7 @@ Tests (typing logic, plus screenshots of every screen written to `app/build/shot
 - `VerboIme.kt` – the keyboard service: word tracking, suggestions, actions, voice
 - `KeyboardView.kt` – the keys: drawing, themes and touch handling
 - `Dictionary.kt` – word list lookups for suggestions and auto-correct
+- `Library.kt` – the catalogue of ready-made skills
 - `Ui.kt`, `PageActivity.kt` – settings look and detail screens
 - `Ai.kt` – the Claude request, prompts and result parsing
 - `ChatCompat.kt` – the same action through OpenAI-compatible gateways (Chat Completions)
