@@ -15,6 +15,10 @@ An Android keyboard that acts on what you type.
 - **Templates** – ready-made daily requests that open Gmail, WhatsApp, Calendar, Maps, YouTube or X
   with a draft filled in; some can be added as skill keys.
 - **Skins** – ten colour skins, four key shapes (rounded, square, bubble, flat) and an optional number row.
+- **Sound and vibration** – six key sound effects (typewriter with a bell, mechanical, pop, water drop,
+  soft tap, phone default), volume, and three vibration strengths.
+- **Battery** – follows the phone's Battery Saver (no key feedback or background sync) and releases the
+  microphone and audio player whenever the keyboard is hidden.
 - **Appearance** – System, Dark, Light, Amoled or a custom accent colour, and adjustable key height.
 - **Dashboard** – optional web app (see `dashboard/`) to manage skills and connections
   from a browser; pair the keyboard with a one-time code and it syncs.
@@ -62,4 +66,5 @@ Tests (typing logic, plus screenshots of every screen written to `app/build/shot
 - Icons: [Lucide](https://lucide.dev) (ISC licence).
 - Word list: [SCOWL](http://wordlist.aspell.net/) via the `wordlist-english` npm package (MIT).
 
-`tools/make_assets.py` regenerates both from those packages.
+`tools/make_assets.py` regenerates both from those packages. The key sounds are synthesized by
+`tools/make_sounds.py`, so they have no third-party licence.

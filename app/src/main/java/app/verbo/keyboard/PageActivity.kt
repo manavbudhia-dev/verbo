@@ -16,6 +16,12 @@ class PageActivity : Activity() {
     private lateinit var store: Store
     private lateinit var ui: Ui
     private lateinit var page: String
+    private val preview by lazy { Feedback(this) }
+
+    override fun onDestroy() {
+        preview.release()
+        super.onDestroy()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -38,6 +44,8 @@ class PageActivity : Activity() {
             page == "languages" -> languagesPage(column)
             page == "dashboard" -> dashboardPage(column)
             page == "skins" -> skinsPage(column)
+            page == "feedback" -> feedbackPage(column)
+            page == "battery" -> batteryPage(column)
             page == "templates" -> templatesPage(column)
             else -> tryPage(column)
         }
@@ -309,6 +317,70 @@ class PageActivity : Activity() {
         column.addView(ui.section(R.drawable.ic_sliders_horizontal, "Layout"))
         column.addView(ui.rows(ui.row(R.drawable.ic_keyboard, "Number row", "Show 1–0 above the letters", ui.toggle(store.numberRow) { store.numberRow = it })))
         note(column, "Key height is set on the main screen. Changes apply the next time the keyboard opens.")
+    }
+
+    // ---------- sound and vibration ----------
+
+    private fun feedbackPage(column: LinearLayout) {
+        column.addView(ui.topBar("Sound & vibration", "Tap an option to hear or feel it"))
+        fun demo(type: KeyboardView.Type = KeyboardView.Type.CHAR) {
+            preview.configure(store)
+            // A freshly chosen sound needs a moment to load before it can play.
+            window.decorView.postDelayed({ preview.press(type) }, 180)
+        }
+        column.addView(ui.section(R.drawable.ic_volume_2, "Sound effect"))
+        column.addView(ui.rows(*Feedback.PACKS.map { (id, name) ->
+            choice(R.drawable.ic_volume_2, name, if (id == "typewriter") "With a bell on enter" else null, store.soundPack == id) {
+                store.soundPack = id
+                store.sound = true
+                demo()
+            }
+        }.toTypedArray()))
+        column.addView(ui.text("Volume", 14f, ui.muted).apply { setPadding(ui.dp(2), ui.dp(8), 0, 0) })
+        column.addView(android.widget.SeekBar(this).apply {
+            max = 19
+            progress = store.soundVolume / 5 - 1
+            progressTintList = android.content.res.ColorStateList.valueOf(ui.accent)
+            progressBackgroundTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#5A5880"))
+            thumbTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
+            contentDescription = "Key sound volume"
+            setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(bar: android.widget.SeekBar?, value: Int, fromUser: Boolean) { store.soundVolume = (value + 1) * 5 }
+                override fun onStartTrackingTouch(bar: android.widget.SeekBar?) {}
+                override fun onStopTrackingTouch(bar: android.widget.SeekBar?) { store.sound = true; demo() }
+            })
+        })
+        column.addView(ui.section(R.drawable.ic_vibrate, "Vibration strength"))
+        column.addView(ui.rows(*Feedback.STRENGTHS.map { (id, name) ->
+            choice(R.drawable.ic_vibrate, name, null, store.hapticStrength == id) {
+                store.hapticStrength = id
+                store.haptic = true
+                demo(KeyboardView.Type.SHIFT)
+            }
+        }.toTypedArray()))
+        note(column, "If Strong still feels weak, raise Vibration intensity → Touch feedback in the phone's Sounds and vibration settings; Android caps every app at that level. Key sounds follow the phone's media or system volume and stay silent in silent mode on some phones.")
+    }
+
+    // ---------- battery ----------
+
+    private fun batteryPage(column: LinearLayout) {
+        column.addView(ui.topBar("Battery", "Battery Saver behaviour and power use"))
+        val saverOn = (getSystemService(POWER_SERVICE) as android.os.PowerManager).isPowerSaveMode
+        column.addView(ui.rows(
+            ui.row(R.drawable.ic_zap, "Follow Battery Saver", "While the phone's Battery Saver is on: no key sound or vibration, and no background dashboard sync",
+                ui.toggle(store.batterySaver) { store.batterySaver = it }),
+            ui.row(R.drawable.ic_shield, "Battery Saver right now", if (saverOn) "On" + (if (store.batterySaver) ": Verbo is in low-power mode" else "") else "Off"),
+        ))
+        column.addView(ui.section(R.drawable.ic_settings, "How Verbo uses power"))
+        column.addView(ui.rows(
+            ui.row(R.drawable.ic_keyboard, "Typing", "Nothing runs in the background. The keyboard only works while it is on screen"),
+            ui.row(R.drawable.ic_mic, "Microphone and sounds", "Released as soon as the keyboard is hidden"),
+            ui.row(R.drawable.ic_sparkles, "Assistant", "Uses the network only when you trigger an action"),
+            ui.row(R.drawable.ic_cloud, "Dashboard sync", "At most once every 10 minutes, only while you type, and paused in Battery Saver"),
+        ))
+        column.addView(ui.rows(ui.row(R.drawable.ic_settings, "Phone's battery settings for Verbo", "Leave it on Optimised. A keyboard is started by Android when needed, so it does not need Unrestricted", ui.chevron()) {
+            startActivity(android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:$packageName")))
+        }))
     }
 
     // ---------- templates ----------

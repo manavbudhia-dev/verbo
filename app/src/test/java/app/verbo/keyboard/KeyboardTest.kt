@@ -304,7 +304,7 @@ class KeyboardTest {
         val column = (scroll as ViewGroup).getChildAt(0)
         scroll.layout(0, 0, 1080, column.measuredHeight)
         snap(scroll, "settings")
-        for (page in listOf("skins", "templates", "prompts", "automate", "shortcuts", "privacy", "dashboard", "category:edit")) {
+        for (page in listOf("feedback", "battery", "skins", "templates", "prompts", "automate", "shortcuts", "privacy", "dashboard", "category:edit")) {
             val a = Robolectric.buildActivity(PageActivity::class.java, android.content.Intent().putExtra("page", page)).setup().get()
             val s = content(a)
             s.layout(0, 0, 1080, maxOf((s as ViewGroup).getChildAt(0).measuredHeight, 900))

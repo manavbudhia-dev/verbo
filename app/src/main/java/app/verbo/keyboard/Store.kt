@@ -57,6 +57,15 @@ class Store(context: Context) {
     var numberRow: Boolean get() = bool("number_row", false); set(v) = put("number_row", v)
     var sound: Boolean get() = bool("sound", true); set(v) = put("sound", v)
     var haptic: Boolean get() = bool("haptic", true); set(v) = put("haptic", v)
+    /** "light", "medium" or "strong". */
+    var hapticStrength: String get() = str("haptic_strength", "medium"); set(v) = put("haptic_strength", v)
+    /** "system" or one of the built-in effect packs, see Feedback.PACKS. */
+    var soundPack: String get() = str("sound_pack", "system"); set(v) = put("sound_pack", v)
+    var soundVolume: Int
+        get() = (prefs?.getInt("sound_volume", 60) ?: 60).coerceIn(5, 100)
+        set(v) { prefs?.edit()?.putInt("sound_volume", v.coerceIn(5, 100))?.apply() }
+    /** While the phone's Battery Saver is on: no key sound or vibration, and no background dashboard sync. */
+    var batterySaver: Boolean get() = bool("battery_saver", true); set(v) = put("battery_saver", v)
     var autoCorrect: Boolean get() = bool("auto_correct", true); set(v) = put("auto_correct", v)
     var suggestions: Boolean get() = bool("suggestions", true); set(v) = put("suggestions", v)
 
@@ -128,7 +137,8 @@ class Store(context: Context) {
         .put("verbo", 1)
         .put("model", model).put("provider", provider).put("openaiModel", openaiModel).put("webSearch", webSearch).put("assistantOn", assistantOn).put("agentMode", agentMode)
         .put("theme", theme).put("customAccent", customAccent).put("heightPercent", heightPercent)
-        .put("keyShape", keyShape).put("numberRow", numberRow).put("sound", sound).put("haptic", haptic).put("autoCorrect", autoCorrect).put("suggestions", suggestions)
+        .put("keyShape", keyShape).put("numberRow", numberRow).put("sound", sound).put("haptic", haptic)
+        .put("hapticStrength", hapticStrength).put("soundPack", soundPack).put("soundVolume", soundVolume).put("batterySaver", batterySaver).put("autoCorrect", autoCorrect).put("suggestions", suggestions)
         .put("weather", weather).put("skills", skillsJson(skills))
         .toString(2)
 
@@ -149,6 +159,10 @@ class Store(context: Context) {
         if (o.has("numberRow")) numberRow = o.optBoolean("numberRow")
         if (o.has("sound")) sound = o.optBoolean("sound")
         if (o.has("haptic")) haptic = o.optBoolean("haptic")
+        if (Feedback.STRENGTHS.any { it.first == o.optString("hapticStrength") }) hapticStrength = o.getString("hapticStrength")
+        if (Feedback.PACKS.any { it.first == o.optString("soundPack") }) soundPack = o.getString("soundPack")
+        if (o.has("soundVolume")) soundVolume = o.optInt("soundVolume", 60)
+        if (o.has("batterySaver")) batterySaver = o.optBoolean("batterySaver")
         if (o.has("autoCorrect")) autoCorrect = o.optBoolean("autoCorrect")
         if (o.has("suggestions")) suggestions = o.optBoolean("suggestions")
         if (o.has("weather")) weather = o.optBoolean("weather")

@@ -32,12 +32,21 @@ class MainActivity : Activity() {
     }
 
     private var shownTheme = ""
+    private var wentToSettings = false
+
+    private fun isEnabled() = (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).enabledInputMethodList.any { it.packageName == packageName }
+    private fun isSelected() = (Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD) ?: "").startsWith("$packageName/")
 
     override fun onResume() {
         super.onResume()
         if (shownTheme.isNotEmpty() && shownTheme != store.theme) return recreate() // a skin was picked on another screen
         shownTheme = store.theme
         refreshSetup()
+        // Back from system settings with the keyboard enabled: go straight to the chooser, no extra tap.
+        if (wentToSettings && isEnabled() && !isSelected()) {
+            window.decorView.postDelayed({ if (!isFinishing) (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showInputMethodPicker() }, 400)
+        }
+        wentToSettings = false
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -249,6 +258,7 @@ class MainActivity : Activity() {
         column.addView(ui.rows(
             ui.row(R.drawable.ic_volume_2, "Sound on key press", trailing = ui.toggle(store.sound) { store.sound = it }),
             ui.row(R.drawable.ic_vibrate, "Haptic (vibration)", trailing = ui.toggle(store.haptic) { store.haptic = it }),
+            ui.row(R.drawable.ic_sliders_horizontal, "Sound effects & strength", "Typewriter and other sounds, volume, vibration strength", ui.chevron()) { open("feedback") },
         ))
 
         // ---- language ----
@@ -281,6 +291,7 @@ class MainActivity : Activity() {
             ui.row(R.drawable.ic_square_terminal, "Custom Prompts", "Add your own AI instructions", ui.chevron()) { open("prompts") },
             ui.row(R.drawable.ic_keyboard, "Shortcuts & Triggers", "Use / command to run actions", ui.chevron()) { open("shortcuts") },
             ui.row(R.drawable.ic_shield, "Privacy", "Data, permissions and usage", ui.chevron()) { open("privacy") },
+            ui.row(R.drawable.ic_zap, "Battery", "Battery Saver behaviour and power use", ui.chevron()) { open("battery") },
         ))
 
         // ---- export / import ----
@@ -325,11 +336,12 @@ class MainActivity : Activity() {
             background = ui.shape(ui.accentSoft, 14, ui.accent)
             setPadding(ui.dp(16), ui.dp(14), ui.dp(16), ui.dp(14))
         }
-        box.addView(ui.text("Turn on the keyboard", 17f, bold = true))
+        box.addView(ui.text("Make Verbo your keyboard", 17f, bold = true))
+        box.addView(ui.text("Android only lets you choose the default keyboard yourself. You do this once; Verbo then stays your keyboard, including after a restart.", 13.5f, ui.muted).apply { setPadding(0, ui.dp(4), 0, 0) })
         box.addView(ui.text((if (enabled) "✓  " else "1.  ") + "Enable Verbo Keyboard in system settings", 14.5f, Color.parseColor("#D8D6EA")).apply { setPadding(0, ui.dp(8), 0, 0) })
         box.addView(ui.text((if (selected) "✓  " else "2.  ") + "Switch to Verbo as your keyboard", 14.5f, Color.parseColor("#D8D6EA")).apply { setPadding(0, ui.dp(4), 0, ui.dp(12)) })
         box.addView(
-            if (!enabled) ui.button("Open keyboard settings", filled = true) { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) }
+            if (!enabled) ui.button("Open keyboard settings", filled = true) { wentToSettings = true; startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) }
             else ui.button("Choose keyboard", filled = true) { imm.showInputMethodPicker() },
         )
         setupBox.addView(box)

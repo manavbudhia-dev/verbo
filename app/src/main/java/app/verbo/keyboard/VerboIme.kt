@@ -1,7 +1,6 @@
 package app.verbo.keyboard
 
 import android.Manifest
-import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -9,15 +8,11 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.StateListDrawable
 import android.inputmethodservice.InputMethodService
-import android.media.AudioManager
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.UserManager
-import android.os.VibrationEffect
-import android.os.Vibrator
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -51,8 +46,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     // One thread per action, so a cancelled or slow request (or a dashboard sync) never holds up the next one.
     private val worker = Executors.newCachedThreadPool()
     internal val dictionary = Dictionary()
-    private var audio: AudioManager? = null
-    private var vibrator: Vibrator? = null
+    private lateinit var fb: Feedback
 
     internal var keys: KeyboardView? = null
     private var chipsRow: LinearLayout? = null
@@ -64,8 +58,6 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     private var builtWith = ""
 
     // settings read once per field so the typing path never touches storage
-    private var soundOn = true
-    private var hapticOn = true
     private var correctOn = true
     private var suggestOn = true
     private var assistantOn = true
@@ -99,15 +91,14 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     override fun onCreate() {
         super.onCreate()
         store = Store(this)
-        audio = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-        @Suppress("DEPRECATION")
-        vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+        fb = Feedback(this)
         Thread { try { dictionary.load(assets.open("words.txt")) } catch (e: Exception) { } }.start()
     }
 
     override fun onDestroy() {
         worker.shutdownNow()
         recognizer?.destroy()
+        fb.release()
         super.onDestroy()
     }
 
@@ -188,8 +179,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     }
 
     private fun loadSettings() {
-        soundOn = store.sound
-        hapticOn = store.haptic
+        fb.configure(store)
         correctOn = store.autoCorrect
         suggestOn = store.suggestions
         assistantOn = store.assistantOn
@@ -236,23 +226,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
 
     // ---------- feedback ----------
 
-    private fun feedback(type: KeyboardView.Type) {
-        if (hapticOn) try {
-            val v = vibrator
-            if (v != null && v.hasVibrator()) {
-                if (Build.VERSION.SDK_INT >= 29) v.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK))
-                else v.vibrate(VibrationEffect.createOneShot(12, VibrationEffect.DEFAULT_AMPLITUDE))
-            }
-        } catch (e: Exception) { }
-        if (soundOn) audio?.playSoundEffect(
-            when (type) {
-                KeyboardView.Type.BACKSPACE -> AudioManager.FX_KEYPRESS_DELETE
-                KeyboardView.Type.ENTER -> AudioManager.FX_KEYPRESS_RETURN
-                KeyboardView.Type.BAR -> AudioManager.FX_KEYPRESS_SPACEBAR
-                else -> AudioManager.FX_KEYPRESS_STANDARD
-            }, 0.6f,
-        )
-    }
+    private fun feedback(type: KeyboardView.Type) = fb.press(type)
 
     override fun onPress(type: KeyboardView.Type) = feedback(type)
 
@@ -439,6 +413,20 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         updateSuggestions()
     }
 
+    /** The keyboard was put away: give back the microphone service and the audio player until it is needed again. */
+    override fun onWindowHidden() {
+        super.onWindowHidden()
+        recognizer?.destroy()
+        recognizer = null
+        listening = false
+        fb.release()
+    }
+
+    override fun onWindowShown() {
+        super.onWindowShown()
+        fb.configure(store)
+    }
+
     override fun onUpdateSelection(oldSelStart: Int, oldSelEnd: Int, newSelStart: Int, newSelEnd: Int, candidatesStart: Int, candidatesEnd: Int) {
         super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
         // Positions we predicted long ago were never going to be reported (some apps report only the
@@ -494,6 +482,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
 
     /** While paired with a dashboard, refresh skills and connections every so often in the background. */
     private fun syncIfStale() {
+        if (fb.saving) return // Battery Saver: no background network; "Sync now" in the app still works
         if (store.deviceToken.isEmpty() || System.currentTimeMillis() - store.lastSync < Sync.STALE_MS) return
         store.lastSync = System.currentTimeMillis() // don't retry on every field while offline
         worker.execute {
