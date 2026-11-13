@@ -3,7 +3,9 @@ package app.verbo.keyboard
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
@@ -31,14 +33,16 @@ class MainActivity : Activity() {
 
     private lateinit var store: Store
     private lateinit var skillsBox: LinearLayout
+    private lateinit var apisBox: LinearLayout
+    private lateinit var micStatus: TextView
     private lateinit var stepOne: TextView
     private lateinit var stepTwo: TextView
     private var night = false
 
     private val ink get() = Color.parseColor(if (night) "#F1EEE8" else "#1D1F24")
     private val muted get() = Color.parseColor(if (night) "#9A9CA3" else "#6B6A66")
-    private val card get() = Color.parseColor(if (night) "#22252C" else "#FFFFFF")
-    private val accent get() = Color.parseColor(if (night) "#FF8A4C" else "#E8590C")
+    private val card get() = Color.parseColor(if (night) "#23262E" else "#FFFFFF")
+    private val accent get() = Color.parseColor(if (night) "#5AA9F5" else "#3B82F6")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -114,6 +118,36 @@ class MainActivity : Activity() {
         })
         column.addView(ai)
 
+        // --- voice ---
+        column.addView(section("Voice"))
+        val voice = cardBox()
+        micStatus = label("", 15f, ink)
+        voice.addView(micStatus)
+        voice.addView(label("Tap 🎙 on the keyboard to dictate; Verbo tidies up filler words, self-corrections and punctuation. Hold 🎙 to speak a request instead.", 13f, muted).pad(top = 4))
+        voice.addView(button("Allow microphone") { requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 1) })
+        column.addView(voice)
+
+        // --- connections ---
+        column.addView(section("Connections"))
+        column.addView(label("Apps and APIs the assistant can use while carrying out an action.", 13f, muted).pad(bottom = 8))
+        val weather = cardBox()
+        weather.addView(Switch(this).apply {
+            text = "☀️  Weather"
+            setTextColor(ink)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            isChecked = store.weather
+            setOnCheckedChangeListener { _, on -> store.weather = on }
+        })
+        weather.addView(label("Forecasts from Open-Meteo. No account needed.", 13f, muted))
+        column.addView(weather)
+        column.addView(tokenCard("📝  Notion", "Search, read and create pages. Paste an internal integration token from notion.so/my-integrations and share the pages you want with that integration.",
+            { store.notionToken }, { store.notionToken = it }))
+        column.addView(tokenCard("📅  Calendly", "Drop your booking links into a message. Paste a personal access token from Calendly → Integrations → API & webhooks.",
+            { store.calendlyToken }, { store.calendlyToken = it }))
+        apisBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        column.addView(apisBox)
+        column.addView(button("Connect an API") { editApi(-1) })
+
         // --- skills ---
         column.addView(section("Skill keys"))
         column.addView(label("Each skill is a key above the keyboard that applies one instruction to whatever you've typed.", 13f, muted).pad(bottom = 8))
@@ -131,7 +165,7 @@ class MainActivity : Activity() {
         // --- try it ---
         column.addView(section("Try it"))
         val tryBox = cardBox()
-        tryBox.addView(label("Type a request, then hold the orange bar. Or type a sentence and tap a skill key.", 13f, muted))
+        tryBox.addView(label("Type a request, then hold the ✦ bar. Or type a sentence and tap a skill key.", 13f, muted))
         tryBox.addView(EditText(this).apply {
             hint = "tell sam i'm running 15 min late, friendly"
             minLines = 3
@@ -143,6 +177,88 @@ class MainActivity : Activity() {
         column.addView(tryBox)
 
         renderSkills()
+        renderApis()
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        refreshSetup()
+    }
+
+    private fun tokenCard(title: String, help: String, get: () -> String, set: (String) -> Unit): LinearLayout {
+        val box = cardBox()
+        val heading = label("", 16f, ink, bold = true)
+        fun refresh() { heading.text = title + if (get().isEmpty()) "" else "   ✓ connected" }
+        refresh()
+        box.addView(heading)
+        box.addView(label(help, 13f, muted).pad(bottom = 4))
+        val field = EditText(this).apply {
+            hint = "Token"
+            setText(get())
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setSingleLine()
+            setTextColor(ink)
+            setHintTextColor(muted)
+        }
+        box.addView(field)
+        box.addView(button("Save") {
+            set(field.text.toString())
+            refresh()
+            toast(if (get().isEmpty()) "Disconnected" else "Connected")
+        })
+        return box
+    }
+
+    private fun renderApis() {
+        apisBox.removeAllViews()
+        store.customApis.forEachIndexed { index, api ->
+            val row = cardBox().apply { setOnClickListener { editApi(index) } }
+            row.addView(label("🔌  " + api.name, 16f, ink, bold = true))
+            row.addView(label(api.description.ifBlank { api.url }, 13f, muted).apply { maxLines = 2 })
+            apisBox.addView(row)
+        }
+    }
+
+    private fun editApi(index: Int) {
+        val apis = store.customApis.toMutableList()
+        val existing = apis.getOrNull(index)
+        val form = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(22), dp(8), dp(22), 0)
+        }
+        fun field(hint: String, value: String?) = EditText(this).apply {
+            this.hint = hint
+            setText(value ?: "")
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            form.addView(this)
+        }
+        val name = field("Name, e.g. NBA scores", existing?.name)
+        val description = field("What it returns and when to use it", existing?.description)
+        val url = field("https://… use {query} where the search term goes", existing?.url)
+        val headerName = field("Header name (optional), e.g. X-Api-Key", existing?.headerName)
+        val headerValue = field("Header value (optional)", existing?.headerValue)
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(if (existing == null) "Connect an API" else "Edit connection")
+            .setView(form)
+            .setPositiveButton("Save") { _, _ ->
+                val n = name.text.toString().trim()
+                val u = url.text.toString().trim()
+                if (n.isEmpty() || !u.startsWith("https://")) {
+                    toast("It needs a name and an https:// address")
+                } else {
+                    val api = CustomApi(n, description.text.toString().trim(), u, headerName.text.toString().trim(), headerValue.text.toString().trim())
+                    if (existing == null) apis.add(api) else apis[index] = api
+                    store.customApis = apis
+                    renderApis()
+                }
+            }
+            .setNegativeButton("Cancel", null)
+        if (existing != null) dialog.setNeutralButton("Remove") { _, _ ->
+            apis.removeAt(index)
+            store.customApis = apis
+            renderApis()
+        }
+        dialog.show()
     }
 
     override fun onResume() {
@@ -162,6 +278,8 @@ class MainActivity : Activity() {
         val selected = current.startsWith("$packageName/")
         stepOne.text = (if (enabled) "✓  " else "1.  ") + "Enable Verbo Keyboard in system settings"
         stepTwo.text = (if (selected) "✓  " else "2.  ") + "Switch to Verbo as your keyboard"
+        val mic = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        micStatus.text = if (mic) "✓  Microphone allowed" else "Microphone not allowed yet"
     }
 
     private fun renderSkills() {

@@ -6,6 +6,9 @@ import org.json.JSONObject
 
 data class Skill(val emoji: String, val name: String, val instruction: String)
 
+/** A user-defined API connection: a GET endpoint the assistant can call. */
+data class CustomApi(val name: String, val description: String, val url: String, val headerName: String, val headerValue: String)
+
 /** Settings and skills, kept in app-private preferences shared by the keyboard and the settings screen. */
 class Store(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences("verbo", Context.MODE_PRIVATE)
@@ -21,6 +24,39 @@ class Store(context: Context) {
     var webSearch: Boolean
         get() = prefs.getBoolean("web_search", true)
         set(v) = prefs.edit().putBoolean("web_search", v).apply()
+
+    var weather: Boolean
+        get() = prefs.getBoolean("weather", true)
+        set(v) = prefs.edit().putBoolean("weather", v).apply()
+
+    var notionToken: String
+        get() = prefs.getString("notion_token", "") ?: ""
+        set(v) = prefs.edit().putString("notion_token", v.trim()).apply()
+
+    var calendlyToken: String
+        get() = prefs.getString("calendly_token", "") ?: ""
+        set(v) = prefs.edit().putString("calendly_token", v.trim()).apply()
+
+    var customApis: List<CustomApi>
+        get() = try {
+            val arr = JSONArray(prefs.getString("custom_apis", "[]"))
+            (0 until arr.length()).map {
+                val o = arr.getJSONObject(it)
+                CustomApi(o.getString("name"), o.optString("description"), o.getString("url"), o.optString("headerName"), o.optString("headerValue"))
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+        set(v) {
+            val arr = JSONArray()
+            v.forEach {
+                arr.put(JSONObject().put("name", it.name).put("description", it.description).put("url", it.url)
+                    .put("headerName", it.headerName).put("headerValue", it.headerValue))
+            }
+            prefs.edit().putString("custom_apis", arr.toString()).apply()
+        }
+
+    fun tools(): List<ToolSpec> = Connections.tools(weather, notionToken, calendlyToken, customApis)
 
     var skills: List<Skill>
         get() {

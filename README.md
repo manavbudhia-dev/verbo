@@ -2,13 +2,17 @@
 
 An Android keyboard that acts on what you type.
 
-- **Action bar** – the wide orange bar types a space on tap. Hold it and the text in the
+- **Action bar** – the wide ✦ bar types a space on tap. Hold it and the text in the
   field is treated as a request ("tell sam i'm 15 min late, friendly") and replaced with the result.
 - **Skill keys** – the strip above the keys. Each one applies a saved instruction to your
   text (Polish, Reply, Shorter, Formal, Casual, English, Look up, List).
 - **Skill builder** – add, edit and delete skills in the Verbo app.
 - **Web search** – actions can look up current facts (can be turned off).
 - **Links** – an action can offer to open a map, dialer, email or web page.
+- **Voice** – tap 🎙 to dictate (filler words, self-corrections and punctuation are tidied up);
+  hold 🎙 to speak a request.
+- **Connections** – Weather (built in), Notion and Calendly (paste a token), and any HTTPS
+  API you describe. The assistant calls them while carrying out an action.
 - **Undo** – one tap restores your original text.
 
 Actions use the Claude API with your own key (entered in the app, stored on the phone).
@@ -33,5 +37,6 @@ The APK lands in `app/build/outputs/apk/debug/app-debug.apk`.
 
 - `VerboIme.kt` – the keyboard and the action flow
 - `Ai.kt` – the Claude request and result parsing
+- `Connections.kt` – connected apps and APIs as assistant tools
 - `Store.kt` – settings and skills
 - `MainActivity.kt` – setup and settings screen

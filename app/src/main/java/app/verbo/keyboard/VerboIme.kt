@@ -1,6 +1,13 @@
 package app.verbo.keyboard
 
+import android.Manifest
 import android.annotation.SuppressLint
+import android.content.pm.PackageManager
+import android.graphics.drawable.LayerDrawable
+import android.os.Bundle
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Color
@@ -36,15 +43,16 @@ import java.util.concurrent.Executors
 class VerboIme : InputMethodService() {
 
     private class Palette(night: Boolean) {
-        val bg = Color.parseColor(if (night) "#15171C" else "#ECE7DF")
-        val key = Color.parseColor(if (night) "#2A2D35" else "#FFFFFF")
-        val keyPressed = Color.parseColor(if (night) "#3A3E48" else "#D9D2C7")
-        val fnKey = Color.parseColor(if (night) "#1F2229" else "#D9D2C7")
-        val text = Color.parseColor(if (night) "#F1EEE8" else "#1D1F24")
-        val muted = Color.parseColor(if (night) "#9A9CA3" else "#6B6A66")
-        val accent = Color.parseColor(if (night) "#FF8A4C" else "#E8590C")
-        val accentPressed = Color.parseColor(if (night) "#E67636" else "#C94C08")
-        val onAccent = Color.parseColor(if (night) "#15171C" else "#FFFFFF")
+        val bg = Color.parseColor(if (night) "#16181D" else "#E6E9EF")
+        val key = Color.parseColor(if (night) "#2B2E36" else "#FFFFFF")
+        val keyShadow = Color.parseColor(if (night) "#0C0D10" else "#C6CBD6")
+        val keyPressed = Color.parseColor(if (night) "#34455C" else "#D6E6FB")
+        val fnKey = Color.parseColor(if (night) "#20232A" else "#D5DAE3")
+        val text = Color.parseColor(if (night) "#ECEEF2" else "#2B2F38")
+        val muted = Color.parseColor(if (night) "#8E94A3" else "#7A8090")
+        val accent = Color.parseColor("#5AA9F5")
+        val accentPressed = Color.parseColor("#3F8FDD")
+        val onAccent = Color.parseColor(if (night) "#0E1116" else "#FFFFFF")
     }
 
     private enum class Mode { LETTERS, SYMBOLS, MORE_SYMBOLS }
@@ -59,6 +67,7 @@ class VerboIme : InputMethodService() {
     private var chipsScroll: View? = null
     private var statusRow: LinearLayout? = null
     private var bar: TextView? = null
+    private var recognizer: SpeechRecognizer? = null
     private val letterKeys = ArrayList<TextView>()
     private var shiftKey: TextView? = null
 
@@ -77,6 +86,7 @@ class VerboIme : InputMethodService() {
 
     override fun onDestroy() {
         worker.shutdownNow()
+        recognizer?.destroy()
         super.onDestroy()
     }
 
@@ -112,7 +122,20 @@ class VerboIme : InputMethodService() {
         }
         strip.addView(chipsScroll, FrameLayout.LayoutParams(-1, -1))
         strip.addView(statusRow, FrameLayout.LayoutParams(-1, -1))
-        root.addView(strip, LinearLayout.LayoutParams(-1, dp(44)))
+        val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        top.addView(strip, LinearLayout.LayoutParams(0, -1, 1f))
+        val mic = chipView("🎙", p.key, p.keyPressed, p.text).apply {
+            setPadding(0, 0, 0, 0)
+            contentDescription = "Voice. Hold for a voice command"
+            setOnClickListener { tick(it); startVoice(false) }
+            setOnLongClickListener {
+                it.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                startVoice(true)
+                true
+            }
+        }
+        top.addView(mic, LinearLayout.LayoutParams(dp(40), dp(34)).apply { setMargins(dp(4), 0, dp(3), 0) })
+        root.addView(top, LinearLayout.LayoutParams(-1, dp(44)))
 
         keysBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(keysBox, LinearLayout.LayoutParams(-1, -2))
@@ -163,9 +186,8 @@ class VerboIme : InputMethodService() {
         comma.setOnClickListener { tick(it); type(",") }
         bottom.addView(comma, keyParams(1f))
 
-        bar = keyView("", p.accent, p.accentPressed, p.onAccent, 13f).apply {
-            typeface = Typeface.DEFAULT_BOLD
-            letterSpacing = 0.04f
+        bar = keyView("", p.key, p.keyPressed, p.muted, 12f).apply {
+            letterSpacing = 0.06f
             setOnClickListener { tick(it); type(" ") }
             setOnLongClickListener {
                 it.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
@@ -179,7 +201,10 @@ class VerboIme : InputMethodService() {
         val dot = keyView(".", p.key, p.keyPressed, p.text, 22f)
         dot.setOnClickListener { tick(it); type(".") }
         bottom.addView(dot, keyParams(1f))
-        fnKey(bottom, "⏎", 1.5f) { onEnter() }
+        val enter = keyView("↵", p.accent, p.accentPressed, p.onAccent, 20f)
+        enter.typeface = Typeface.DEFAULT_BOLD
+        enter.setOnClickListener { tick(it); onEnter() }
+        bottom.addView(enter, keyParams(1.5f))
         box.addView(bottom, LinearLayout.LayoutParams(-1, dp(52)))
 
         refreshShift()
@@ -216,13 +241,22 @@ class VerboIme : InputMethodService() {
         addState(intArrayOf(), rounded(normal, radius))
     }
 
+    /** A key face sitting on a thin shadow, which gives the soft raised look. */
+    private fun raised(color: Int) = LayerDrawable(arrayOf(rounded(p.keyShadow, 9), rounded(color, 9))).apply {
+        setLayerInset(1, 0, 0, 0, dp(1) + 1)
+    }
+
     private fun keyView(label: String, color: Int, pressed: Int, textColor: Int, sizeSp: Float) = TextView(this).apply {
         text = label
         gravity = Gravity.CENTER
         setTextColor(textColor)
         setTextSize(TypedValue.COMPLEX_UNIT_SP, sizeSp)
+        typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
         maxLines = 1
-        background = pressable(color, pressed, 8)
+        background = StateListDrawable().apply {
+            addState(intArrayOf(android.R.attr.state_pressed), raised(pressed))
+            addState(intArrayOf(), raised(color))
+        }
         isHapticFeedbackEnabled = true
     }
 
@@ -366,6 +400,7 @@ class VerboIme : InputMethodService() {
             buildKeys()
             buildChips()
             showChips()
+            recognizer?.cancel()
         }
         autoCaps()
     }
@@ -427,22 +462,29 @@ class VerboIme : InputMethodService() {
             showStatus("That's too much text for one action. Select a part of it")
             return
         }
+        launch(
+            if (skill == null) "Working on it…" else "${skill.name}…",
+            skill?.let { Ai.skillTask(it.instruction) }, target.text, connected = true,
+        ) { deliver(target, it) }
+    }
 
+    /** Runs one assistant request off the main thread and hands the result back, unless it was cancelled. */
+    private fun launch(label: String, task: String?, input: String, connected: Boolean, onResult: (ActionResult) -> Unit) {
         busy = true
         undo = null
         val token = ++generation
         val key = store.apiKey
         val model = store.model
-        val web = store.webSearch
-        showStatus(if (skill == null) "Working on it…" else "${skill.name}…", "Cancel" to {
+        val web = connected && store.webSearch
+        val tools = if (connected) store.tools() else emptyList()
+        showStatus(label, "Cancel" to {
             generation++
             busy = false
             showChips()
         })
-
         worker.execute {
             val outcome = try {
-                Result.success(Ai.run(key, model, web, skill?.instruction, target.text))
+                Result.success(Ai.run(key, model, web, task, input, tools))
             } catch (e: AiException) {
                 Result.failure(e)
             } catch (e: Exception) {
@@ -451,9 +493,89 @@ class VerboIme : InputMethodService() {
             main.post {
                 if (token != generation) return@post
                 busy = false
-                outcome.fold({ deliver(target, it) }, { showStatus(it.message ?: "Failed") })
+                outcome.fold(onResult) { showStatus(it.message ?: "Failed") }
             }
         }
+    }
+
+    // ---------- voice ----------
+
+    /** Tap: dictation, cleaned up by the assistant. Hold: speak a request and get the result. */
+    private fun startVoice(command: Boolean) {
+        if (busy) return
+        if (isPasswordField()) {
+            showStatus("Verbo doesn't dictate into password fields")
+            return
+        }
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            showStatus("Allow the microphone in the Verbo app", "Set up" to { openApp() })
+            return
+        }
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+            showStatus("This phone has no speech recognition service")
+            return
+        }
+        if (command && store.apiKey.isBlank()) {
+            showStatus("Add your API key to use voice commands", "Set up" to { openApp() })
+            return
+        }
+        val rec = recognizer ?: SpeechRecognizer.createSpeechRecognizer(this).also { recognizer = it }
+        val heading = if (command) "Say what you want…" else "Listening…"
+        val buttons = arrayOf<Pair<String, () -> Unit>>(
+            "Done" to { rec.stopListening() },
+            "Cancel" to { rec.cancel(); showChips() },
+        )
+        rec.setRecognitionListener(object : RecognitionListener {
+            override fun onPartialResults(partial: Bundle?) {
+                val heard = partial?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
+                if (!heard.isNullOrBlank()) showStatus(heard.takeLast(60), *buttons)
+            }
+            override fun onResults(results: Bundle?) {
+                val heard = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
+                if (heard.isNullOrBlank()) showStatus("Didn't catch that") else onHeard(heard, command)
+            }
+            override fun onError(error: Int) {
+                showStatus(when (error) {
+                    SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Didn't catch that"
+                    SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "No connection for speech"
+                    SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission is missing"
+                    else -> "Voice input failed"
+                })
+            }
+            override fun onReadyForSpeech(params: Bundle?) {}
+            override fun onBeginningOfSpeech() {}
+            override fun onRmsChanged(rmsdB: Float) {}
+            override fun onBufferReceived(buffer: ByteArray?) {}
+            override fun onEndOfSpeech() {}
+            override fun onEvent(eventType: Int, params: Bundle?) {}
+        })
+        showStatus(heading, *buttons)
+        rec.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+        })
+    }
+
+    private fun onHeard(heard: String, command: Boolean) {
+        if (!command && store.apiKey.isBlank()) {
+            insert(heard) // no key: plain dictation still works
+            return
+        }
+        launch(
+            if (command) "Working on it…" else "Tidying up…",
+            if (command) null else Ai.DICTATION_TASK, heard, connected = command,
+        ) { result ->
+            val open = result.openUri?.let { uri -> openLabel(uri) to { openLink(uri) } }
+            if (result.text.isEmpty()) showStatus("Ready", *listOfNotNull(open).toTypedArray())
+            else insert(result.text, open)
+        }
+    }
+
+    private fun insert(text: String, extra: Pair<String, () -> Unit>? = null) {
+        val ic = currentInputConnection ?: return
+        ic.commitText(text, 1)
+        undo = "" to text
+        showStatus("Done", *listOfNotNull("Undo" to { undoLast() }, extra).toTypedArray())
     }
 
     private fun deliver(target: Target, result: ActionResult) {
@@ -517,7 +639,7 @@ class VerboIme : InputMethodService() {
     // ---------- strip ----------
 
     private fun refreshBar() {
-        bar?.text = "VERBO  ·  hold to act"
+        bar?.text = "✦  hold to act"
     }
 
     private fun clearResult() {
