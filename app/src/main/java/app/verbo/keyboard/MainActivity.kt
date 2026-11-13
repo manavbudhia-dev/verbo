@@ -125,6 +125,10 @@ class MainActivity : Activity() {
                         menu.add("OpenAI $label").setOnMenuItemClickListener { store.provider = "openai"; store.openaiModel = id; recreate(); true }
                     }
                     menu.add("Other OpenAI model…").setOnMenuItemClickListener { customOpenAiModel(); true }
+                    menu.add("AI Router · Claude Haiku 5.5").setOnMenuItemClickListener {
+                        store.provider = "custom"; store.customBase = ChatCompat.DEFAULT_BASE; store.customModel = ChatCompat.DEFAULT_MODEL; recreate(); true
+                    }
+                    menu.add("Other gateway or model…").setOnMenuItemClickListener { customGateway(); true }
                 }.show()
             }
         }
@@ -309,8 +313,29 @@ class MainActivity : Activity() {
     }
 
     private fun shortModel() =
-        if (store.isOpenAi) Ai.OPENAI_MODELS.firstOrNull { it.first == store.openaiModel }?.second ?: store.openaiModel
+        if (store.isCustom) store.customModel.substringAfterLast('/').take(18)
+        else if (store.isOpenAi) Ai.OPENAI_MODELS.firstOrNull { it.first == store.openaiModel }?.second ?: store.openaiModel
         else (Ai.MODELS.firstOrNull { it.first == store.model } ?: Ai.MODELS[0]).second.substringBefore(" —")
+
+    /** Any service that speaks the OpenAI chat format: its address and the model name it expects. */
+    private fun customGateway() {
+        val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(ui.dp(22), ui.dp(8), ui.dp(22), 0) }
+        form.addView(ui.text("For AI Router, OpenRouter and other OpenAI-compatible gateways. Your text and key go to this address, so only use a service you trust.", 13.5f, ui.muted))
+        val base = ui.field("https://api.airouter.in/v1", store.customBase)
+        val model = ui.field("anthropic/claude-haiku-5.5", store.customModel)
+        form.addView(ui.text("Address", 13.5f, bold = true).apply { setPadding(0, ui.dp(12), 0, 0) })
+        form.addView(base)
+        form.addView(ui.text("Model", 13.5f, bold = true).apply { setPadding(0, ui.dp(8), 0, 0) })
+        form.addView(model)
+        AlertDialog.Builder(this).setTitle("Gateway").setView(form)
+            .setPositiveButton("Use") { _, _ ->
+                val id = model.text.toString().trim()
+                val address = try { ChatCompat.normaliseBase(base.text.toString()) } catch (e: AiException) { null }
+                if (address == null || !id.matches(Regex("[A-Za-z0-9._:/-]{1,100}"))) ui.toast("Check the address (https://…) and the model name")
+                else { store.provider = "custom"; store.customBase = address; store.customModel = id; recreate() }
+            }
+            .setNegativeButton("Cancel", null).show()
+    }
 
     private fun customOpenAiModel() {
         val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(ui.dp(22), ui.dp(8), ui.dp(22), 0) }
@@ -356,10 +381,14 @@ class MainActivity : Activity() {
         form.addView(ui.text("OpenAI (platform.openai.com)", 13.5f, bold = true).apply { setPadding(0, ui.dp(10), 0, 0) })
         val openai = ui.field("sk-…", store.openaiKey, secret = true)
         form.addView(openai)
+        form.addView(ui.text("AI Router or other gateway", 13.5f, bold = true).apply { setPadding(0, ui.dp(10), 0, 0) })
+        val gateway = ui.field("sk-air-v1-…", store.customKey, secret = true)
+        form.addView(gateway)
         AlertDialog.Builder(this).setTitle("API keys").setView(form)
             .setPositiveButton("Save") { _, _ ->
                 store.apiKey = claude.text.toString()
                 store.openaiKey = openai.text.toString()
+                store.customKey = gateway.text.toString()
                 ui.toast("Keys saved")
                 recreate()
             }

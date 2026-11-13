@@ -215,19 +215,25 @@ function assistantTab() {
   const c = state.config;
   const openai = c.provider === 'openai';
   const provider = h('select', { onchange: (e) => save({ provider: e.target.value }) },
-    [['anthropic', 'Claude (Anthropic)'], ['openai', 'GPT (OpenAI)']].map(([id, name]) => h('option', { value: id, selected: id === c.provider }, name)));
+    [['anthropic', 'Claude (Anthropic)'], ['openai', 'GPT (OpenAI)'], ['custom', 'AI Router or other gateway']].map(([id, name]) => h('option', { value: id, selected: id === c.provider }, name)));
   const model = h('select', { onchange: (e) => save({ model: e.target.value }) },
     MODELS.map(([id, name]) => h('option', { value: id, selected: id === c.model }, name)));
   const openaiModel = h('input', { type: 'text', value: c.openaiModel, placeholder: 'gpt-5.5' });
+  const customBase = h('input', { type: 'url', value: c.customBase, placeholder: 'https://api.airouter.in/v1' });
+  const customModel = h('input', { type: 'text', value: c.customModel, placeholder: 'anthropic/claude-haiku-5.5' });
   return [
     h('div', null, h('h2', null, 'Assistant'), h('p', { class: 'muted' }, 'The model behind your keyboard’s actions.')),
     h('div', { class: 'card' }, h('h3', null, 'Provider'), h('label', null, 'Which service runs actions', provider),
-      openai
+      c.provider === 'custom'
+        ? [h('label', null, 'Gateway address', customBase), h('label', null, 'Model name', customModel),
+            h('div', { class: 'actions' }, h('button', { class: 'btn primary', onclick: () => save({ customBase: customBase.value, customModel: customModel.value }) }, 'Save'))]
+        : openai
         ? h('label', null, 'OpenAI model ID', h('div', { class: 'row' }, h('div', { class: 'grow' }, openaiModel),
             h('button', { class: 'btn primary', onclick: () => save({ openaiModel: openaiModel.value }) }, 'Save')))
         : h('label', null, 'Claude model', model)),
     keyCard('Claude API key', 'From console.anthropic.com. Stored encrypted here and sent only to your paired keyboards.', c.apiKeySet, 'apiKey', 'sk-ant-…'),
     keyCard('OpenAI API key', 'From platform.openai.com. Stored encrypted here and sent only to your paired keyboards.', c.openaiKeySet, 'openaiKey', 'sk-…'),
+    keyCard('Gateway API key', 'For AI Router or another OpenAI-compatible gateway. Your text and this key go to the address above.', c.customKeySet, 'customKey', 'sk-air-v1-…'),
     h('div', { class: 'card' }, h('label', { class: 'switch' },
       h('input', { type: 'checkbox', checked: c.webSearch, onchange: (e) => save({ webSearch: e.target.checked }) }),
       'Search the web when an action needs fresh facts')),

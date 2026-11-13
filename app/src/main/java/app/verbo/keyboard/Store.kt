@@ -35,10 +35,15 @@ class Store(context: Context) {
     var openaiKey: String get() = str("openai_key"); set(v) = put("openai_key", v.trim())
     var openaiModel: String get() = str("openai_model", Ai.DEFAULT_OPENAI_MODEL); set(v) = put("openai_model", v.trim())
     val isOpenAi get() = provider == "openai"
+    /** "custom": any gateway that speaks the OpenAI chat format, such as AI Router. */
+    val isCustom get() = provider == "custom"
+    var customBase: String get() = str("custom_base", ChatCompat.DEFAULT_BASE); set(v) = put("custom_base", v.trim())
+    var customKey: String get() = str("custom_key"); set(v) = put("custom_key", v.trim())
+    var customModel: String get() = str("custom_model", ChatCompat.DEFAULT_MODEL); set(v) = put("custom_model", v.trim())
     /** The key and model of whichever provider is selected. */
-    val activeKey get() = if (isOpenAi) openaiKey else apiKey
-    val activeModel get() = if (isOpenAi) openaiModel else model
-    val providerName get() = if (isOpenAi) "OpenAI" else "Claude"
+    val activeKey get() = when { isOpenAi -> openaiKey; isCustom -> customKey; else -> apiKey }
+    val activeModel get() = when { isOpenAi -> openaiModel; isCustom -> customModel; else -> model }
+    val providerName get() = when { isOpenAi -> "OpenAI"; isCustom -> "gateway"; else -> "Claude" }
 
     // keyboard behaviour
     var assistantOn: Boolean get() = bool("assistant_on", true); set(v) = put("assistant_on", v)
@@ -52,8 +57,8 @@ class Store(context: Context) {
     var heightPercent: Int
         get() = (prefs?.getInt("height_percent", 100) ?: 100).coerceIn(MIN_HEIGHT, MAX_HEIGHT)
         set(v) { prefs?.edit()?.putInt("height_percent", v.coerceIn(MIN_HEIGHT, MAX_HEIGHT))?.apply() }
-    /** "rounded", "square", "bubble" or "flat" (letters only, no key outlines). */
-    var keyShape: String get() = str("key_shape", "rounded"); set(v) = put("key_shape", v)
+    /** Key style, one of SHAPES. "raised" is a 3D key that sinks when pressed; "flat" shows letters only. */
+    var keyShape: String get() = str("key_shape", "raised"); set(v) = put("key_shape", v)
     var numberRow: Boolean get() = bool("number_row", false); set(v) = put("number_row", v)
     var sound: Boolean get() = bool("sound", true); set(v) = put("sound", v)
     var haptic: Boolean get() = bool("haptic", true); set(v) = put("haptic", v)
@@ -81,7 +86,10 @@ class Store(context: Context) {
         prefs?.edit()
             ?.putString("api_key", o.optString("apiKey"))
             ?.putString("model", o.optString("model", Ai.DEFAULT_MODEL))
-            ?.putString("provider", if (o.optString("provider") == "openai") "openai" else "anthropic")
+            ?.putString("provider", o.optString("provider").takeIf { it == "openai" || it == "custom" } ?: "anthropic")
+            ?.putString("custom_base", o.optString("customBase", ChatCompat.DEFAULT_BASE))
+            ?.putString("custom_key", o.optString("customKey"))
+            ?.putString("custom_model", o.optString("customModel", ChatCompat.DEFAULT_MODEL))
             ?.putString("openai_key", o.optString("openaiKey"))
             ?.putString("openai_model", o.optString("openaiModel", Ai.DEFAULT_OPENAI_MODEL))
             ?.putBoolean("web_search", o.optBoolean("webSearch", true))
@@ -135,7 +143,7 @@ class Store(context: Context) {
 
     fun exportJson(): String = JSONObject()
         .put("verbo", 1)
-        .put("model", model).put("provider", provider).put("openaiModel", openaiModel).put("webSearch", webSearch).put("assistantOn", assistantOn).put("agentMode", agentMode)
+        .put("model", model).put("provider", provider).put("openaiModel", openaiModel).put("customBase", customBase).put("customModel", customModel).put("webSearch", webSearch).put("assistantOn", assistantOn).put("agentMode", agentMode)
         .put("theme", theme).put("customAccent", customAccent).put("heightPercent", heightPercent)
         .put("keyShape", keyShape).put("numberRow", numberRow).put("sound", sound).put("haptic", haptic)
         .put("hapticStrength", hapticStrength).put("soundPack", soundPack).put("soundVolume", soundVolume).put("batterySaver", batterySaver).put("autoCorrect", autoCorrect).put("suggestions", suggestions)
@@ -147,7 +155,9 @@ class Store(context: Context) {
         val o = try { JSONObject(text) } catch (e: Exception) { return false }
         if (!o.has("verbo")) return false
         if (o.has("model") && Ai.MODELS.any { it.first == o.optString("model") }) model = o.getString("model")
-        if (o.optString("provider") in listOf("anthropic", "openai")) provider = o.getString("provider")
+        if (o.optString("provider") in listOf("anthropic", "openai", "custom")) provider = o.getString("provider")
+        if (o.optString("customBase").startsWith("https://")) customBase = o.getString("customBase")
+        if (o.optString("customModel").matches(Regex("[A-Za-z0-9._:/-]{1,100}"))) customModel = o.getString("customModel")
         if (o.optString("openaiModel").matches(Regex("[A-Za-z0-9._:-]{1,80}"))) openaiModel = o.getString("openaiModel")
         if (o.has("webSearch")) webSearch = o.optBoolean("webSearch")
         if (o.has("assistantOn")) assistantOn = o.optBoolean("assistantOn")
@@ -174,7 +184,7 @@ class Store(context: Context) {
         const val MIN_HEIGHT = 80
         const val MAX_HEIGHT = 130
         val THEMES = listOf("system", "dark", "light", "amoled", "custom", "ocean", "rose", "forest", "sunset", "mint")
-        val SHAPES = listOf("rounded", "square", "bubble", "flat")
+        val SHAPES = listOf("raised", "rounded", "square", "bubble", "glass", "outline", "flat")
         val CATEGORIES = listOf("write", "edit", "translate", "summarize")
 
         private fun parseSkills(arr: JSONArray) = (0 until arr.length()).map {

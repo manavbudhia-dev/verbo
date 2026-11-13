@@ -297,6 +297,13 @@ class KeyboardTest {
         store.numberRow = false
         ime.onStartInputView(field.info, false)
         (ime.keys!!.parent as View).let { layout(it); snap(it, "keyboard-dark-wide") }
+        for ((skin, shape) in listOf("dark" to "raised", "light" to "raised", "sunset" to "glass", "forest" to "outline")) {
+            store.theme = skin
+            store.keyShape = shape
+            ime.onStartInputView(field.info, false)
+            (ime.keys!!.parent as View).let { layout(it); snap(it, "keyboard-$skin-$shape") }
+        }
+        store.keyShape = "raised"
         store.theme = "system"
 
         val main = Robolectric.buildActivity(MainActivity::class.java).setup().get()

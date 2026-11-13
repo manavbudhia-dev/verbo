@@ -14,7 +14,7 @@ An Android keyboard that acts on what you type.
 - **Connections** – web search, Weather, Notion and Calendly (paste a token), and any HTTPS API.
 - **Templates** – ready-made daily requests that open Gmail, WhatsApp, Calendar, Maps, YouTube or X
   with a draft filled in; some can be added as skill keys.
-- **Skins** – ten colour skins, four key shapes (rounded, square, bubble, flat) and an optional number row.
+- **Skins** – ten colour skins, seven key styles (raised 3D, rounded, square, bubble, glass, outline, flat) and an optional number row.
 - **Sound and vibration** – six key sound effects (typewriter with a bell, mechanical, pop, water drop,
   soft tap, phone default), volume, and three vibration strengths.
 - **Battery** – follows the phone's Battery Saver (no key feedback or background sync) and releases the
@@ -24,7 +24,8 @@ An Android keyboard that acts on what you type.
   from a browser; pair the keyboard with a one-time code and it syncs.
 - **Export / import** – settings and skills as a JSON file (keys and tokens are left out).
 
-Actions run on your own API key, either Claude (Anthropic) or GPT (OpenAI); pick the model in
+Actions run on your own API key: Claude (Anthropic), GPT (OpenAI), or any OpenAI-compatible gateway
+such as AI Router (address, model name and key; no web search through gateways); pick the model in
 the app and enter the matching key. Keys are stored on the phone. Text is only sent when you
 trigger an action, and never from password fields.
 
@@ -55,6 +56,7 @@ Tests (typing logic, plus screenshots of every screen written to `app/build/shot
 - `Dictionary.kt` – word list lookups for suggestions and auto-correct
 - `Ui.kt`, `PageActivity.kt` – settings look and detail screens
 - `Ai.kt` – the Claude request, prompts and result parsing
+- `ChatCompat.kt` – the same action through OpenAI-compatible gateways (Chat Completions)
 - `OpenAi.kt` – the same action on OpenAI's Responses API
 - `Connections.kt` – connected apps and APIs as assistant tools
 - `Sync.kt` – pairing and syncing with the dashboard

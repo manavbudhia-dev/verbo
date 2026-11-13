@@ -642,6 +642,8 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         undo = null
         val token = ++generation
         val openAi = store.isOpenAi
+        val custom = store.isCustom
+        val base = store.customBase
         val key = store.activeKey
         val model = store.activeModel
         val web = connected && store.webSearch
@@ -654,7 +656,11 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         worker.execute {
             val outcome = try {
                 val cancelled = { token != generation }
-                Result.success(if (openAi) OpenAi.run(key, model, web, task, input, tools, cancelled) else Ai.run(key, model, web, task, input, tools, cancelled))
+                Result.success(when {
+                    custom -> ChatCompat.run(base, key, model, task, input, tools, cancelled)
+                    openAi -> OpenAi.run(key, model, web, task, input, tools, cancelled)
+                    else -> Ai.run(key, model, web, task, input, tools, cancelled)
+                })
             } catch (e: AiException) {
                 Result.failure(e)
             } catch (e: Exception) {

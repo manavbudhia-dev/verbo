@@ -47,7 +47,8 @@ const DEFAULT_SKILLS = [
 ].map(([emoji, name, instruction, category]) => ({ emoji, name, instruction, category }));
 
 const defaultConfig = () => ({
-  apiKey: '', model: MODELS[0], provider: 'anthropic', openaiKey: '', openaiModel: 'gpt-5.5', webSearch: true, weather: true,
+  apiKey: '', model: MODELS[0], provider: 'anthropic', openaiKey: '', openaiModel: 'gpt-5.5',
+  customBase: 'https://api.airouter.in/v1', customKey: '', customModel: 'anthropic/claude-haiku-5.5', webSearch: true, weather: true,
   notionToken: '', calendlyToken: '', customApis: [], skills: DEFAULT_SKILLS,
 });
 
@@ -101,6 +102,7 @@ function saveConfig(userId, config) {
 function publicConfig(config) {
   return {
     model: config.model, provider: config.provider, openaiModel: config.openaiModel, openaiKeySet: !!config.openaiKey,
+    customBase: config.customBase, customModel: config.customModel, customKeySet: !!config.customKey,
     webSearch: config.webSearch, weather: config.weather, skills: config.skills,
     apiKeySet: !!config.apiKey, notionSet: !!config.notionToken, calendlySet: !!config.calendlyToken,
     customApis: config.customApis.map(({ headerValue, ...rest }) => ({ ...rest, headerValueSet: !!headerValue })),
@@ -127,15 +129,24 @@ function applyUpdate(config, body) {
     next.model = body.model;
   }
   if ('provider' in body) {
-    if (!['anthropic', 'openai'].includes(body.provider)) throw new Bad(400, 'Unknown provider');
+    if (!['anthropic', 'openai', 'custom'].includes(body.provider)) throw new Bad(400, 'Unknown provider');
     next.provider = body.provider;
   }
   if ('openaiModel' in body) {
     if (typeof body.openaiModel !== 'string' || !/^[A-Za-z0-9._:-]{1,80}$/.test(body.openaiModel.trim())) throw new Bad(400, 'That does not look like a model ID');
     next.openaiModel = body.openaiModel.trim();
   }
+  if ('customBase' in body) {
+    const base = typeof body.customBase === 'string' ? body.customBase.trim().replace(/\/+$/, '') : '';
+    if (!/^https:\/\/[^\s]{3,300}$/.test(base)) throw new Bad(400, 'The gateway address must start with https://');
+    next.customBase = base;
+  }
+  if ('customModel' in body) {
+    if (typeof body.customModel !== 'string' || !/^[A-Za-z0-9._:\/-]{1,100}$/.test(body.customModel.trim())) throw new Bad(400, 'That does not look like a model name');
+    next.customModel = body.customModel.trim();
+  }
   for (const flag of ['webSearch', 'weather']) if (flag in body) next[flag] = body[flag] === true;
-  for (const secret of ['apiKey', 'openaiKey', 'notionToken', 'calendlyToken']) {
+  for (const secret of ['apiKey', 'openaiKey', 'customKey', 'notionToken', 'calendlyToken']) {
     if (typeof body[secret] === 'string') next[secret] = str(body[secret], 500, 'Token');
   }
   if ('skills' in body) {

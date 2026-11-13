@@ -228,7 +228,7 @@ class PageActivity : Activity() {
         column.addView(ui.section(R.drawable.ic_shield, "What leaves your phone"))
         column.addView(ui.rows(
             ui.row(R.drawable.ic_keyboard, "Typing", "Never sent anywhere. Suggestions and auto-correct run on the phone"),
-            ui.row(R.drawable.ic_sparkles, "Assistant actions", "Only when you trigger one: the text in the field goes to Anthropic or OpenAI, whichever model you picked"),
+            ui.row(R.drawable.ic_sparkles, "Assistant actions", "Only when you trigger one: the text in the field goes to Anthropic, OpenAI or the gateway you chose"),
             ui.row(R.drawable.ic_plug, "Connections", "Called directly from the phone with the tokens you saved, only during an action"),
             ui.row(R.drawable.ic_shield, "Password fields", "Never read, dictated into or sent"),
             ui.row(R.drawable.ic_cloud, "Dashboard", if (store.deviceToken.isEmpty()) "Not paired" else "Paired: settings sync from your own server"),
@@ -309,9 +309,12 @@ class PageActivity : Activity() {
 
         column.addView(ui.section(R.drawable.ic_keyboard, "Key shape"))
         column.addView(ui.rows(
-            choice(R.drawable.ic_keyboard, "Rounded", "Soft corners", store.keyShape == "rounded") { store.keyShape = "rounded" },
+            choice(R.drawable.ic_keyboard, "Raised", "3D keys that sink when pressed", store.keyShape == "raised") { store.keyShape = "raised" },
+            choice(R.drawable.ic_keyboard, "Rounded", "Soft corners, low profile", store.keyShape == "rounded") { store.keyShape = "rounded" },
             choice(R.drawable.ic_keyboard, "Square", "Sharp corners, widest keys", store.keyShape == "square") { store.keyShape = "square" },
             choice(R.drawable.ic_keyboard, "Bubble", "Fully round keys", store.keyShape == "bubble") { store.keyShape = "bubble" },
+            choice(R.drawable.ic_keyboard, "Glass", "See-through keys with a light edge", store.keyShape == "glass") { store.keyShape = "glass" },
+            choice(R.drawable.ic_keyboard, "Outline", "Thin outlines only", store.keyShape == "outline") { store.keyShape = "outline" },
             choice(R.drawable.ic_keyboard, "Flat", "Letters only, no key outlines", store.keyShape == "flat") { store.keyShape = "flat" },
         ))
         column.addView(ui.section(R.drawable.ic_sliders_horizontal, "Layout"))

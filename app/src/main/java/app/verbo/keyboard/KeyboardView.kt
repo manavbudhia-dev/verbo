@@ -84,12 +84,19 @@ class KeyboardView(
         set(value) { if (field != value) { field = value; invalidate() } }
 
     private val d = resources.displayMetrics.density
-    // Keys are kept wide: thin gaps between them and almost no margin at the screen edges.
+    // Keys are kept wide: hairline gaps between them and almost no margin at the screen edges.
     private val rowHeight = 51 * d * scale
-    private val gapX = 1.75f * d
-    private val gapY = 3.5f * d
+    private val gapX = 1.25f * d
+    private val gapY = 3.25f * d
     private val flat = shape == "flat"
-    private val radius = when (shape) { "square" -> 3 * d; "bubble" -> rowHeight; else -> 8 * d }
+    private val raised = shape == "raised"
+    private val glass = shape == "glass"
+    private val outline = shape == "outline"
+    private val radius = when (shape) { "square" -> 3 * d; "bubble" -> rowHeight; "raised" -> 9 * d; else -> 8 * d }
+    /** How far the key face stands above its base. Raised keys are tall and sink by this much when pressed. */
+    private val depth = when { raised -> 4 * d; flat || glass || outline -> 0f; else -> 1.5f * d }
+    private val edge = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 1.2f * d }
+    private val shaders = HashMap<Long, android.graphics.Shader>()
     private var rows = ArrayList<List<Key>>()
     private val presses = HashMap<Int, Press>()
     private val handler = Handler(Looper.getMainLooper())
@@ -100,10 +107,15 @@ class KeyboardView(
         typeface = Typeface.create("sans-serif", Typeface.NORMAL)
     }
     private val icons = HashMap<Int, Drawable>()
+    private var lift = 0f
+
+    private fun lighten(c: Int, by: Float) = Color.rgb(
+        (Color.red(c) + (255 - Color.red(c)) * by).toInt(), (Color.green(c) + (255 - Color.green(c)) * by).toInt(), (Color.blue(c) + (255 - Color.blue(c)) * by).toInt())
+    private fun darken(c: Int, to: Float) = Color.rgb((Color.red(c) * to).toInt(), (Color.green(c) * to).toInt(), (Color.blue(c) * to).toInt())
 
     init { build() }
 
-    fun setTheme(t: KeyTheme) { theme = t; invalidate() }
+    fun setTheme(t: KeyTheme) { theme = t; shaders.clear(); invalidate() }
 
     private fun chars(s: String) = s.map { Key(Type.CHAR, it.toString(), 1f) }
 
@@ -138,7 +150,7 @@ class KeyboardView(
 
     private fun place(width: Int) {
         if (width == 0) return
-        val side = 1.5f * d
+        val side = 1f * d
         rows.forEachIndexed { r, row ->
             // The second letter row is one key narrower, so it sits half a key in from each side.
             val inset = if (row[0].inset) (width - 2 * side) / 20f else 0f
@@ -157,7 +169,7 @@ class KeyboardView(
         setMeasuredDimension(MeasureSpec.getSize(widthMeasureSpec), (rows.size * rowHeight).toInt())
     }
 
-    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) = place(w)
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) { shaders.clear(); place(w) }
 
     // ---------- drawing ----------
 
@@ -165,7 +177,7 @@ class KeyboardView(
 
     private fun drawIcon(canvas: Canvas, res: Int, key: Key, color: Int, sizeDp: Float, cx: Float = key.rect.centerX()) {
         val half = sizeDp * d / 2
-        val cy = key.rect.centerY() - d * 0.75f
+        val cy = key.rect.centerY() + lift
         icon(res).apply {
             setTint(color)
             setBounds((cx - half).toInt(), (cy - half).toInt(), (cx + half).toInt(), (cy + half).toInt())
@@ -178,31 +190,60 @@ class KeyboardView(
         for (row in rows) for (key in row) {
             val down = key in pressed
             val r = key.rect
-            // The flat skin shows letters only: a key gets a background just while pressed (and for enter).
-            val bare = flat && !down && key.type != Type.ENTER && key.type != Type.BAR
-            if (!flat) {
-                face.color = theme.keyShadow
-                canvas.drawRoundRect(r.left, r.top + 1.5f * d, r.right, r.bottom, radius, radius, face)
-            }
-            face.color = when {
+            val color = when {
                 key.type == Type.ENTER -> if (down) theme.accentPressed else theme.accent
                 down -> theme.keyPressed
                 key.type == Type.CHAR || key.type == Type.BAR -> theme.key
                 else -> theme.fnKey
             }
-            if (!bare) canvas.drawRoundRect(r.left, r.top, r.right, r.bottom - 1.5f * d, radius, radius, face)
+            // A pressed key sinks onto its base, which is what makes raised keys feel physical.
+            val sink = if (down) depth * 0.75f else 0f
+            val top = r.top + sink
+            val bottom = r.bottom - depth + sink
+            // Offset for labels and icons so they move with the key face.
+            lift = sink - depth / 2
+            when {
+                flat -> if (down || key.type == Type.ENTER || key.type == Type.BAR) {
+                    face.shader = null
+                    face.color = color
+                    canvas.drawRoundRect(r.left, top, r.right, bottom, radius, radius, face)
+                }
+                glass || outline -> {
+                    face.shader = null
+                    face.color = if (key.type == Type.ENTER || down) color
+                        else if (glass) (color and 0x00FFFFFF) or 0x59000000 else Color.TRANSPARENT
+                    canvas.drawRoundRect(r.left, top, r.right, bottom, radius, radius, face)
+                    edge.color = if (key.type == Type.ENTER) theme.accent else (theme.text and 0x00FFFFFF) or (if (outline) 0x66000000 else 0x33000000)
+                    val h = edge.strokeWidth / 2
+                    canvas.drawRoundRect(r.left + h, top + h, r.right - h, bottom - h, radius, radius, edge)
+                }
+                else -> {
+                    face.shader = null
+                    face.color = if (raised) darken(if (key.type == Type.ENTER) theme.accent else theme.keyShadow, if (key.type == Type.ENTER) 0.6f else 1f) else theme.keyShadow
+                    canvas.drawRoundRect(r.left, r.top + depth * 0.5f, r.right, r.bottom, radius, radius, face)
+                    if (raised) {
+                        // Lit from above: the face is a little lighter at the top than at the bottom.
+                        val id = (color.toLong() shl 20) or (top.toLong() and 0xFFFFF)
+                        face.shader = shaders.getOrPut(id) {
+                            android.graphics.LinearGradient(0f, top, 0f, bottom, lighten(color, 0.10f), darken(color, 0.94f), android.graphics.Shader.TileMode.CLAMP)
+                        }
+                    } else face.color = color
+                    canvas.drawRoundRect(r.left, top, r.right, bottom, radius, radius, face)
+                    face.shader = null
+                }
+            }
 
             when (key.type) {
                 Type.CHAR -> {
                     letters.color = theme.text
                     letters.textSize = 24 * d * minOf(scale, 1.1f)
                     val label = if (mode == Mode.LETTERS && shift > 0) key.label.uppercase() else key.label
-                    canvas.drawText(label, r.centerX(), r.centerY() - d * 0.75f - (letters.descent() + letters.ascent()) / 2, letters)
+                    canvas.drawText(label, r.centerX(), r.centerY() + lift - (letters.descent() + letters.ascent()) / 2, letters)
                 }
                 Type.MODE -> {
                     letters.color = theme.text
                     letters.textSize = 15 * d
-                    canvas.drawText(key.label, r.centerX(), r.centerY() - d * 0.75f - (letters.descent() + letters.ascent()) / 2, letters)
+                    canvas.drawText(key.label, r.centerX(), r.centerY() + lift - (letters.descent() + letters.ascent()) / 2, letters)
                 }
                 Type.SHIFT -> drawIcon(canvas, if (shift == 2) R.drawable.ic_shift_lock else R.drawable.ic_arrow_big_up, key, if (shift > 0) theme.accent else theme.text, 24f)
                 Type.BACKSPACE -> drawIcon(canvas, R.drawable.ic_delete, key, theme.text, 24f)
@@ -215,7 +256,7 @@ class KeyboardView(
                     val total = iconSize * d + 6 * d + textWidth
                     val start = r.centerX() - total / 2
                     drawIcon(canvas, R.drawable.ic_sparkle, key, theme.accent, iconSize, start + iconSize * d / 2)
-                    canvas.drawText(barLabel, start + iconSize * d + 6 * d + textWidth / 2, r.centerY() - d * 0.75f - (letters.descent() + letters.ascent()) / 2, letters)
+                    canvas.drawText(barLabel, start + iconSize * d + 6 * d + textWidth / 2, r.centerY() + lift - (letters.descent() + letters.ascent()) / 2, letters)
                 }
             }
         }
