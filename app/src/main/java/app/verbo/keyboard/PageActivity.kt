@@ -267,7 +267,7 @@ class PageActivity : Activity() {
     private fun background(work: () -> Unit, done: String) {
         Thread {
             val message = try { work(); done } catch (e: SyncException) { e.message ?: "Failed" } catch (e: Exception) { "Something went wrong" }
-            runOnUiThread { ui.toast(message); render() }
+            runOnUiThread { if (!isFinishing && !isDestroyed) { ui.toast(message); render() } }
         }.start()
     }
 

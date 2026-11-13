@@ -78,7 +78,7 @@ You may also have tools for apps and APIs the user connected. Use them when the 
         java.time.ZonedDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("EEEE d MMMM yyyy, HH:mm (xxx)", java.util.Locale.ENGLISH))
 
     /** Blocking; call from a background thread. */
-    fun run(apiKey: String, model: String, webSearch: Boolean, task: String?, userText: String, tools: List<ToolSpec> = emptyList()): ActionResult {
+    fun run(apiKey: String, model: String, webSearch: Boolean, task: String?, userText: String, tools: List<ToolSpec> = emptyList(), cancelled: () -> Boolean = { false }): ActionResult {
         if (apiKey.isBlank()) throw AiException("Add your API key in the Verbo app first")
         val client = AnthropicOkHttpClient.builder()
             .apiKey(apiKey.trim())
@@ -112,6 +112,8 @@ You may also have tools for apps and APIs the user connected. Use them when the 
                 } else if (stop == BetaStopReason.TOOL_USE) {
                     builder.addMessage(response)
                     val results = response.content().filter { it.isToolUse() }.map { block ->
+                        // Tools can change things (create a page), so never run one for an action the user cancelled.
+                        if (cancelled()) throw AiException("Cancelled")
                         val call = block.asToolUse()
                         val result = BetaToolResultBlockParam.builder().toolUseId(call.id())
                         try {
@@ -126,6 +128,7 @@ You may also have tools for apps and APIs the user connected. Use them when the 
                     }
                     builder.addUserMessageOfContentBlockParams(results)
                 } else break
+                if (cancelled()) throw AiException("Cancelled")
                 response = client.beta().messages().create(builder.build())
                 rounds++
             }

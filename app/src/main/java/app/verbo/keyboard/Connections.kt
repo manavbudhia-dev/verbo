@@ -10,6 +10,7 @@ import java.net.URLEncoder
 object Connections {
     private val json = ObjectMapper()
     private const val MAX_BODY = 12000
+    private const val MAX_READ = 2_000_000
 
     fun tools(weather: Boolean, notionToken: String, calendlyToken: String, apis: List<CustomApi>): List<ToolSpec> {
         val out = ArrayList<ToolSpec>()
@@ -136,6 +137,8 @@ object Connections {
             conn.connectTimeout = 15000
             conn.readTimeout = 20000
             conn.setRequestProperty("Accept", "application/json")
+            // A redirect would resend the user's token or API key header to whatever host it points at.
+            if (headers.isNotEmpty()) conn.instanceFollowRedirects = false
             headers.forEach { (k, v) -> conn.setRequestProperty(k, v) }
             if (body != null) {
                 conn.doOutput = true
@@ -144,7 +147,17 @@ object Connections {
             }
             val code = conn.responseCode
             val stream = if (code in 200..299) conn.inputStream else conn.errorStream
-            val text = stream?.bufferedReader()?.use { it.readText() } ?: ""
+            // Read at most MAX_READ characters so a huge or endless response can't exhaust memory.
+            val text = stream?.bufferedReader()?.use { reader ->
+                val buffer = CharArray(8192)
+                val sb = StringBuilder()
+                while (sb.length < MAX_READ) {
+                    val n = reader.read(buffer, 0, minOf(buffer.size, MAX_READ - sb.length))
+                    if (n < 0) break
+                    sb.append(buffer, 0, n)
+                }
+                sb.toString()
+            } ?: ""
             if (code !in 200..299) throw RuntimeException("HTTP $code ${text.take(300)}")
             return text
         } finally {

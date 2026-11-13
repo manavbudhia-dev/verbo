@@ -48,7 +48,8 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     private lateinit var store: Store
     private lateinit var p: KeyTheme
     private val main = Handler(Looper.getMainLooper())
-    private val worker = Executors.newSingleThreadExecutor()
+    // One thread per action, so a cancelled or slow request (or a dashboard sync) never holds up the next one.
+    private val worker = Executors.newCachedThreadPool()
     internal val dictionary = Dictionary()
     private var audio: AudioManager? = null
     private var vibrator: Vibrator? = null
@@ -78,15 +79,20 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     private var pendingStop = false
     private var cursor = 0
     private val expected = ArrayDeque<Int>()
+    private val expectedAt = ArrayDeque<Long>()
+    private var midWord = false // the cursor sits inside a word, so it must not be "corrected" or completed
+    private var lastTyped = ' '
     private var lastCorrection: Triple<String, String, String>? = null // typed, replaced with, separator
     private var spaceAfterWordAt = 0L
     private var textField = false
+    private var numericField = false
     private var lastShiftTap = 0L
     internal var suggestions: List<String> = emptyList()
     private var slashMatches: List<Skill> = emptyList()
     private var highlighted = -1
 
-    private var generation = 0
+    @Volatile private var generation = 0 // read by action threads to see whether they were cancelled
+    private var listening = false
     private var busy = false
     private var undo: Pair<String, String>? = null // original text, text we put in its place
 
@@ -113,6 +119,12 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
 
     override fun onCreateInputView(): View {
         builtWith = signature()
+        // The old views are gone (rotation, theme change); drop anything that was waiting to update them.
+        generation++
+        busy = false
+        undo = null
+        recognizer?.cancel()
+        listening = false
         p = KeyTheme.of(this, store.theme, store.customAccent)
 
         val root = LinearLayout(this).apply {
@@ -250,7 +262,8 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     private fun expect(delta: Int) {
         cursor = (cursor + delta).coerceAtLeast(0)
         expected.addLast(cursor)
-        if (expected.size > 48) expected.removeFirst()
+        expectedAt.addLast(android.os.SystemClock.uptimeMillis())
+        if (expected.size > 48) { expected.removeFirst(); expectedAt.removeFirst() }
     }
 
     override fun onChar(text: String) {
@@ -269,7 +282,8 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             expect(1)
             sentenceStart = true
             lastCorrection = null
-        } else if (c.isLetter() || (c == '\'' && word.isNotEmpty()) || (c == '/' && word.isEmpty() && assistantOn && textField)) {
+        } else if (c.isLetter() || (c == '\'' && word.isNotEmpty()) ||
+            (c == '/' && word.isEmpty() && assistantOn && textField && lastTyped.isWhitespace())) { // "/" only starts a command after a space, not in 12/11
             if (word.isEmpty()) wordAtSentenceStart = sentenceStart
             word.append(text)
             ic.commitText(text, 1)
@@ -280,7 +294,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             if (c == '/') keys?.mode = KeyboardView.Mode.LETTERS
         } else {
             val typed = word.toString()
-            val fix = if (correctOn && textField && typed.isNotEmpty() && typed[0] != '/' && (c == ' ' || c in ".,!?;:"))
+            val fix = if (correctOn && textField && !midWord && typed.isNotEmpty() && typed[0] != '/' && (c == ' ' || c in ".,!?;:"))
                 dictionary.correction(typed, wordAtSentenceStart) else null
             if (fix != null) {
                 ic.beginBatchEdit()
@@ -296,13 +310,15 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             }
             spaceAfterWordAt = if (c == ' ' && typed.isNotEmpty()) now else 0
             word.setLength(0)
+            midWord = false
             when {
                 c == '.' || c == '!' || c == '?' -> pendingStop = true
                 c == ' ' -> { if (pendingStop) sentenceStart = true; pendingStop = false }
                 else -> pendingStop = false
             }
-            if (c == ' ' && keys?.mode != KeyboardView.Mode.LETTERS) keys?.mode = KeyboardView.Mode.LETTERS
+            if (c == ' ' && !numericField && keys?.mode != KeyboardView.Mode.LETTERS) keys?.mode = KeyboardView.Mode.LETTERS
         }
+        lastTyped = text.last()
         applyCaps()
         updateSuggestions()
     }
@@ -337,9 +353,11 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
                     ic.deleteSurroundingText(if (pair) 2 else 1, 0)
                 }
                 expected.clear()
+                expectedAt.clear()
                 cursor = -1
             }
         }
+        lastTyped = if (word.isNotEmpty()) word.last() else 'x' // unknown until the app reports back
         spaceAfterWordAt = 0
         applyCaps()
         updateSuggestions()
@@ -354,8 +372,11 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             action != EditorInfo.IME_ACTION_NONE && action != EditorInfo.IME_ACTION_UNSPECIFIED
         if (wantsAction) ic.performEditorAction(action) else ic.commitText("\n", 1)
         expected.clear()
+        expectedAt.clear()
         cursor = -1
         word.setLength(0)
+        midWord = false
+        lastTyped = ' '
         lastCorrection = null
         sentenceStart = true
         applyCaps()
@@ -403,10 +424,14 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         wordAtSentenceStart = false
         spaceAfterWordAt = 0
         val type = currentInputEditorInfo?.inputType ?: 0
+        midWord = false
+        lastTyped = ' '
         if (ic != null) {
+            val before = ic.getTextBeforeCursor(40, 0)?.toString().orEmpty()
+            lastTyped = before.lastOrNull() ?: ' '
             if (textField && TextUtils.isEmpty(ic.getSelectedText(0))) {
-                val before = ic.getTextBeforeCursor(40, 0)?.toString().orEmpty()
                 word.append(before.takeLastWhile { it.isLetter() || it == '\'' }.trimStart('\''))
+                midWord = ic.getTextAfterCursor(1, 0)?.firstOrNull()?.isLetter() == true
             }
             sentenceStart = type != InputType.TYPE_NULL && ic.getCursorCapsMode(type) != 0
         }
@@ -416,14 +441,19 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
 
     override fun onUpdateSelection(oldSelStart: Int, oldSelEnd: Int, newSelStart: Int, newSelEnd: Int, candidatesStart: Int, candidatesEnd: Int) {
         super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
+        // Positions we predicted long ago were never going to be reported (some apps report only the
+        // last of several quick edits). Forget them, or a later tap there would look like our own edit.
+        val cutoff = android.os.SystemClock.uptimeMillis() - 1500
+        while (expectedAt.isNotEmpty() && expectedAt.first() < cutoff) { expected.removeFirst(); expectedAt.removeFirst() }
         if (newSelStart == newSelEnd) {
             if (expected.contains(newSelStart)) {
-                while (expected.removeFirst() != newSelStart) { /* drop older positions */ }
+                do { expectedAt.removeFirst() } while (expected.removeFirst() != newSelStart)
                 return
             }
             if (expected.isEmpty() && newSelStart == cursor) return
         }
         expected.clear()
+        expectedAt.clear()
         cursor = newSelStart
         resync()
     }
@@ -443,6 +473,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             hidePreview()
             showTyping()
             recognizer?.cancel()
+            listening = false
             syncIfStale()
         }
         val type = info?.inputType ?: 0
@@ -451,7 +482,12 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             type and InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS == 0 &&
             variation != InputType.TYPE_TEXT_VARIATION_URI && variation != InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS &&
             variation != InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS && variation != InputType.TYPE_TEXT_VARIATION_FILTER
+        // Number, phone and date fields open on the digits page and stay there.
+        val cls = type and InputType.TYPE_MASK_CLASS
+        numericField = cls == InputType.TYPE_CLASS_NUMBER || cls == InputType.TYPE_CLASS_PHONE || cls == InputType.TYPE_CLASS_DATETIME
+        if (!restarting && numericField) keys?.mode = KeyboardView.Mode.SYMBOLS
         expected.clear()
+        expectedAt.clear()
         cursor = info?.initialSelStart ?: -1
         resync()
     }
@@ -480,7 +516,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         if (typed.isNotEmpty() && typed[0] == '/') {
             val query = typed.substring(1).lowercase()
             slashMatches = skills.filter { it.name.lowercase().replace(" ", "").startsWith(query) }.take(3)
-        } else if (suggestOn && textField && typed.isNotEmpty()) {
+        } else if (suggestOn && textField && !midWord && typed.isNotEmpty()) {
             val fix = if (correctOn) dictionary.correction(typed, wordAtSentenceStart) else null
             // Likely completions first; the word auto-correct would put in (if any) goes last and is highlighted.
             val completions = dictionary.completions(typed, 3)
@@ -544,6 +580,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         ic.endBatchEdit()
         expect(chosen.length + 1 - typed)
         word.setLength(0)
+        lastTyped = ' '
         lastCorrection = null
         sentenceStart = false
         spaceAfterWordAt = 0
@@ -611,6 +648,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
 
     /** Runs one assistant request off the main thread and hands the result back, unless it was cancelled. */
     private fun launch(label: String, task: String?, input: String, connected: Boolean, onResult: (ActionResult) -> Unit) {
+        if (busy) return
         busy = true
         undo = null
         val token = ++generation
@@ -626,7 +664,8 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         })
         worker.execute {
             val outcome = try {
-                Result.success(if (openAi) OpenAi.run(key, model, web, task, input, tools) else Ai.run(key, model, web, task, input, tools))
+                val cancelled = { token != generation }
+                Result.success(if (openAi) OpenAi.run(key, model, web, task, input, tools, cancelled) else Ai.run(key, model, web, task, input, tools, cancelled))
             } catch (e: AiException) {
                 Result.failure(e)
             } catch (e: Exception) {
@@ -701,6 +740,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         showTyping()
     }
 
+    /** Plain web links show where they lead, so a link the assistant picked up from a web page can't hide its destination. */
     private fun openLabel(uri: String) = when {
         uri.startsWith("geo:", true) -> "Open map"
         uri.startsWith("tel:", true) -> "Call"
@@ -709,7 +749,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         uri.startsWith("https://calendar.google.com", true) -> "Add to calendar"
         uri.startsWith("https://www.youtube.com", true) -> "YouTube"
         uri.startsWith("https://x.com", true) -> "Post on X"
-        else -> "Open link"
+        else -> "Open " + (Uri.parse(uri).host?.removePrefix("www.")?.take(28) ?: "link")
     }
 
     private fun openLink(uri: String) {
@@ -728,7 +768,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
 
     /** Tap: dictation, cleaned up by the assistant. Hold: speak a request and get the result. */
     private fun startVoice(command: Boolean) {
-        if (busy) return
+        if (busy || listening) return
         if (isPasswordField()) {
             showStatus("Verbo doesn't dictate into password fields")
             return
@@ -750,7 +790,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         val heading = if (command) "Say what you want…" else "Listening…"
         val buttons = arrayOf<Pair<String, () -> Unit>>(
             "Done" to { rec.stopListening() },
-            "Cancel" to { rec.cancel(); showTyping() },
+            "Cancel" to { rec.cancel(); listening = false; showTyping() },
         )
         rec.setRecognitionListener(object : RecognitionListener {
             override fun onPartialResults(partial: Bundle?) {
@@ -758,10 +798,12 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
                 if (!heard.isNullOrBlank()) showStatus(heard.takeLast(60), *buttons)
             }
             override fun onResults(results: Bundle?) {
+                listening = false
                 val heard = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
                 if (heard.isNullOrBlank()) showStatus("Didn't catch that") else onHeard(heard, command, smart)
             }
             override fun onError(error: Int) {
+                listening = false
                 showStatus(when (error) {
                     SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Didn't catch that"
                     SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "No connection for speech"
@@ -777,6 +819,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             override fun onEvent(eventType: Int, params: Bundle?) {}
         })
         showStatus(heading, *buttons)
+        listening = true
         rec.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
@@ -784,7 +827,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     }
 
     private fun onHeard(heard: String, command: Boolean, smart: Boolean) {
-        if (!smart) {
+        if (!smart || busy) { // if an action started while we were listening, keep the words rather than drop them
             insert(heard) // plain dictation still works without the assistant
             return
         }

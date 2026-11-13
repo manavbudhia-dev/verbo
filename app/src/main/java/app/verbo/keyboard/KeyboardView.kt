@@ -90,7 +90,7 @@ class KeyboardView(
     private val gapY = 3.5f * d
     private val flat = shape == "flat"
     private val radius = when (shape) { "square" -> 3 * d; "bubble" -> rowHeight; else -> 8 * d }
-    private val rows = ArrayList<List<Key>>()
+    private var rows = ArrayList<List<Key>>()
     private val presses = HashMap<Int, Press>()
     private val handler = Handler(Looper.getMainLooper())
 
@@ -108,7 +108,7 @@ class KeyboardView(
     private fun chars(s: String) = s.map { Key(Type.CHAR, it.toString(), 1f) }
 
     private fun build() {
-        rows.clear()
+        rows = ArrayList() // a new list each time, so code holding the old layout can tell it changed
         when (mode) {
             Mode.LETTERS -> {
                 if (numberRow) rows += chars("1234567890")
@@ -259,9 +259,13 @@ class KeyboardView(
     private fun down(id: Int, x: Float, y: Float) {
         val key = keyAt(x, y) ?: return
         // A second finger landing means the first key was meant: commit it now, in order.
-        for (other in presses.values) if (other.key.type == Type.CHAR || other.key.type == Type.BAR) {
+        // Committing can switch the layout (space in the symbols page), which rebuilds the keys and
+        // clears the press map, so walk a copy and stop as soon as the layout has changed under us.
+        val layout = rows
+        for (other in presses.values.toList()) if (other.key.type == Type.CHAR || other.key.type == Type.BAR) {
             if (other.key.type == Type.BAR) handler.removeCallbacks(barHold)
             commit(other)
+            if (rows !== layout) break
         }
         val press = Press(key)
         presses[id] = press

@@ -82,6 +82,8 @@ function checkPassword(password, stored) {
   return crypto.timingSafeEqual(actual, Buffer.from(hash, 'hex'));
 }
 
+const DUMMY_HASH = hashPassword(crypto.randomBytes(16).toString('hex'));
+
 function loadConfig(userId) {
   const row = db.prepare('SELECT data, updated FROM configs WHERE user_id = ?').get(userId);
   if (!row) return { config: defaultConfig(), updated: 0 };
@@ -264,7 +266,9 @@ const routes = {
     const body = await readJson(req);
     const email = str(body.email ?? '', 200, 'Email').toLowerCase();
     const user = db.prepare('SELECT id, pw FROM users WHERE email = ?').get(email);
-    if (!user || typeof body.password !== 'string' || !checkPassword(body.password, user.pw)) throw new Bad(401, 'Wrong email or password');
+    // Always do the (slow) password check, so response time doesn't reveal which emails have accounts.
+    const ok = typeof body.password === 'string' && checkPassword(body.password, user ? user.pw : DUMMY_HASH);
+    if (!user || !ok) throw new Bad(401, 'Wrong email or password');
     return { body: { email }, headers: startSession(res, user.id) };
   },
 
@@ -278,7 +282,10 @@ const routes = {
 
   'PUT /api/config': async (req) => {
     const userId = requireUser(req);
-    const next = applyUpdate(loadConfig(userId).config, await readJson(req));
+    // Read the body first. Loading the stored config before this await let a second save slip in
+    // between, and the slower one then wrote back a stale copy and silently undid the other.
+    const body = await readJson(req);
+    const next = applyUpdate(loadConfig(userId).config, body);
     saveConfig(userId, next);
     return { body: publicConfig(next) };
   },

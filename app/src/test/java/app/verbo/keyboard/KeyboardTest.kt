@@ -45,6 +45,12 @@ class FakeField(context: Context, private val ime: () -> VerboIme) {
         if (delayed) pending.add(at) else ime().onUpdateSelection(0, 0, at, at, -1, -1)
     }
 
+    /** An app that reports only the final cursor position after several quick edits. */
+    fun flushLastOnly() {
+        pending.lastOrNull()?.let { ime().onUpdateSelection(0, 0, it, it, -1, -1) }
+        pending.clear()
+    }
+
     fun flush() {
         pending.forEach { ime().onUpdateSelection(0, 0, it, it, -1, -1) }
         pending.clear()
@@ -197,6 +203,58 @@ class KeyboardTest {
         touch(keys, MotionEvent.ACTION_DOWN, listOf(Triple(0, keyW * 1.1f, rowH * 0.98f)))
         touch(keys, MotionEvent.ACTION_UP, listOf(Triple(0, keyW * 1.1f, rowH * 0.98f)))
         assertEquals("qpw", field.text.toString())
+    }
+
+    // ---------- regressions ----------
+
+    @Test
+    fun thirdFingerLandingWhileLayoutSwitchesDoesNotCrash() {
+        val keys = ime.keys!!
+        keys.mode = KeyboardView.Mode.SYMBOLS
+        layout(root)
+        val rowH = keys.height / 4f
+        val keyW = keys.width / 10f
+        val two = Triple(1, keyW * 1.5f, rowH * 0.5f)
+        val bar = Triple(0, keyW * 5f, rowH * 3.5f)
+        val three = Triple(2, keyW * 2.5f, rowH * 0.5f)
+        touch(keys, MotionEvent.ACTION_DOWN, listOf(two))
+        touch(keys, MotionEvent.ACTION_POINTER_DOWN, listOf(bar, two), 0)
+        // Committing the held space switches back to letters, which rebuilds the keys mid-touch.
+        touch(keys, MotionEvent.ACTION_POINTER_DOWN, listOf(bar, two, three), 2)
+        touch(keys, MotionEvent.ACTION_CANCEL, listOf(bar))
+        assertTrue(field.text.toString(), field.text.startsWith("2 "))
+    }
+
+    @Test
+    fun slashInsideNumbersIsNotACommand() {
+        type("on ")
+        ime.keys!!.mode = KeyboardView.Mode.SYMBOLS
+        type("12/")
+        assertEquals("a date must not flip the keyboard back to letters", KeyboardView.Mode.SYMBOLS, ime.keys!!.mode)
+        type("11")
+        assertEquals("on 12/11", field.text.toString())
+    }
+
+    @Test
+    fun cursorInTheMiddleOfAWordIsNotAutoCorrected() {
+        type("runing")
+        field.moveCursor(4)
+        type(" ")
+        assertEquals("runi ng", field.text.toString())
+    }
+
+    @Test
+    fun cursorMovesAreNotMistakenForOurOwnOldEdits() {
+        field.delayed = true
+        type("a")
+        ime.onBackspace()
+        type(" ")
+        field.flushLastOnly() // the app skipped reporting the two earlier positions
+        field.delayed = false
+        org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofSeconds(3))
+        field.moveCursor(0) // the user taps at the start, where one of our old edits also left the cursor
+        type("hel")
+        assertTrue("suggestions should be for \"hel\", got ${ime.suggestions}", ime.suggestions.all { it.startsWith("hel") } && ime.suggestions.isNotEmpty())
     }
 
     // ---------- pictures for checking layout by eye ----------

@@ -11,7 +11,7 @@ object OpenAi {
     private const val URL_RESPONSES = "https://api.openai.com/v1/responses"
     private const val MAX_ROUNDS = 6
 
-    fun run(apiKey: String, model: String, webSearch: Boolean, task: String?, userText: String, tools: List<ToolSpec>): ActionResult {
+    fun run(apiKey: String, model: String, webSearch: Boolean, task: String?, userText: String, tools: List<ToolSpec>, cancelled: () -> Boolean = { false }): ActionResult {
         if (apiKey.isBlank()) throw AiException("Add your OpenAI API key in the Verbo app first")
         val toolDefs = ArrayList<Map<String, Any>>()
         if (webSearch) toolDefs += mapOf("type" to "web_search")
@@ -29,6 +29,7 @@ object OpenAi {
         var response: JsonNode
         var rounds = 0
         while (true) {
+            if (cancelled()) throw AiException("Cancelled")
             val body = HashMap<String, Any>()
             body["model"] = model
             body["instructions"] = Ai.systemPrompt(task)
@@ -41,6 +42,8 @@ object OpenAi {
             if (calls.isEmpty() || rounds++ >= MAX_ROUNDS) break
             // Run each requested tool and hand all the results back in one follow-up request.
             input = calls.map { call ->
+                // Tools can change things (create a page), so never run one for an action the user cancelled.
+                if (cancelled()) throw AiException("Cancelled")
                 val output = try {
                     val spec = tools.first { it.name == call.path("name").asText() }
                     val args = HashMap<String, String>()

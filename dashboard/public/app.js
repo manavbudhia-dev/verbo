@@ -43,9 +43,13 @@ const MODELS = [
   ['claude-opus-5-5', 'Opus 5.5 — most capable'],
 ];
 
+let saveSeq = 0;
 async function save(patch, message) {
+  const seq = ++saveSeq;
   try {
-    state.config = await api('PUT', '/api/config', patch);
+    const config = await api('PUT', '/api/config', patch);
+    if (seq !== saveSeq) return; // a newer save is on its way; its reply is the one to show
+    state.config = config;
     toast(message || 'Saved');
     render();
   } catch (e) { toast(e.message); }
