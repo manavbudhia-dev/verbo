@@ -3,313 +3,32 @@ package app.verbo.keyboard
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
-import android.Manifest
 import android.content.Intent
-import android.content.pm.PackageManager
-import android.content.res.Configuration
 import android.graphics.Color
-import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.provider.Settings
-import android.text.InputType
-import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.inputmethod.InputMethodManager
-import android.widget.AdapterView
-import android.widget.ArrayAdapter
-import android.widget.Button
-import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.LinearLayout
-import android.widget.ScrollView
-import android.widget.Spinner
-import android.widget.Switch
+import android.widget.PopupMenu
+import android.widget.SeekBar
 import android.widget.TextView
-import android.widget.Toast
 
-/** Setup and settings: turn the keyboard on, add an API key, and build skill keys. */
+/** The main settings screen. Detail screens live in [PageActivity]. */
 class MainActivity : Activity() {
 
     private lateinit var store: Store
-    private lateinit var skillsBox: LinearLayout
-    private lateinit var apisBox: LinearLayout
-    private lateinit var dashBox: LinearLayout
-    private lateinit var micStatus: TextView
-    private lateinit var stepOne: TextView
-    private lateinit var stepTwo: TextView
-    private var night = false
-
-    private val ink get() = Color.parseColor(if (night) "#F1EEE8" else "#1D1F24")
-    private val muted get() = Color.parseColor(if (night) "#9A9CA3" else "#6B6A66")
-    private val card get() = Color.parseColor(if (night) "#23262E" else "#FFFFFF")
-    private val accent get() = Color.parseColor(if (night) "#5AA9F5" else "#3B82F6")
+    private lateinit var ui: Ui
+    private lateinit var setupBox: LinearLayout
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = Store(this)
-        night = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
-
-        val column = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(28), dp(20), dp(40))
-        }
-        val scroll = ScrollView(this).apply {
-            fitsSystemWindows = true
-            addView(column)
-        }
-        setContentView(scroll)
-
-        column.addView(label("Verbo", 34f, ink, bold = true))
-        column.addView(label("A keyboard that does what you type.", 16f, muted).pad(bottom = 20))
-
-        // --- setup ---
-        column.addView(section("Turn it on"))
-        val setup = cardBox()
-        stepOne = label("", 15f, ink)
-        setup.addView(stepOne)
-        setup.addView(button("Open keyboard settings") {
-            startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
-        })
-        stepTwo = label("", 15f, ink).pad(top = 14)
-        setup.addView(stepTwo)
-        setup.addView(button("Choose keyboard") {
-            (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showInputMethodPicker()
-        })
-        column.addView(setup)
-
-        // --- dashboard ---
-        column.addView(section("Dashboard"))
-        dashBox = cardBox()
-        column.addView(dashBox)
-        renderDashboard()
-
-        // --- assistant ---
-        column.addView(section("Assistant"))
-        val ai = cardBox()
-        ai.addView(label("Claude API key", 15f, ink, bold = true))
-        ai.addView(label("Actions run on your own key from console.anthropic.com. It stays on this phone and is only sent to Anthropic.", 13f, muted).pad(bottom = 6))
-        val keyField = EditText(this).apply {
-            hint = "sk-ant-…"
-            setText(store.apiKey)
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-            setSingleLine()
-            setTextColor(ink)
-            setHintTextColor(muted)
-        }
-        ai.addView(keyField)
-        ai.addView(button("Save key") {
-            store.apiKey = keyField.text.toString()
-            toast(if (store.apiKey.isEmpty()) "Key removed" else "Key saved")
-        })
-
-        ai.addView(label("Model", 15f, ink, bold = true).pad(top = 16))
-        val spinner = Spinner(this)
-        spinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, Ai.MODELS.map { it.second })
-        spinner.setSelection(Ai.MODELS.indexOfFirst { it.first == store.model }.coerceAtLeast(0))
-        spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                store.model = Ai.MODELS[position].first
-            }
-            override fun onNothingSelected(parent: AdapterView<*>?) {}
-        }
-        ai.addView(spinner)
-
-        ai.addView(Switch(this).apply {
-            text = "Search the web when an action needs fresh facts"
-            setTextColor(ink)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-            isChecked = store.webSearch
-            setPadding(0, dp(16), 0, 0)
-            setOnCheckedChangeListener { _, on -> store.webSearch = on }
-        })
-        column.addView(ai)
-
-        // --- voice ---
-        column.addView(section("Voice"))
-        val voice = cardBox()
-        micStatus = label("", 15f, ink)
-        voice.addView(micStatus)
-        voice.addView(label("Tap 🎙 on the keyboard to dictate; Verbo tidies up filler words, self-corrections and punctuation. Hold 🎙 to speak a request instead.", 13f, muted).pad(top = 4))
-        voice.addView(button("Allow microphone") { requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 1) })
-        column.addView(voice)
-
-        // --- connections ---
-        column.addView(section("Connections"))
-        column.addView(label("Apps and APIs the assistant can use while carrying out an action.", 13f, muted).pad(bottom = 8))
-        val weather = cardBox()
-        weather.addView(Switch(this).apply {
-            text = "☀️  Weather"
-            setTextColor(ink)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-            isChecked = store.weather
-            setOnCheckedChangeListener { _, on -> store.weather = on }
-        })
-        weather.addView(label("Forecasts from Open-Meteo. No account needed.", 13f, muted))
-        column.addView(weather)
-        column.addView(tokenCard("📝  Notion", "Search, read and create pages. Paste an internal integration token from notion.so/my-integrations and share the pages you want with that integration.",
-            { store.notionToken }, { store.notionToken = it }))
-        column.addView(tokenCard("📅  Calendly", "Drop your booking links into a message. Paste a personal access token from Calendly → Integrations → API & webhooks.",
-            { store.calendlyToken }, { store.calendlyToken = it }))
-        apisBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        column.addView(apisBox)
-        column.addView(button("Connect an API") { editApi(-1) })
-
-        // --- skills ---
-        column.addView(section("Skill keys"))
-        column.addView(label("Each skill is a key above the keyboard that applies one instruction to whatever you've typed.", 13f, muted).pad(bottom = 8))
-        skillsBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        column.addView(skillsBox)
-        val skillButtons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        skillButtons.addView(button("New skill") { editSkill(-1) })
-        skillButtons.addView(button("Restore defaults") {
-            AlertDialog.Builder(this).setMessage("Replace your skills with the original set?")
-                .setPositiveButton("Restore") { _, _ -> store.resetSkills(); renderSkills() }
-                .setNegativeButton("Cancel", null).show()
-        })
-        column.addView(skillButtons)
-
-        // --- try it ---
-        column.addView(section("Try it"))
-        val tryBox = cardBox()
-        tryBox.addView(label("Type a request, then hold the ✦ bar. Or type a sentence and tap a skill key.", 13f, muted))
-        tryBox.addView(EditText(this).apply {
-            hint = "tell sam i'm running 15 min late, friendly"
-            minLines = 3
-            gravity = Gravity.TOP
-            setTextColor(ink)
-            setHintTextColor(muted)
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
-        })
-        column.addView(tryBox)
-
-        renderSkills()
-        renderApis()
-    }
-
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        refreshSetup()
-    }
-
-    private fun renderDashboard() {
-        dashBox.removeAllViews()
-        if (store.deviceToken.isNotEmpty()) {
-            val last = if (store.lastSync == 0L) "not yet" else android.text.format.DateUtils.getRelativeTimeSpanString(store.lastSync).toString()
-            dashBox.addView(label("✓  Paired with " + store.serverUrl.removePrefix("https://"), 15f, ink, bold = true))
-            dashBox.addView(label("Skills, connections and the assistant settings come from the dashboard, so changes made below are replaced at the next sync. Last sync: $last.", 13f, muted).pad(top = 4))
-            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-            row.addView(button("Sync now") { background({ Sync.pull(store) }, "Synced") })
-            row.addView(button("Unpair") { store.unpair(); renderDashboard() })
-            dashBox.addView(row)
-            return
-        }
-        dashBox.addView(label("Manage skills and connections from the web. Sign in to your dashboard, open Keyboards and tap Pair a keyboard to get a code.", 13f, muted))
-        val address = EditText(this).apply {
-            hint = "Dashboard address, e.g. verbo.example.com"
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
-            setSingleLine(); setTextColor(ink); setHintTextColor(muted)
-        }
-        val code = EditText(this).apply {
-            hint = "Pairing code"
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-            setSingleLine(); setTextColor(ink); setHintTextColor(muted)
-        }
-        dashBox.addView(address)
-        dashBox.addView(code)
-        dashBox.addView(button("Pair") {
-            val a = address.text.toString()
-            val c = code.text.toString()
-            if (a.isBlank() || c.isBlank()) toast("Enter the address and the code")
-            else background({ Sync.pair(store, a, c) }, "Paired")
-        })
-    }
-
-    /** Runs a dashboard call off the main thread, then redraws the screen with whatever was synced. */
-    private fun background(work: () -> Unit, done: String) {
-        Thread {
-            val message = try { work(); done } catch (e: SyncException) { e.message ?: "Failed" } catch (e: Exception) { "Something went wrong" }
-            runOnUiThread {
-                toast(message)
-                if (message == done) recreate() else renderDashboard()
-            }
-        }.start()
-    }
-
-    private fun tokenCard(title: String, help: String, get: () -> String, set: (String) -> Unit): LinearLayout {
-        val box = cardBox()
-        val heading = label("", 16f, ink, bold = true)
-        fun refresh() { heading.text = title + if (get().isEmpty()) "" else "   ✓ connected" }
-        refresh()
-        box.addView(heading)
-        box.addView(label(help, 13f, muted).pad(bottom = 4))
-        val field = EditText(this).apply {
-            hint = "Token"
-            setText(get())
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-            setSingleLine()
-            setTextColor(ink)
-            setHintTextColor(muted)
-        }
-        box.addView(field)
-        box.addView(button("Save") {
-            set(field.text.toString())
-            refresh()
-            toast(if (get().isEmpty()) "Disconnected" else "Connected")
-        })
-        return box
-    }
-
-    private fun renderApis() {
-        apisBox.removeAllViews()
-        store.customApis.forEachIndexed { index, api ->
-            val row = cardBox().apply { setOnClickListener { editApi(index) } }
-            row.addView(label("🔌  " + api.name, 16f, ink, bold = true))
-            row.addView(label(api.description.ifBlank { api.url }, 13f, muted).apply { maxLines = 2 })
-            apisBox.addView(row)
-        }
-    }
-
-    private fun editApi(index: Int) {
-        val apis = store.customApis.toMutableList()
-        val existing = apis.getOrNull(index)
-        val form = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(22), dp(8), dp(22), 0)
-        }
-        fun field(hint: String, value: String?) = EditText(this).apply {
-            this.hint = hint
-            setText(value ?: "")
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-            form.addView(this)
-        }
-        val name = field("Name, e.g. NBA scores", existing?.name)
-        val description = field("What it returns and when to use it", existing?.description)
-        val url = field("https://… use {query} where the search term goes", existing?.url)
-        val headerName = field("Header name (optional), e.g. X-Api-Key", existing?.headerName)
-        val headerValue = field("Header value (optional)", existing?.headerValue)
-
-        val dialog = AlertDialog.Builder(this)
-            .setTitle(if (existing == null) "Connect an API" else "Edit connection")
-            .setView(form)
-            .setPositiveButton("Save") { _, _ ->
-                val n = name.text.toString().trim()
-                val u = url.text.toString().trim()
-                if (n.isEmpty() || !u.startsWith("https://")) {
-                    toast("It needs a name and an https:// address")
-                } else {
-                    val api = CustomApi(n, description.text.toString().trim(), u, headerName.text.toString().trim(), headerValue.text.toString().trim())
-                    if (existing == null) apis.add(api) else apis[index] = api
-                    store.customApis = apis
-                    renderApis()
-                }
-            }
-            .setNegativeButton("Cancel", null)
-        if (existing != null) dialog.setNeutralButton("Remove") { _, _ ->
-            apis.removeAt(index)
-            store.customApis = apis
-            renderApis()
-        }
-        dialog.show()
+        ui = Ui(this)
+        build()
     }
 
     override fun onResume() {
@@ -322,106 +41,324 @@ class MainActivity : Activity() {
         if (hasFocus) refreshSetup() // the keyboard picker is a dialog, so onResume doesn't fire after it
     }
 
+    private fun open(page: String) = startActivity(Intent(this, PageActivity::class.java).putExtra("page", page))
+
+    private fun build() {
+        val column = ui.page()
+
+        // ---- header ----
+        val header = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, ui.dp(8), 0, ui.dp(14)) }
+        header.addView(ui.icon(R.drawable.ic_arrow_left, 26, ui.ink).apply {
+            background = ui.ripple(null, 20)
+            contentDescription = "Back"
+            setOnClickListener { finish() }
+        })
+        header.addView(LinearLayout(this).apply {
+            gravity = Gravity.CENTER
+            background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(Color.parseColor("#9B7BFF"), Color.parseColor("#5B3FE0"))).apply {
+                cornerRadius = ui.dp(14).toFloat()
+            }
+            layoutParams = LinearLayout.LayoutParams(ui.dp(52), ui.dp(52)).apply { leftMargin = ui.dp(14) }
+            addView(ui.icon(R.drawable.ic_keyboard, 30, Color.WHITE))
+        })
+        val titles = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(ui.dp(14), 0, 0, 0) }
+        val titleLine = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        titleLine.addView(ui.text("Verbo Keyboard", 21f, bold = true))
+        titleLine.addView(ui.text("Beta", 12f, Color.parseColor("#B9A6FF")).apply {
+            background = ui.shape(ui.accentSoft, 9, Color.parseColor("#5A45B8"))
+            setPadding(ui.dp(9), ui.dp(2), ui.dp(9), ui.dp(2))
+            layoutParams = LinearLayout.LayoutParams(-2, -2).apply { leftMargin = ui.dp(10) }
+        })
+        titles.addView(titleLine)
+        titles.addView(ui.text("An AI keyboard that does more for you", 14f, ui.muted))
+        header.addView(titles, LinearLayout.LayoutParams(0, -2, 1f))
+        header.addView(ui.icon(R.drawable.ic_ellipsis_vertical, 24, ui.ink).apply {
+            background = ui.ripple(null, 20)
+            contentDescription = "More"
+            setOnClickListener { v ->
+                PopupMenu(this@MainActivity, v).apply {
+                    menu.add("Try the keyboard").setOnMenuItemClickListener { open("try"); true }
+                    menu.add("Web dashboard").setOnMenuItemClickListener { open("dashboard"); true }
+                    menu.add("Connections").setOnMenuItemClickListener { open("automate"); true }
+                    menu.add("Keyboard settings").setOnMenuItemClickListener { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)); true }
+                }.show()
+            }
+        })
+        column.addView(header)
+
+        // ---- setup steps, shown only until the keyboard is on ----
+        setupBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        column.addView(setupBox)
+
+        // ---- assistant ----
+        column.addView(ui.rows(ui.row(R.drawable.ic_sparkles, "Keyboard Assistant", "Use AI to write, edit, translate and automate",
+            ui.toggle(store.assistantOn) { store.assistantOn = it }, tile = true)))
+
+        // ---- model ----
+        column.addView(ui.section(R.drawable.ic_box, "AI Model"))
+        val modelName = ui.text(shortModel(), 15f, bold = true)
+        val modelPill = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            background = ui.ripple(ui.shape(Color.parseColor("#1F1E36"), 10, ui.line), 10)
+            setPadding(ui.dp(14), ui.dp(9), ui.dp(10), ui.dp(9))
+            addView(modelName)
+            addView(ui.icon(R.drawable.ic_chevron_down, 18, ui.ink).apply { (layoutParams as LinearLayout.LayoutParams).leftMargin = ui.dp(8) })
+            setOnClickListener { v ->
+                PopupMenu(this@MainActivity, v).apply {
+                    Ai.MODELS.forEach { (id, label) ->
+                        menu.add(label).setOnMenuItemClickListener { store.model = id; modelName.text = shortModel(); true }
+                    }
+                }.show()
+            }
+        }
+        val keyState = if (store.apiKey.isEmpty()) "Tap to add your Claude API key" else "Choose the brain for your keyboard"
+        column.addView(ui.rows(ui.row(R.drawable.ic_sparkles, "AI Model", keyState, modelPill, tile = true) { editApiKey() }))
+
+        // ---- agent mode ----
+        column.addView(ui.section(R.drawable.ic_layers, "Agent Mode"))
+        val modes = LinearLayout(this).apply {
+            background = ui.shape(ui.card, 14, ui.line)
+            setPadding(ui.dp(6), ui.dp(6), ui.dp(6), ui.dp(6))
+            layoutParams = LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = ui.dp(10) }
+        }
+        val modeCells = ArrayList<Pair<String, LinearLayout>>()
+        fun paintModes() = modeCells.forEach { (id, cell) ->
+            val on = store.agentMode == id
+            cell.background = ui.ripple(if (on) ui.shape(ui.accentSoft, 10, ui.accent, 2) else null, 10)
+            (cell.getChildAt(1) as TextView).setTextColor(if (on) Color.parseColor("#C9BBFF") else ui.ink)
+        }
+        listOf(
+            Triple("auto", R.drawable.ic_zap, "Auto (Recommended)" to "Picks the best action"),
+            Triple("ask", R.drawable.ic_message_square, "Ask First" to "Confirm before acting"),
+            Triple("manual", R.drawable.ic_settings, "Manual" to "Only when you choose"),
+        ).forEach { (id, icon, labels) ->
+            val cell = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_HORIZONTAL
+                setPadding(ui.dp(4), ui.dp(12), ui.dp(4), ui.dp(12))
+                addView(ui.icon(icon, 26, ui.ink))
+                addView(ui.text(labels.first, 12.5f, bold = true).apply { gravity = Gravity.CENTER; setPadding(0, ui.dp(8), 0, ui.dp(2)) })
+                addView(ui.text(labels.second, 12f, ui.muted).apply { gravity = Gravity.CENTER })
+                setOnClickListener { store.agentMode = id; paintModes() }
+            }
+            modeCells.add(id to cell)
+            modes.addView(cell, LinearLayout.LayoutParams(0, -1, if (id == "auto") 1.3f else 1f))
+        }
+        paintModes()
+        column.addView(modes)
+
+        // ---- appearance ----
+        column.addView(ui.section(R.drawable.ic_palette, "Keyboard Appearance"))
+        val themes = LinearLayout(this).apply {
+            background = ui.shape(ui.card, 14, ui.line)
+            setPadding(ui.dp(8), ui.dp(12), ui.dp(8), ui.dp(12))
+            layoutParams = LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = ui.dp(10) }
+        }
+        val themeTiles = ArrayList<Pair<String, FrameLayout>>()
+        fun paintThemes() = themeTiles.forEach { (id, tile) ->
+            val on = store.theme == id
+            tile.foreground = if (on) ui.shape(Color.TRANSPARENT, 12, ui.accent, 2) else ui.shape(Color.TRANSPARENT, 12, ui.line)
+            tile.getChildAt(tile.childCount - 1).visibility = if (on) View.VISIBLE else View.INVISIBLE
+        }
+        fun swatch(id: String): View = when (id) {
+            "system" -> View(this).apply {
+                background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(Color.parseColor("#1B1A2E"), Color.parseColor("#1B1A2E"), Color.parseColor("#F2F2F7"), Color.parseColor("#F2F2F7"))).apply { cornerRadius = ui.dp(12).toFloat() }
+            }
+            "dark" -> FrameLayout(this).apply {
+                background = ui.shape(Color.parseColor("#1F1E33"), 12)
+                addView(ui.icon(R.drawable.ic_moon, 24, Color.parseColor("#C9C7DD")), FrameLayout.LayoutParams(ui.dp(24), ui.dp(24), Gravity.CENTER))
+            }
+            "light" -> FrameLayout(this).apply {
+                background = ui.shape(Color.parseColor("#F2F2F7"), 12)
+                addView(ui.icon(R.drawable.ic_sun, 24, Color.parseColor("#2B2F38")), FrameLayout.LayoutParams(ui.dp(24), ui.dp(24), Gravity.CENTER))
+            }
+            "amoled" -> View(this).apply { background = ui.shape(Color.BLACK, 12) }
+            else -> FrameLayout(this).apply {
+                background = ui.shape(Color.parseColor("#1F1E33"), 12)
+                addView(View(this@MainActivity).apply {
+                    tag = "accent"
+                    background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(store.customAccent) }
+                }, FrameLayout.LayoutParams(ui.dp(32), ui.dp(32), Gravity.CENTER))
+            }
+        }
+        listOf("system" to "System", "dark" to "Dark", "light" to "Light", "amoled" to "Amoled", "custom" to "Custom").forEach { (id, label) ->
+            val tile = FrameLayout(this)
+            tile.addView(swatch(id), FrameLayout.LayoutParams(-1, -1))
+            tile.addView(FrameLayout(this).apply {
+                background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(ui.accent); setStroke(ui.dp(2), Color.WHITE) }
+                addView(ui.icon(R.drawable.ic_check, 12, Color.WHITE), FrameLayout.LayoutParams(ui.dp(12), ui.dp(12), Gravity.CENTER))
+            }, FrameLayout.LayoutParams(ui.dp(20), ui.dp(20), Gravity.TOP or Gravity.END).apply { topMargin = ui.dp(4); rightMargin = ui.dp(4) })
+            themeTiles.add(id to tile)
+            val cell = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_HORIZONTAL
+                setPadding(ui.dp(4), 0, ui.dp(4), 0)
+                addView(tile, LinearLayout.LayoutParams(-1, ui.dp(50)))
+                addView(ui.text(label, 13.5f, Color.parseColor("#D8D6EA")).apply { gravity = Gravity.CENTER; setPadding(0, ui.dp(8), 0, 0) })
+                setOnClickListener {
+                    store.theme = id
+                    paintThemes()
+                    if (id == "custom") pickAccent(tile.findViewWithTag("accent"))
+                }
+            }
+            themes.addView(cell, LinearLayout.LayoutParams(0, -2, 1f))
+        }
+        paintThemes()
+        column.addView(themes)
+
+        // ---- height ----
+        column.addView(ui.section(R.drawable.ic_keyboard, "Keyboard Height").apply { setPadding(ui.dp(2), ui.dp(22), 0, 0) })
+        column.addView(ui.text("Adjust the keyboard size for comfortable typing", 14f, ui.muted).apply { setPadding(ui.dp(38), ui.dp(2), 0, ui.dp(8)) })
+        val heightRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        val heightLabel = ui.text("${store.heightPercent}%", 15f, bold = true).apply {
+            gravity = Gravity.CENTER
+            background = ui.shape(ui.card, 16, ui.line)
+            setPadding(ui.dp(14), ui.dp(6), ui.dp(14), ui.dp(6))
+            minWidth = ui.dp(66)
+        }
+        heightRow.addView(SeekBar(this).apply {
+            max = (Store.MAX_HEIGHT - Store.MIN_HEIGHT) / 5
+            progress = (store.heightPercent - Store.MIN_HEIGHT) / 5
+            progressTintList = android.content.res.ColorStateList.valueOf(ui.accent)
+            progressBackgroundTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#5A5880"))
+            thumbTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
+            contentDescription = "Keyboard height"
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(bar: SeekBar?, value: Int, fromUser: Boolean) {
+                    store.heightPercent = Store.MIN_HEIGHT + value * 5
+                    heightLabel.text = "${store.heightPercent}%"
+                }
+                override fun onStartTrackingTouch(bar: SeekBar?) {}
+                override fun onStopTrackingTouch(bar: SeekBar?) {}
+            })
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        heightRow.addView(heightLabel)
+        column.addView(heightRow)
+
+        // ---- feedback ----
+        column.addView(ui.section(R.drawable.ic_volume_2, "Key Feedback"))
+        column.addView(ui.rows(
+            ui.row(R.drawable.ic_volume_2, "Sound on key press", trailing = ui.toggle(store.sound) { store.sound = it }),
+            ui.row(R.drawable.ic_vibrate, "Haptic (vibration)", trailing = ui.toggle(store.haptic) { store.haptic = it }),
+        ))
+
+        // ---- language ----
+        column.addView(ui.section(R.drawable.ic_globe, "Language & Input"))
+        val language = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            addView(ui.text("English (US)", 14f, Color.parseColor("#D8D6EA")).apply { setPadding(0, 0, ui.dp(8), 0) })
+            addView(ui.chevron())
+        }
+        column.addView(ui.rows(
+            ui.row(R.drawable.ic_languages, "Languages", trailing = language) { open("languages") },
+            ui.row(R.drawable.ic_spell_check, "Auto-correct", "Fix typos automatically", ui.toggle(store.autoCorrect) { store.autoCorrect = it }),
+            ui.row(R.drawable.ic_message_square_more, "Text suggestions", "Show smart next words", ui.toggle(store.suggestions) { store.suggestions = it }),
+        ))
+
+        // ---- actions ----
+        column.addView(ui.section(R.drawable.ic_sparkles, "Agentic Actions"))
+        column.addView(ui.rows(
+            ui.row(R.drawable.ic_pencil_line, "Write", "Draft, reply, or expand text", ui.chevron()) { open("category:write") },
+            ui.row(R.drawable.ic_sliders_horizontal, "Edit", "Improve, shorten, or change tone", ui.chevron()) { open("category:edit") },
+            ui.row(R.drawable.ic_languages, "Translate", "Translate into other languages", ui.chevron()) { open("category:translate") },
+            ui.row(R.drawable.ic_list, "Summarize", "Turn long text into key points", ui.chevron()) { open("category:summarize") },
+            ui.row(R.drawable.ic_zap, "Automate", "Connect apps and APIs for actions", ui.chevron()) { open("automate") },
+        ))
+
+        // ---- advanced ----
+        column.addView(ui.section(R.drawable.ic_settings, "Advanced"))
+        column.addView(ui.rows(
+            ui.row(R.drawable.ic_square_terminal, "Custom Prompts", "Add your own AI instructions", ui.chevron()) { open("prompts") },
+            ui.row(R.drawable.ic_keyboard, "Shortcuts & Triggers", "Use / command to run actions", ui.chevron()) { open("shortcuts") },
+            ui.row(R.drawable.ic_shield, "Privacy", "Data, permissions and usage", ui.chevron()) { open("privacy") },
+        ))
+
+        // ---- export / import ----
+        val io = LinearLayout(this).apply { setPadding(0, ui.dp(12), 0, 0) }
+        io.addView(ui.button("Export Settings", R.drawable.ic_upload) {
+            startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
+                .setType("application/json").putExtra(Intent.EXTRA_TITLE, "verbo-settings.json"), EXPORT)
+        }, LinearLayout.LayoutParams(0, -2, 1f).apply { rightMargin = ui.dp(6) })
+        io.addView(ui.button("Import Settings", R.drawable.ic_download) {
+            startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), IMPORT)
+        }, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = ui.dp(6) })
+        column.addView(io)
+
+        refreshSetup()
+    }
+
+    private fun shortModel() = (Ai.MODELS.firstOrNull { it.first == store.model } ?: Ai.MODELS[0]).second.substringBefore(" —")
+
     private fun refreshSetup() {
         val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
         val enabled = imm.enabledInputMethodList.any { it.packageName == packageName }
-        val current = Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD) ?: ""
-        val selected = current.startsWith("$packageName/")
-        stepOne.text = (if (enabled) "✓  " else "1.  ") + "Enable Verbo Keyboard in system settings"
-        stepTwo.text = (if (selected) "✓  " else "2.  ") + "Switch to Verbo as your keyboard"
-        val mic = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-        micStatus.text = if (mic) "✓  Microphone allowed" else "Microphone not allowed yet"
+        val selected = (Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD) ?: "").startsWith("$packageName/")
+        setupBox.removeAllViews()
+        if (enabled && selected) return
+        val box = ui.cardBox().apply {
+            background = ui.shape(ui.accentSoft, 14, ui.accent)
+            setPadding(ui.dp(16), ui.dp(14), ui.dp(16), ui.dp(14))
+        }
+        box.addView(ui.text("Turn on the keyboard", 17f, bold = true))
+        box.addView(ui.text((if (enabled) "✓  " else "1.  ") + "Enable Verbo Keyboard in system settings", 14.5f, Color.parseColor("#D8D6EA")).apply { setPadding(0, ui.dp(8), 0, 0) })
+        box.addView(ui.text((if (selected) "✓  " else "2.  ") + "Switch to Verbo as your keyboard", 14.5f, Color.parseColor("#D8D6EA")).apply { setPadding(0, ui.dp(4), 0, ui.dp(12)) })
+        box.addView(
+            if (!enabled) ui.button("Open keyboard settings", filled = true) { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) }
+            else ui.button("Choose keyboard", filled = true) { imm.showInputMethodPicker() },
+        )
+        setupBox.addView(box)
     }
 
-    private fun renderSkills() {
-        skillsBox.removeAllViews()
-        store.skills.forEachIndexed { index, skill ->
-            val row = cardBox().apply { setOnClickListener { editSkill(index) } }
-            row.addView(label((skill.emoji + "  " + skill.name).trim(), 16f, ink, bold = true))
-            row.addView(label(skill.instruction, 13f, muted).apply { maxLines = 2 })
-            skillsBox.addView(row)
-        }
-    }
-
-    private fun editSkill(index: Int) {
-        val skills = store.skills.toMutableList()
-        val existing = skills.getOrNull(index)
-        val form = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(22), dp(8), dp(22), 0)
-        }
-        val emoji = EditText(this).apply { hint = "Emoji (optional)"; setText(existing?.emoji ?: ""); setSingleLine() }
-        val name = EditText(this).apply {
-            hint = "Name, e.g. Pirate"
-            setText(existing?.name ?: "")
-            setSingleLine()
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_WORDS
-        }
-        val instruction = EditText(this).apply {
-            hint = "What should it do with the text? e.g. Rewrite it the way a cheerful pirate would say it."
-            setText(existing?.instruction ?: "")
-            minLines = 3
-            gravity = Gravity.TOP
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
-        }
-        form.addView(emoji); form.addView(name); form.addView(instruction)
-
-        val dialog = AlertDialog.Builder(this)
-            .setTitle(if (existing == null) "New skill" else "Edit skill")
-            .setView(form)
+    private fun editApiKey() {
+        val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(ui.dp(22), ui.dp(8), ui.dp(22), 0) }
+        form.addView(ui.text("Actions run on your own key from console.anthropic.com. It stays on this phone and is only sent to Anthropic.", 13.5f, ui.muted))
+        val field = ui.field("sk-ant-…", store.apiKey, secret = true)
+        form.addView(field)
+        AlertDialog.Builder(this).setTitle("Claude API key").setView(form)
             .setPositiveButton("Save") { _, _ ->
-                val n = name.text.toString().trim()
-                val i = instruction.text.toString().trim()
-                if (n.isEmpty() || i.isEmpty()) {
-                    toast("A skill needs a name and an instruction")
-                } else {
-                    val skill = Skill(emoji.text.toString().trim(), n, i)
-                    if (existing == null) skills.add(skill) else skills[index] = skill
-                    store.skills = skills
-                    renderSkills()
-                }
+                store.apiKey = field.text.toString()
+                ui.toast(if (store.apiKey.isEmpty()) "Key removed" else "Key saved")
+                recreate()
             }
-            .setNegativeButton("Cancel", null)
-        if (existing != null) dialog.setNeutralButton("Delete") { _, _ ->
-            skills.removeAt(index)
-            store.skills = skills
-            renderSkills()
+            .setNegativeButton("Cancel", null).show()
+    }
+
+    private fun pickAccent(dot: View?) {
+        val colours = listOf("#7C5CFF", "#5AA9F5", "#22C55E", "#F59E0B", "#EF4444", "#EC4899", "#14B8A6", "#F97316")
+        val grid = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(ui.dp(16), ui.dp(20), ui.dp(16), ui.dp(8)) }
+        val dialog = AlertDialog.Builder(this).setTitle("Accent colour").setView(grid).setNegativeButton("Close", null).create()
+        colours.forEach { hex ->
+            grid.addView(View(this).apply {
+                background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.parseColor(hex)) }
+                contentDescription = hex
+                setOnClickListener {
+                    store.customAccent = Color.parseColor(hex)
+                    (dot?.background as? GradientDrawable)?.setColor(store.customAccent)
+                    dialog.dismiss()
+                }
+            }, LinearLayout.LayoutParams(ui.dp(30), ui.dp(30)).apply { setMargins(ui.dp(5), 0, ui.dp(5), 0) })
         }
         dialog.show()
     }
 
-    // ---------- small view helpers ----------
-
-    private fun label(text: String, sizeSp: Float, color: Int, bold: Boolean = false) = TextView(this).apply {
-        this.text = text
-        setTextColor(color)
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, sizeSp)
-        if (bold) typeface = Typeface.DEFAULT_BOLD
-        setLineSpacing(0f, 1.15f)
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        val uri = data?.data
+        if (resultCode != RESULT_OK || uri == null) return
+        try {
+            if (requestCode == EXPORT) {
+                contentResolver.openOutputStream(uri)?.use { it.write(store.exportJson().toByteArray()) }
+                ui.toast("Settings exported (keys and tokens are not included)")
+            } else if (requestCode == IMPORT) {
+                val text = contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } ?: ""
+                if (store.importJson(text)) { ui.toast("Settings imported"); recreate() } else ui.toast("That isn't a Verbo settings file")
+            }
+        } catch (e: Exception) {
+            ui.toast("Couldn't read or write that file")
+        }
     }
 
-    private fun TextView.pad(top: Int = 0, bottom: Int = 0) = apply { setPadding(0, dp(top), 0, dp(bottom)) }
-
-    private fun section(title: String) = label(title.uppercase(), 12f, accent, bold = true).apply {
-        letterSpacing = 0.1f
-        setPadding(0, dp(26), 0, dp(8))
+    companion object {
+        private const val EXPORT = 1
+        private const val IMPORT = 2
     }
-
-    private fun cardBox() = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        background = GradientDrawable().apply { setColor(card); cornerRadius = dp(14).toFloat() }
-        setPadding(dp(16), dp(14), dp(16), dp(14))
-        layoutParams = LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) }
-    }
-
-    private fun button(text: String, onTap: () -> Unit) = Button(this).apply {
-        this.text = text
-        isAllCaps = false
-        setOnClickListener { onTap() }
-        layoutParams = LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6); rightMargin = dp(8) }
-    }
-
-    private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
-
-    private fun dp(v: Int) = (v * resources.displayMetrics.density + 0.5f).toInt()
 }

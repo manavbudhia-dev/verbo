@@ -2,20 +2,20 @@
 
 An Android keyboard that acts on what you type.
 
+- **Fast typing** – one custom-drawn key view with per-finger tracking, word suggestions,
+  auto-correct (backspace undoes a correction), double-space full stop, key sound and vibration.
 - **Action bar** – the wide ✦ bar types a space on tap. Hold it and the text in the
   field is treated as a request ("tell sam i'm 15 min late, friendly") and replaced with the result.
 - **Skill keys** – the strip above the keys. Each one applies a saved instruction to your
-  text (Polish, Reply, Shorter, Formal, Casual, English, Look up, List).
-- **Skill builder** – add, edit and delete skills in the Verbo app.
-- **Web search** – actions can look up current facts (can be turned off).
-- **Links** – an action can offer to open a map, dialer, email or web page.
+  text. Type `/` and a skill's name to run it as a command.
+- **Agent mode** – Auto applies results, Ask First shows them for approval, Manual only runs skill keys.
 - **Voice** – tap 🎙 to dictate (filler words, self-corrections and punctuation are tidied up);
   hold 🎙 to speak a request.
-- **Connections** – Weather (built in), Notion and Calendly (paste a token), and any HTTPS
-  API you describe. The assistant calls them while carrying out an action.
+- **Connections** – web search, Weather, Notion and Calendly (paste a token), and any HTTPS API.
+- **Appearance** – System, Dark, Light, Amoled or a custom accent colour, and adjustable key height.
 - **Dashboard** – optional web app (see `dashboard/`) to manage skills and connections
   from a browser; pair the keyboard with a one-time code and it syncs.
-- **Undo** – one tap restores your original text.
+- **Export / import** – settings and skills as a JSON file (keys and tokens are left out).
 
 Actions use the Claude API with your own key (entered in the app, stored on the phone).
 Text is only sent when you trigger an action, and never from password fields.
@@ -24,9 +24,14 @@ Text is only sent when you trigger an action, and never from password fields.
 
 Needs JDK 17+ and the Android SDK (platform 35).
 
-    ./gradlew :app:assembleDebug
+    ./gradlew :app:assembleRelease
 
-The APK lands in `app/build/outputs/apk/debug/app-debug.apk`.
+The APK lands in `app/build/outputs/apk/release/app-release.apk`. Use the release build on a
+phone: debug builds type noticeably slower. It is signed with the debug key for now.
+
+Tests (typing logic, plus screenshots of every screen written to `app/build/shots/`):
+
+    ./gradlew :app:testDebugUnitTest
 
 ## Install
 
@@ -37,9 +42,19 @@ The APK lands in `app/build/outputs/apk/debug/app-debug.apk`.
 
 ## Code
 
-- `VerboIme.kt` – the keyboard and the action flow
+- `VerboIme.kt` – the keyboard service: word tracking, suggestions, actions, voice
+- `KeyboardView.kt` – the keys: drawing, themes and touch handling
+- `Dictionary.kt` – word list lookups for suggestions and auto-correct
+- `Ui.kt`, `PageActivity.kt` – settings look and detail screens
 - `Ai.kt` – the Claude request and result parsing
 - `Connections.kt` – connected apps and APIs as assistant tools
 - `Sync.kt` – pairing and syncing with the dashboard
 - `Store.kt` – settings and skills
 - `MainActivity.kt` – setup and settings screen
+
+## Credits
+
+- Icons: [Lucide](https://lucide.dev) (ISC licence).
+- Word list: [SCOWL](http://wordlist.aspell.net/) via the `wordlist-english` npm package (MIT).
+
+`tools/make_assets.py` regenerates both from those packages.

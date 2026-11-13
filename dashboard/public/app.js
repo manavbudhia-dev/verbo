@@ -94,8 +94,9 @@ function dialog(title, fields, onSave, onDelete) {
   } },
     h('h2', null, title),
     fields.map((f) => {
-      const el = f.multiline ? h('textarea', { placeholder: f.hint || '' }) : h('input', { type: f.type || 'text', placeholder: f.hint || '' });
-      el.value = f.value || '';
+      const el = f.options ? h('select', null, f.options.map(([value, label]) => h('option', { value }, label)))
+        : f.multiline ? h('textarea', { placeholder: f.hint || '' }) : h('input', { type: f.type || 'text', placeholder: f.hint || '' });
+      el.value = f.value || (f.options ? f.options[0][0] : '');
       if (f.required) el.required = true;
       inputs[f.key] = el;
       return h('label', null, f.label, el);
@@ -121,6 +122,8 @@ function skillsTab() {
       { key: 'name', label: 'Name', value: s.name, required: true, hint: 'Pirate' },
       { key: 'instruction', label: 'What should it do with the text?', value: s.instruction, required: true, multiline: true,
         hint: 'Rewrite it the way a cheerful pirate would say it.' },
+      { key: 'category', label: 'Group', value: s.category || 'edit',
+        options: [['write', 'Write'], ['edit', 'Edit'], ['translate', 'Translate'], ['summarize', 'Summarize']] },
     ], (v) => {
       const next = skills.slice();
       if (index < 0) next.push(v); else next[index] = v;

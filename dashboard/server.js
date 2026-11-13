@@ -32,17 +32,19 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS devices (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, name TEXT NOT NULL, token_hash TEXT UNIQUE NOT NULL, created INTEGER NOT NULL, last_seen INTEGER);
 `);
 
+const CATEGORIES = ['write', 'edit', 'translate', 'summarize'];
 const MODELS = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'];
 const DEFAULT_SKILLS = [
-  ['✨', 'Polish', 'Fix spelling, grammar and punctuation and smooth out awkward phrasing. Keep the meaning, the tone and the length.'],
-  ['💬', 'Reply', 'The text is either a message the user received or rough notes for an answer. Write a natural reply the user can send as their own.'],
-  ['✂️', 'Shorter', 'Say the same thing in roughly half the words. Keep every fact and the tone.'],
-  ['👔', 'Formal', "Rewrite it so it suits a work email or a message to someone the user doesn't know well: polite, clear, no slang."],
-  ['😄', 'Casual', 'Rewrite it the way a relaxed, friendly person would text a friend. Contractions are fine; at most one emoji.'],
-  ['🌍', 'English', 'Translate the text into natural English. If it is already English, leave the wording alone and only fix mistakes.'],
-  ['🔎', 'Look up', 'Treat the text as a question. Find the answer, searching the web if needed, and give it in one to three short sentences.'],
-  ['📋', 'List', "Turn the text into a tidy list, one item per line, each starting with a dash. Keep the user's wording where you can."],
-].map(([emoji, name, instruction]) => ({ emoji, name, instruction }));
+  ['✨', 'Polish', 'Fix spelling, grammar and punctuation and smooth out awkward phrasing. Keep the meaning, the tone and the length.', 'edit'],
+  ['💬', 'Reply', 'The text is either a message the user received or rough notes for an answer. Write a natural reply the user can send as their own.', 'write'],
+  ['✂️', 'Shorter', 'Say the same thing in roughly half the words. Keep every fact and the tone.', 'edit'],
+  ['👔', 'Formal', "Rewrite it so it suits a work email or a message to someone the user doesn't know well: polite, clear, no slang.", 'edit'],
+  ['😄', 'Casual', 'Rewrite it the way a relaxed, friendly person would text a friend. Contractions are fine; at most one emoji.', 'edit'],
+  ['🌍', 'English', 'Translate the text into natural English. If it is already English, leave the wording alone and only fix mistakes.', 'translate'],
+  ['🧾', 'Summarize', 'Summarise the text as a few short key points, one per line. Keep names, numbers and dates.', 'summarize'],
+  ['🔎', 'Look up', 'Treat the text as a question. Find the answer, searching the web if needed, and give it in one to three short sentences.', 'write'],
+  ['📋', 'List', "Turn the text into a tidy list, one item per line, each starting with a dash. Keep the user's wording where you can.", 'edit'],
+].map(([emoji, name, instruction, category]) => ({ emoji, name, instruction, category }));
 
 const defaultConfig = () => ({
   apiKey: '', model: MODELS[0], webSearch: true, weather: true,
@@ -128,7 +130,10 @@ function applyUpdate(config, body) {
   if ('skills' in body) {
     if (!Array.isArray(body.skills) || body.skills.length > 60) throw new Bad(400, 'Too many skills');
     next.skills = body.skills.map((s) => {
-      const skill = { emoji: str(s.emoji ?? '', 16, 'Emoji'), name: str(s.name, 40, 'Skill name'), instruction: str(s.instruction, 2000, 'Instruction') };
+      const skill = {
+        emoji: str(s.emoji ?? '', 16, 'Emoji'), name: str(s.name, 40, 'Skill name'), instruction: str(s.instruction, 2000, 'Instruction'),
+        category: CATEGORIES.includes(s.category) ? s.category : 'edit',
+      };
       if (!skill.name || !skill.instruction) throw new Bad(400, 'A skill needs a name and an instruction');
       return skill;
     });

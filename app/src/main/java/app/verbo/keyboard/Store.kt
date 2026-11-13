@@ -1,74 +1,84 @@
 package app.verbo.keyboard
 
 import android.content.Context
+import android.content.SharedPreferences
+import android.os.UserManager
 import org.json.JSONArray
 import org.json.JSONObject
 
-data class Skill(val emoji: String, val name: String, val instruction: String)
+data class Skill(val emoji: String, val name: String, val instruction: String, val category: String = "edit")
 
 /** A user-defined API connection: a GET endpoint the assistant can call. */
 data class CustomApi(val name: String, val description: String, val url: String, val headerName: String, val headerValue: String)
 
-/** Settings and skills, kept in app-private preferences shared by the keyboard and the settings screen. */
+/**
+ * Settings and skills, kept in app-private preferences shared by the keyboard and the settings screen.
+ * Right after a reboot, before the phone is first unlocked, that storage is not readable yet; the
+ * keyboard then runs on defaults (plain typing) and builds a fresh Store once the phone is unlocked.
+ */
 class Store(context: Context) {
-    private val prefs = context.applicationContext.getSharedPreferences("verbo", Context.MODE_PRIVATE)
+    val locked: Boolean = !(context.getSystemService(UserManager::class.java)?.isUserUnlocked ?: true)
+    private val prefs: SharedPreferences? =
+        if (locked) null else context.applicationContext.getSharedPreferences("verbo", Context.MODE_PRIVATE)
 
-    var apiKey: String
-        get() = prefs.getString("api_key", "") ?: ""
-        set(v) = prefs.edit().putString("api_key", v.trim()).apply()
+    private fun str(key: String, default: String = "") = prefs?.getString(key, default) ?: default
+    private fun bool(key: String, default: Boolean) = prefs?.getBoolean(key, default) ?: default
+    private fun put(key: String, value: String) { prefs?.edit()?.putString(key, value)?.apply() }
+    private fun put(key: String, value: Boolean) { prefs?.edit()?.putBoolean(key, value)?.apply() }
 
-    var model: String
-        get() = prefs.getString("model", Ai.DEFAULT_MODEL) ?: Ai.DEFAULT_MODEL
-        set(v) = prefs.edit().putString("model", v).apply()
+    var apiKey: String get() = str("api_key"); set(v) = put("api_key", v.trim())
+    var model: String get() = str("model", Ai.DEFAULT_MODEL); set(v) = put("model", v)
+    var webSearch: Boolean get() = bool("web_search", true); set(v) = put("web_search", v)
 
-    var webSearch: Boolean
-        get() = prefs.getBoolean("web_search", true)
-        set(v) = prefs.edit().putBoolean("web_search", v).apply()
+    // keyboard behaviour
+    var assistantOn: Boolean get() = bool("assistant_on", true); set(v) = put("assistant_on", v)
+    /** "auto" applies results straight away, "ask" shows them first, "manual" only runs skill keys. */
+    var agentMode: String get() = str("agent_mode", "auto"); set(v) = put("agent_mode", v)
+    /** "system", "dark", "light", "amoled" or "custom". */
+    var theme: String get() = str("theme", "system"); set(v) = put("theme", v)
+    var customAccent: Int
+        get() = prefs?.getInt("custom_accent", 0xFF22C55E.toInt()) ?: 0xFF22C55E.toInt()
+        set(v) { prefs?.edit()?.putInt("custom_accent", v)?.apply() }
+    var heightPercent: Int
+        get() = (prefs?.getInt("height_percent", 100) ?: 100).coerceIn(MIN_HEIGHT, MAX_HEIGHT)
+        set(v) { prefs?.edit()?.putInt("height_percent", v.coerceIn(MIN_HEIGHT, MAX_HEIGHT))?.apply() }
+    var sound: Boolean get() = bool("sound", true); set(v) = put("sound", v)
+    var haptic: Boolean get() = bool("haptic", true); set(v) = put("haptic", v)
+    var autoCorrect: Boolean get() = bool("auto_correct", true); set(v) = put("auto_correct", v)
+    var suggestions: Boolean get() = bool("suggestions", true); set(v) = put("suggestions", v)
 
-    var serverUrl: String
-        get() = prefs.getString("server_url", "") ?: ""
-        set(v) = prefs.edit().putString("server_url", v).apply()
-
-    var deviceToken: String
-        get() = prefs.getString("device_token", "") ?: ""
-        set(v) = prefs.edit().putString("device_token", v).apply()
-
+    // dashboard pairing
+    var serverUrl: String get() = str("server_url"); set(v) = put("server_url", v)
+    var deviceToken: String get() = str("device_token"); set(v) = put("device_token", v)
     var lastSync: Long
-        get() = prefs.getLong("last_sync", 0)
-        set(v) = prefs.edit().putLong("last_sync", v).apply()
+        get() = prefs?.getLong("last_sync", 0) ?: 0
+        set(v) { prefs?.edit()?.putLong("last_sync", v)?.apply() }
 
     /** Replaces local settings with the dashboard's copy. While paired, the dashboard is the source of truth. */
     fun applyRemote(o: JSONObject) {
-        prefs.edit()
-            .putString("api_key", o.optString("apiKey"))
-            .putString("model", o.optString("model", Ai.DEFAULT_MODEL))
-            .putBoolean("web_search", o.optBoolean("webSearch", true))
-            .putBoolean("weather", o.optBoolean("weather", true))
-            .putString("notion_token", o.optString("notionToken"))
-            .putString("calendly_token", o.optString("calendlyToken"))
-            .putString("custom_apis", (o.optJSONArray("customApis") ?: JSONArray()).toString())
-            .putString("skills", (o.optJSONArray("skills") ?: JSONArray()).toString())
-            .putLong("last_sync", System.currentTimeMillis())
-            .apply()
+        prefs?.edit()
+            ?.putString("api_key", o.optString("apiKey"))
+            ?.putString("model", o.optString("model", Ai.DEFAULT_MODEL))
+            ?.putBoolean("web_search", o.optBoolean("webSearch", true))
+            ?.putBoolean("weather", o.optBoolean("weather", true))
+            ?.putString("notion_token", o.optString("notionToken"))
+            ?.putString("calendly_token", o.optString("calendlyToken"))
+            ?.putString("custom_apis", (o.optJSONArray("customApis") ?: JSONArray()).toString())
+            ?.putString("skills", (o.optJSONArray("skills") ?: JSONArray()).toString())
+            ?.putLong("last_sync", System.currentTimeMillis())
+            ?.apply()
     }
 
-    fun unpair() = prefs.edit().remove("server_url").remove("device_token").remove("last_sync").apply()
+    fun unpair() { prefs?.edit()?.remove("server_url")?.remove("device_token")?.remove("last_sync")?.apply() }
 
-    var weather: Boolean
-        get() = prefs.getBoolean("weather", true)
-        set(v) = prefs.edit().putBoolean("weather", v).apply()
-
-    var notionToken: String
-        get() = prefs.getString("notion_token", "") ?: ""
-        set(v) = prefs.edit().putString("notion_token", v.trim()).apply()
-
-    var calendlyToken: String
-        get() = prefs.getString("calendly_token", "") ?: ""
-        set(v) = prefs.edit().putString("calendly_token", v.trim()).apply()
+    // connections
+    var weather: Boolean get() = bool("weather", true); set(v) = put("weather", v)
+    var notionToken: String get() = str("notion_token"); set(v) = put("notion_token", v.trim())
+    var calendlyToken: String get() = str("calendly_token"); set(v) = put("calendly_token", v.trim())
 
     var customApis: List<CustomApi>
         get() = try {
-            val arr = JSONArray(prefs.getString("custom_apis", "[]"))
+            val arr = JSONArray(str("custom_apis", "[]"))
             (0 until arr.length()).map {
                 val o = arr.getJSONObject(it)
                 CustomApi(o.getString("name"), o.optString("description"), o.getString("url"), o.optString("headerName"), o.optString("headerValue"))
@@ -82,42 +92,78 @@ class Store(context: Context) {
                 arr.put(JSONObject().put("name", it.name).put("description", it.description).put("url", it.url)
                     .put("headerName", it.headerName).put("headerValue", it.headerValue))
             }
-            prefs.edit().putString("custom_apis", arr.toString()).apply()
+            put("custom_apis", arr.toString())
         }
 
     fun tools(): List<ToolSpec> = Connections.tools(weather, notionToken, calendlyToken, customApis)
 
     var skills: List<Skill>
         get() {
-            val raw = prefs.getString("skills", null) ?: return DEFAULT_SKILLS
-            return try {
-                val arr = JSONArray(raw)
-                (0 until arr.length()).map {
-                    val o = arr.getJSONObject(it)
-                    Skill(o.optString("emoji"), o.getString("name"), o.getString("instruction"))
-                }
-            } catch (e: Exception) {
-                DEFAULT_SKILLS
-            }
+            val raw = prefs?.getString("skills", null) ?: return DEFAULT_SKILLS
+            return try { parseSkills(JSONArray(raw)) } catch (e: Exception) { DEFAULT_SKILLS }
         }
-        set(v) {
-            val arr = JSONArray()
-            v.forEach { arr.put(JSONObject().put("emoji", it.emoji).put("name", it.name).put("instruction", it.instruction)) }
-            prefs.edit().putString("skills", arr.toString()).apply()
-        }
+        set(v) = put("skills", skillsJson(v).toString())
 
-    fun resetSkills() = prefs.edit().remove("skills").apply()
+    fun resetSkills() { prefs?.edit()?.remove("skills")?.apply() }
+
+    // ---------- export / import (no keys or tokens) ----------
+
+    fun exportJson(): String = JSONObject()
+        .put("verbo", 1)
+        .put("model", model).put("webSearch", webSearch).put("assistantOn", assistantOn).put("agentMode", agentMode)
+        .put("theme", theme).put("customAccent", customAccent).put("heightPercent", heightPercent)
+        .put("sound", sound).put("haptic", haptic).put("autoCorrect", autoCorrect).put("suggestions", suggestions)
+        .put("weather", weather).put("skills", skillsJson(skills))
+        .toString(2)
+
+    /** Returns false if the text is not a Verbo settings file. */
+    fun importJson(text: String): Boolean {
+        val o = try { JSONObject(text) } catch (e: Exception) { return false }
+        if (!o.has("verbo")) return false
+        if (o.has("model") && Ai.MODELS.any { it.first == o.optString("model") }) model = o.getString("model")
+        if (o.has("webSearch")) webSearch = o.optBoolean("webSearch")
+        if (o.has("assistantOn")) assistantOn = o.optBoolean("assistantOn")
+        if (o.optString("agentMode") in listOf("auto", "ask", "manual")) agentMode = o.getString("agentMode")
+        if (o.optString("theme") in THEMES) theme = o.getString("theme")
+        if (o.has("customAccent")) customAccent = o.optInt("customAccent") or 0xFF000000.toInt()
+        if (o.has("heightPercent")) heightPercent = o.optInt("heightPercent", 100)
+        if (o.has("sound")) sound = o.optBoolean("sound")
+        if (o.has("haptic")) haptic = o.optBoolean("haptic")
+        if (o.has("autoCorrect")) autoCorrect = o.optBoolean("autoCorrect")
+        if (o.has("suggestions")) suggestions = o.optBoolean("suggestions")
+        if (o.has("weather")) weather = o.optBoolean("weather")
+        o.optJSONArray("skills")?.let { arr -> try { skills = parseSkills(arr) } catch (e: Exception) { } }
+        return true
+    }
 
     companion object {
+        const val MIN_HEIGHT = 80
+        const val MAX_HEIGHT = 130
+        val THEMES = listOf("system", "dark", "light", "amoled", "custom")
+        val CATEGORIES = listOf("write", "edit", "translate", "summarize")
+
+        private fun parseSkills(arr: JSONArray) = (0 until arr.length()).map {
+            val o = arr.getJSONObject(it)
+            val category = o.optString("category").takeIf { c -> c in CATEGORIES } ?: "edit"
+            Skill(o.optString("emoji"), o.getString("name"), o.getString("instruction"), category)
+        }
+
+        private fun skillsJson(skills: List<Skill>) = JSONArray().also { arr ->
+            skills.forEach {
+                arr.put(JSONObject().put("emoji", it.emoji).put("name", it.name).put("instruction", it.instruction).put("category", it.category))
+            }
+        }
+
         val DEFAULT_SKILLS = listOf(
-            Skill("✨", "Polish", "Fix spelling, grammar and punctuation and smooth out awkward phrasing. Keep the meaning, the tone and the length."),
-            Skill("💬", "Reply", "The text is either a message the user received or rough notes for an answer. Write a natural reply the user can send as their own."),
-            Skill("✂️", "Shorter", "Say the same thing in roughly half the words. Keep every fact and the tone."),
-            Skill("👔", "Formal", "Rewrite it so it suits a work email or a message to someone the user doesn't know well: polite, clear, no slang."),
-            Skill("😄", "Casual", "Rewrite it the way a relaxed, friendly person would text a friend. Contractions are fine; at most one emoji."),
-            Skill("🌍", "English", "Translate the text into natural English. If it is already English, leave the wording alone and only fix mistakes."),
-            Skill("🔎", "Look up", "Treat the text as a question. Find the answer, searching the web if needed, and give it in one to three short sentences."),
-            Skill("📋", "List", "Turn the text into a tidy list, one item per line, each starting with a dash. Keep the user's wording where you can."),
+            Skill("✨", "Polish", "Fix spelling, grammar and punctuation and smooth out awkward phrasing. Keep the meaning, the tone and the length.", "edit"),
+            Skill("💬", "Reply", "The text is either a message the user received or rough notes for an answer. Write a natural reply the user can send as their own.", "write"),
+            Skill("✂️", "Shorter", "Say the same thing in roughly half the words. Keep every fact and the tone.", "edit"),
+            Skill("👔", "Formal", "Rewrite it so it suits a work email or a message to someone the user doesn't know well: polite, clear, no slang.", "edit"),
+            Skill("😄", "Casual", "Rewrite it the way a relaxed, friendly person would text a friend. Contractions are fine; at most one emoji.", "edit"),
+            Skill("🌍", "English", "Translate the text into natural English. If it is already English, leave the wording alone and only fix mistakes.", "translate"),
+            Skill("🧾", "Summarize", "Summarise the text as a few short key points, one per line. Keep names, numbers and dates.", "summarize"),
+            Skill("🔎", "Look up", "Treat the text as a question. Find the answer, searching the web if needed, and give it in one to three short sentences.", "write"),
+            Skill("📋", "List", "Turn the text into a tidy list, one item per line, each starting with a dash. Keep the user's wording where you can.", "edit"),
         )
     }
 }
