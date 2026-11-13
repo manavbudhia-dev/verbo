@@ -62,6 +62,7 @@ class KeyboardView(
         fun onEnter()
         fun onShift()
         fun onBarHeld()
+        fun onKeyHeld(letter: Char)
         fun onPress(type: Type)
     }
 
@@ -78,6 +79,9 @@ class KeyboardView(
         set(value) { if (field != value) { field = value; build(); requestLayout(); invalidate() } }
     /** 0 off, 1 next letter, 2 caps lock. */
     var shift = 0
+        set(value) { if (field != value) { field = value; invalidate() } }
+    /** Letters that run a skill when held. They are marked with a small glow. */
+    var bound: Set<Char> = emptySet()
         set(value) { if (field != value) { field = value; invalidate() } }
     /** Text on the wide bar; empty when the assistant can't be triggered from it. */
     var barLabel = ""
@@ -239,6 +243,10 @@ class KeyboardView(
                     letters.textSize = 24 * d * minOf(scale, 1.1f)
                     val label = if (mode == Mode.LETTERS && shift > 0) key.label.uppercase() else key.label
                     canvas.drawText(label, r.centerX(), r.centerY() + lift - (letters.descent() + letters.ascent()) / 2, letters)
+                    if (mode == Mode.LETTERS && key.label[0] in bound) {
+                        face.color = (theme.accent and 0x00FFFFFF) or 0xCC000000.toInt()
+                        canvas.drawRoundRect(r.centerX() - 7 * d, bottom - 5.5f * d, r.centerX() + 7 * d, bottom - 3 * d, 2 * d, 2 * d, face)
+                    }
                 }
                 Type.MODE -> {
                     letters.color = theme.text
@@ -291,6 +299,13 @@ class KeyboardView(
         }
     }
 
+    private val keyHold = Runnable {
+        val press = presses.values.firstOrNull { it.key.type == Type.CHAR && !it.done && mode == Mode.LETTERS && it.key.label[0] in bound } ?: return@Runnable
+        press.done = true
+        listener?.onKeyHeld(press.key.label[0])
+        invalidate()
+    }
+
     private val barHold = Runnable {
         val press = presses.values.firstOrNull { it.key.type == Type.BAR && !it.done } ?: return@Runnable
         press.done = true
@@ -320,6 +335,10 @@ class KeyboardView(
             }
             Type.SHIFT -> { press.done = true; listener?.onShift() }
             Type.BAR -> if (barLabel.isNotEmpty()) handler.postDelayed(barHold, 380)
+            Type.CHAR -> {
+                handler.removeCallbacks(keyHold)
+                if (mode == Mode.LETTERS && key.label[0] in bound) handler.postDelayed(keyHold, 450)
+            }
             else -> {}
         }
     }
@@ -327,6 +346,7 @@ class KeyboardView(
     private fun up(id: Int) {
         val press = presses.remove(id) ?: return
         if (press.key.type == Type.BAR) handler.removeCallbacks(barHold)
+        if (press.key.type == Type.CHAR) handler.removeCallbacks(keyHold)
         if (press.key.type == Type.BACKSPACE) handler.removeCallbacks(repeatDelete)
         commit(press)
     }
@@ -341,12 +361,13 @@ class KeyboardView(
                 val press = presses[e.getPointerId(i)] ?: continue
                 if (press.done || press.key.type != Type.CHAR) continue
                 val now = keyAt(e.getX(i), e.getY(i))
-                if (now != null && now !== press.key && now.type == Type.CHAR) press.key = now
+                if (now != null && now !== press.key && now.type == Type.CHAR) { press.key = now; handler.removeCallbacks(keyHold) }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> up(e.getPointerId(e.actionIndex))
             MotionEvent.ACTION_CANCEL -> {
                 presses.clear()
                 handler.removeCallbacks(barHold)
+                handler.removeCallbacks(keyHold)
                 handler.removeCallbacks(repeatDelete)
             }
         }

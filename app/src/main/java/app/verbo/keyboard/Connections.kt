@@ -12,8 +12,16 @@ object Connections {
     private const val MAX_BODY = 12000
     private const val MAX_READ = 2_000_000
 
-    fun tools(weather: Boolean, notionToken: String, calendlyToken: String, apis: List<CustomApi>): List<ToolSpec> {
+    /** Sent to the open map services, which ask every app to identify itself. Names the app only, never the user. */
+    const val USER_AGENT = "VerboKeyboard/1.0 (Android keyboard app)"
+
+    fun tools(weather: Boolean, notionToken: String, calendlyToken: String, apis: List<CustomApi>, places: Boolean = true): List<ToolSpec> {
         val out = ArrayList<ToolSpec>()
+        if (places) out += ToolSpec(
+            "find_place",
+            "Look up a real place (shop, restaurant, landmark, address) on OpenStreetMap. Returns up to three matches with name, full address and coordinates. Put the area in the query, e.g. \"Starbucks Times Square New York\".",
+            listOf("query" to "Place name plus area or city"), listOf("query"),
+        ) { findPlace(it["query"].orEmpty()) }
         if (weather) out += ToolSpec(
             "get_weather",
             "Current conditions and a 3-day forecast for a place. weather_code values are WMO codes. Temperatures are Celsius, wind km/h.",
@@ -55,6 +63,15 @@ object Connections {
             }
         }
         return out
+    }
+
+    // ---------- places (OpenStreetMap Nominatim, no key needed) ----------
+
+    private fun findPlace(query: String): String {
+        val res = json.readTree(http("GET", "https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=0&limit=3&q=" + enc(query),
+            mapOf("User-Agent" to USER_AGENT), null))
+        val lines = res.map { "${it.path("name").asText().ifBlank { "(unnamed)" }} | ${it.path("display_name").asText()} | lat ${it.path("lat").asText()}, lon ${it.path("lon").asText()}" }
+        return if (lines.isEmpty()) "No place found for \"$query\". Try a simpler query or add the city." else lines.joinToString("\n")
     }
 
     // ---------- weather (Open-Meteo, no key needed) ----------

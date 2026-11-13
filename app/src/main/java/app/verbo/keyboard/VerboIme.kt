@@ -18,7 +18,6 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.text.InputType
 import android.text.TextUtils
-import android.text.method.ScrollingMovementMethod
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -53,7 +52,10 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     private var chipsScroll: View? = null
     private var suggestRow: LinearLayout? = null
     private var statusRow: LinearLayout? = null
-    private var previewBox: LinearLayout? = null
+    private var panel: LinearLayout? = null // takes the place of the keys while an action runs and to show its result
+    private var typingViews: List<View> = emptyList()
+    private var contextBox: LinearLayout? = null
+    private var contextText: String? = null // a copied message the user chose to give the assistant as context
     private var recognizer: SpeechRecognizer? = null
     private var builtWith = ""
 
@@ -129,13 +131,18 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             }
         }
 
-        // Shown above the keys when a result needs confirming ("Ask first" mode).
-        previewBox = LinearLayout(this).apply {
+        contextBox = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            visibility = View.GONE
+            setPadding(dp(10), dp(2), dp(4), dp(4))
+        }
+        root.addView(contextBox, LinearLayout.LayoutParams(-1, -2))
+        panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
-            setPadding(dp(12), dp(6), dp(12), dp(4))
+            setPadding(dp(10), dp(2), dp(10), dp(4))
         }
-        root.addView(previewBox, LinearLayout.LayoutParams(-1, -2))
+        root.addView(panel, LinearLayout.LayoutParams(-1, dp(260)))
 
         val strip = FrameLayout(this)
         chipsRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
@@ -173,6 +180,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             it.listener = this
             root.addView(it, LinearLayout.LayoutParams(-1, -2))
         }
+        typingViews = listOf(top, keys!!)
         loadSettings()
         buildChips()
         return root
@@ -186,12 +194,18 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         agentMode = store.agentMode
         skills = store.skills
         keys?.barLabel = if (assistantOn && agentMode != "manual") "hold to act" else ""
+        keys?.bound = if (assistantOn) skills.mapNotNull { it.key.firstOrNull() }.toSet() else emptySet()
     }
 
     private fun buildChips() {
         val row = chipsRow ?: return
         row.removeAllViews()
         if (!assistantOn) return
+        if (contextText == null && hasFreshClip()) {
+            val use = chipView("📋 Use copied text", p.accent, p.accentPressed, p.onAccent)
+            use.setOnClickListener { feedback(KeyboardView.Type.MODE); useClipAsContext() }
+            row.addView(use, chipParams())
+        }
         for (skill in skills) {
             val chip = chipView((skill.emoji + " " + skill.name).trim(), p.key, p.keyPressed, p.text)
             chip.setOnClickListener { feedback(KeyboardView.Type.MODE); runAction(skill) }
@@ -374,6 +388,65 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         runAction(null)
     }
 
+    /** A letter with a skill bound to it was held: run that skill instead of typing the letter. */
+    override fun onKeyHeld(letter: Char) {
+        val skill = skills.firstOrNull { it.key == letter.lowercase() } ?: return
+        feedback(KeyboardView.Type.ENTER)
+        runAction(skill)
+    }
+
+    // ---------- context from a copied message ----------
+
+    /** True when text was copied in the last few minutes. Looks only at the clip's description, not its content. */
+    private fun hasFreshClip(): Boolean = try {
+        val clipboard = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        val description = clipboard.primaryClipDescription
+        description != null && (description.hasMimeType("text/plain") || description.hasMimeType("text/html")) &&
+            System.currentTimeMillis() - description.timestamp < 5 * 60 * 1000
+    } catch (e: Exception) {
+        false
+    }
+
+    private fun useClipAsContext() {
+        val text = try {
+            val clipboard = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            clipboard.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString()?.trim()
+        } catch (e: Exception) {
+            null
+        }
+        if (text.isNullOrEmpty()) {
+            showStatus("Nothing copied to use")
+            return
+        }
+        contextText = text.take(4000)
+        refreshContext()
+        buildChips()
+    }
+
+    private fun refreshContext() {
+        val box = contextBox ?: return
+        box.removeAllViews()
+        val text = contextText
+        if (text == null || panel?.visibility == View.VISIBLE) {
+            box.visibility = View.GONE
+            return
+        }
+        box.addView(View(this).apply { background = rounded(p.accent, 2) }, LinearLayout.LayoutParams(dp(3), dp(30)))
+        box.addView(TextView(this).apply {
+            this.text = "“$text”"
+            setTextColor(p.muted)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+            maxLines = 2
+            ellipsize = TextUtils.TruncateAt.END
+            setPadding(dp(10), 0, dp(6), 0)
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        val close = chipView("✕", Color.TRANSPARENT, p.keyPressed, p.muted)
+        close.contentDescription = "Remove context"
+        close.setOnClickListener { contextText = null; refreshContext(); buildChips() }
+        box.addView(close, LinearLayout.LayoutParams(dp(40), dp(36)))
+        box.visibility = View.VISIBLE
+    }
+
     /** Capitalise the next letter when the field asks for it (start of a sentence, name fields). */
     private fun applyCaps() {
         val view = keys ?: return
@@ -458,7 +531,8 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             undo = null
             loadSettings()
             buildChips()
-            hidePreview()
+            contextText = null // context belongs to the conversation it was copied for
+            hidePanel()
             showTyping()
             recognizer?.cancel()
             listening = false
@@ -621,7 +695,8 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             return
         }
         val target = readTarget() ?: return
-        if (target.text.isBlank()) {
+        val context = contextText
+        if (target.text.isBlank() && context == null) {
             showStatus(if (skill == null) "Type what you want, then hold the bar" else "Type something first")
             return
         }
@@ -629,14 +704,20 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             showStatus("That's too much text for one action. Select a part of it")
             return
         }
+        // Requests typed for the bar are answers to look at first, so they open as a card with Copy and Insert.
+        // Skill keys rewrite your own text, so they apply straight away unless Agent Mode is "Ask first".
+        val card = skill == null || agentMode == "ask"
         launch(
             if (skill == null) "Working on it…" else "${skill.name}…",
-            skill?.let { Ai.skillTask(it.instruction) }, target.text, connected = true,
-        ) { result -> confirmThen(result) { deliver(target, result) } }
+            skill?.let { Ai.skillTask(it.instruction) }, Ai.userMessage(target.text, context), connected = true, card = card,
+        ) { result ->
+            if (card) showResult(result, { deliver(target, result) }) { hidePanel(); runAction(skill) }
+            else deliver(target, result)
+        }
     }
 
     /** Runs one assistant request off the main thread and hands the result back, unless it was cancelled. */
-    private fun launch(label: String, task: String?, input: String, connected: Boolean, onResult: (ActionResult) -> Unit) {
+    private fun launch(label: String, task: String?, input: String, connected: Boolean, card: Boolean = false, onResult: (ActionResult) -> Unit) {
         if (busy) return
         busy = true
         undo = null
@@ -648,11 +729,13 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         val model = store.activeModel
         val web = connected && store.webSearch
         val tools = if (connected) store.tools() else emptyList()
-        showStatus(label, "Cancel" to {
+        val cancel = {
             generation++
             busy = false
+            hidePanel()
             showTyping()
-        })
+        }
+        if (card) showLoading(label, cancel) else showStatus(label, "Cancel" to cancel)
         worker.execute {
             val outcome = try {
                 val cancelled = { token != generation }
@@ -669,31 +752,155 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             main.post {
                 if (token != generation) return@post
                 busy = false
-                outcome.fold(onResult) { showStatus(it.message ?: "Failed") }
+                outcome.fold(onResult) { hidePanel(); showStatus(it.message ?: "Failed") }
             }
         }
     }
 
-    /** In "Ask first" mode the result is shown above the keys and only applied once the user agrees. */
-    private fun confirmThen(result: ActionResult, apply: () -> Unit) {
-        val box = previewBox
-        if (agentMode != "ask" || result.text.isEmpty() || box == null) return apply()
+    // ---------- the panel that replaces the keys ----------
+
+    private fun showPanel(fill: LinearLayout.() -> Unit) {
+        val box = panel ?: return
         box.removeAllViews()
-        box.addView(TextView(this).apply {
-            text = result.text
-            setTextColor(p.text)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-            maxLines = 5
-            movementMethod = ScrollingMovementMethod()
-            background = rounded(p.key, 12)
-            setPadding(dp(12), dp(10), dp(12), dp(10))
-        }, LinearLayout.LayoutParams(-1, -2))
+        // Same height as the keys and strip it replaces, so the app above doesn't jump.
+        val height = typingViews.sumOf { it.height }
+        box.layoutParams = box.layoutParams.apply { this.height = maxOf(height, dp(250)) }
+        box.gravity = Gravity.TOP
+        box.fill()
+        typingViews.forEach { it.visibility = View.GONE }
         box.visibility = View.VISIBLE
-        showStatus("Use this?", "Use" to { hidePreview(); apply() }, "Discard" to { hidePreview(); showTyping() })
+        refreshContext()
     }
 
-    private fun hidePreview() {
-        previewBox?.apply { removeAllViews(); visibility = View.GONE }
+    private fun hidePanel() {
+        val box = panel ?: return
+        if (box.visibility != View.VISIBLE) return
+        box.removeAllViews()
+        box.visibility = View.GONE
+        typingViews.forEach { it.visibility = View.VISIBLE }
+        refreshContext()
+    }
+
+    private fun iconButton(res: Int, description: String, tint: Int = p.text, onTap: () -> Unit) = ImageView(this).apply {
+        setImageResource(res)
+        setColorFilter(tint)
+        setPadding(dp(9), dp(9), dp(9), dp(9))
+        background = pressable(Color.TRANSPARENT, p.keyPressed, 20)
+        contentDescription = description
+        setOnClickListener { feedback(KeyboardView.Type.MODE); onTap() }
+    }
+
+    private fun showLoading(label: String, cancel: () -> Unit) = showPanel {
+        gravity = Gravity.CENTER
+        addView(ImageView(this@VerboIme).apply {
+            setImageResource(R.drawable.ic_sparkles)
+            setColorFilter(p.accent)
+            // A slow pulse while waiting.
+            android.animation.ObjectAnimator.ofFloat(this, "alpha", 1f, 0.3f).apply {
+                duration = 700
+                repeatMode = android.animation.ValueAnimator.REVERSE
+                repeatCount = android.animation.ValueAnimator.INFINITE
+                start()
+            }
+        }, LinearLayout.LayoutParams(dp(40), dp(40)))
+        addView(TextView(this@VerboIme).apply {
+            text = label
+            gravity = Gravity.CENTER
+            setTextColor(p.muted)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            setPadding(0, dp(12), 0, dp(18))
+        })
+        addView(iconButton(R.drawable.ic_x, "Cancel", p.muted, cancel).apply { background = pressable(p.key, p.keyPressed, 22) },
+            LinearLayout.LayoutParams(dp(44), dp(44)))
+    }
+
+    /** The result as a card: back, try again, copy, and insert into the field (or send, where the app allows it). */
+    internal fun showResult(result: ActionResult, onInsert: () -> Unit, onRetry: (() -> Unit)?) = showPanel {
+        val header = LinearLayout(this@VerboIme).apply { gravity = Gravity.CENTER_VERTICAL }
+        header.addView(iconButton(R.drawable.ic_chevron_right, "Back to keyboard") { hidePanel(); showTyping() }.apply { rotation = 180f },
+            LinearLayout.LayoutParams(dp(40), dp(40)))
+        header.addView(TextView(this@VerboIme).apply {
+            text = "Result"
+            setTextColor(p.muted)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+            setPadding(dp(4), 0, 0, 0)
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        if (onRetry != null) header.addView(iconButton(R.drawable.ic_refresh_cw, "Try again", p.muted, onRetry), LinearLayout.LayoutParams(dp(40), dp(40)))
+        addView(header)
+
+        val card = LinearLayout(this@VerboIme).apply {
+            orientation = LinearLayout.VERTICAL
+            background = rounded(p.key, 16)
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+        }
+        result.map?.let { (lat, lon) ->
+            val map = ImageView(this@VerboIme).apply {
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                background = rounded(p.fnKey, 12)
+                clipToOutline = true
+                contentDescription = "Map of the place"
+            }
+            card.addView(map, LinearLayout.LayoutParams(-1, dp(86)).apply { bottomMargin = dp(10) })
+            val token = generation
+            worker.execute {
+                val bitmap = MapPreview.load(lat, lon)
+                main.post { if (bitmap != null && token == generation && map.isAttachedToWindow) map.setImageBitmap(bitmap) }
+            }
+        }
+        // A short first line reads as the title of the card.
+        val lines = result.text.lines()
+        val titled = lines.size >= 2 && lines[0].length <= 60
+        if (titled) card.addView(TextView(this@VerboIme).apply {
+            text = lines[0]
+            setTextColor(p.text)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(0, 0, 0, dp(4))
+        })
+        val body = if (titled) lines.drop(1).joinToString("\n").trim() else result.text
+        if (body.isNotEmpty()) card.addView(TextView(this@VerboIme).apply {
+            text = body
+            setTextColor(p.text)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            setLineSpacing(dp(3).toFloat(), 1f)
+            android.text.util.Linkify.addLinks(this, android.text.util.Linkify.WEB_URLS)
+            setLinkTextColor(p.accent)
+            linksClickable = false
+            movementMethod = null
+        })
+        result.openUri?.let { uri ->
+            val open = chipView(openLabel(uri), p.fnKey, p.keyPressed, p.accent)
+            open.typeface = Typeface.DEFAULT_BOLD
+            open.setOnClickListener { feedback(KeyboardView.Type.MODE); openLink(uri) }
+            card.addView(open, LinearLayout.LayoutParams(-2, dp(36)).apply { topMargin = dp(10) })
+        }
+        addView(android.widget.ScrollView(this@VerboIme).apply { addView(card) }, LinearLayout.LayoutParams(-1, 0, 1f))
+
+        val footer = LinearLayout(this@VerboIme).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(8), 0, dp(2)) }
+        val copy = chipView("Copy", p.key, p.keyPressed, p.text)
+        copy.typeface = Typeface.DEFAULT_BOLD
+        copy.setOnClickListener {
+            feedback(KeyboardView.Type.MODE)
+            (getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager)
+                .setPrimaryClip(android.content.ClipData.newPlainText("Verbo result", result.text))
+            copy.text = "Copied"
+        }
+        footer.addView(copy, LinearLayout.LayoutParams(0, dp(46), 1f).apply { rightMargin = dp(8) })
+        // Chat apps whose enter key sends let us send in one tap; elsewhere the text is put in the field.
+        val options = currentInputEditorInfo?.imeOptions ?: 0
+        val sends = options and EditorInfo.IME_MASK_ACTION == EditorInfo.IME_ACTION_SEND && options and EditorInfo.IME_FLAG_NO_ENTER_ACTION == 0
+        if (result.text.isNotEmpty()) {
+            val insert = chipView(if (sends) "↑  Send" else "↑  Insert", p.accent, p.accentPressed, p.onAccent)
+            insert.typeface = Typeface.DEFAULT_BOLD
+            insert.setOnClickListener {
+                feedback(KeyboardView.Type.ENTER)
+                hidePanel()
+                onInsert()
+                if (sends) currentInputConnection?.performEditorAction(EditorInfo.IME_ACTION_SEND)
+            }
+            footer.addView(insert, LinearLayout.LayoutParams(0, dp(46), 1.7f))
+        }
+        addView(footer)
     }
 
     private fun deliver(target: Target, result: ActionResult) {
@@ -709,6 +916,8 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         if (!unchanged) {
             showStatus("Text changed while working", *listOfNotNull("Insert" to {
                 currentInputConnection?.commitText(result.text, 1)
+                contextText = null
+                refreshContext()
                 showTyping()
             }, open).toTypedArray())
             return
@@ -719,6 +928,8 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         ic.commitText(result.text, 1)
         ic.endBatchEdit()
         undo = target.text to result.text
+        contextText = null
+        refreshContext()
         showStatus("Done", *listOfNotNull("Undo" to { undoLast() }, open).toTypedArray())
     }
 
@@ -832,7 +1043,8 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         ) { result ->
             val open = result.openUri?.let { uri -> openLabel(uri) to { openLink(uri) } }
             if (result.text.isEmpty()) showStatus("Ready", *listOfNotNull(open).toTypedArray())
-            else confirmThen(result) { insert(result.text, open) }
+            else if (agentMode == "ask") showResult(result, { insert(result.text, open) }, null)
+            else insert(result.text, open)
         }
     }
 
@@ -847,7 +1059,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
 
     private fun clearResult() {
         if (undo != null) undo = null
-        if (!busy && statusRow?.visibility == View.VISIBLE && previewBox?.visibility != View.VISIBLE) showTyping()
+        if (!busy && statusRow?.visibility == View.VISIBLE) showTyping()
     }
 
     private fun showStatus(message: String, vararg actions: Pair<String, () -> Unit>) {

@@ -20,7 +20,8 @@ import com.anthropic.models.beta.messages.MessageCreateParams
 import java.time.Duration
 
 /** What the keyboard should do with a finished action. */
-data class ActionResult(val text: String, val openUri: String?)
+/** [map] is a latitude/longitude to preview when the result is one specific place. */
+data class ActionResult(val text: String, val openUri: String?, val map: Pair<Double, Double>? = null)
 
 class AiException(message: String) : Exception(message)
 
@@ -63,6 +64,13 @@ Sometimes the most helpful outcome is also opening something on the phone: a map
 - YouTube search: https://www.youtube.com/results?search_query=...
 - Post on X: https://x.com/intent/post?text=...
 When the link carries the whole message (an email or WhatsApp draft), still return the message text itself as well.
+
+The user sees your result on a card above the keyboard and then inserts or copies it, so shape it to read well there and in a chat:
+- Several results (places to eat, matches, options): a short title on the first line, then one result per line with the key facts (name, rating or time, area). At most five.
+- One specific place: its name on the first line, its address on the second, and a Google Maps link on the third (https://www.google.com/maps/search/?api=1&query=NAME+ADDRESS, URL-encoded). If a place search tool gave you its coordinates, also add a final line [[map:LATITUDE,LONGITUDE]]; the keyboard removes that line and shows a small map.
+- A person or a thing looked up: the name on the first line, then one short fact per line.
+
+The user's message may start with a "Context" block: a message they received and copied. Use it to understand what they are replying to or asking about. Never repeat the context block itself in your answer.
 
 You may also have tools for apps and APIs the user connected. Use them when the request is about that app or needs its data. When a tool changes something for the user (for example creating a page), say in the returned text what was done, in one short line."""
 
@@ -176,13 +184,26 @@ You may also have tools for apps and APIs the user connected. Use them when the 
     }
 
     private val OPEN = Regex("""\[\[open:([^\]\s]+)]]""")
+    private val MAP = Regex("""\[\[map:(-?\d{1,3}(?:\.\d+)?),\s*(-?\d{1,3}(?:\.\d+)?)]]""")
+
+    /** What is sent as the user's turn: their text, preceded by the copied message they chose as context. */
+    fun userMessage(text: String, context: String?): String = when {
+        context.isNullOrBlank() -> text
+        text.isBlank() -> "Context (a message the user received):\n$context\n\nThe user typed nothing. Do the task for the context above."
+        else -> "Context (a message the user received):\n$context\n\nThe user's text:\n$text"
+    }
     private val ALLOWED = listOf("geo:", "tel:", "mailto:", "https://")
 
     fun parse(raw: String): ActionResult {
         val uri = OPEN.findAll(raw).lastOrNull()?.groupValues?.get(1)
             ?.takeIf { u -> ALLOWED.any { u.startsWith(it, ignoreCase = true) } }
-        val text = raw.replace(OPEN, "").trim()
+        val map = MAP.findAll(raw).lastOrNull()?.let { m ->
+            val lat = m.groupValues[1].toDoubleOrNull()
+            val lon = m.groupValues[2].toDoubleOrNull()
+            if (lat != null && lon != null && lat in -85.0..85.0 && lon in -180.0..180.0) lat to lon else null
+        }
+        val text = raw.replace(OPEN, "").replace(MAP, "").trim()
         if (text.isEmpty() && uri == null) throw AiException("Got an empty answer. Try again")
-        return ActionResult(text, uri)
+        return ActionResult(text, uri, map)
     }
 }

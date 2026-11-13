@@ -4,8 +4,11 @@ An Android keyboard that acts on what you type.
 
 - **Fast typing** – one custom-drawn key view with per-finger tracking, word suggestions,
   auto-correct (backspace undoes a correction), double-space full stop, key sound and vibration.
-- **Action bar** – the wide ✦ bar types a space on tap. Hold it and the text in the
-  field is treated as a request ("tell sam i'm 15 min late, friendly") and replaced with the result.
+- **Action bar** – the wide ✦ bar types a space on tap. Hold it and the text in the field is treated as
+  a request. The keys give way to a result card (with a small map for a place) and Copy / Insert buttons;
+  in chat apps whose enter key sends, Insert becomes Send.
+- **Keys as shortcuts** – bind a skill to a letter and hold that key to run it (marked keys show a glow).
+- **Context** – copy a message you received and tap "Use copied text" so the assistant knows what you are answering.
 - **Skill keys** – the strip above the keys. Each one applies a saved instruction to your
   text. Type `/` and a skill's name to run it as a command.
 - **Agent mode** – Auto applies results, Ask First shows them for approval, Manual only runs skill keys.

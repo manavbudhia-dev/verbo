@@ -6,7 +6,8 @@ import android.os.UserManager
 import org.json.JSONArray
 import org.json.JSONObject
 
-data class Skill(val emoji: String, val name: String, val instruction: String, val category: String = "edit")
+/** [key] is an optional letter: holding that key on the keyboard runs the skill. */
+data class Skill(val emoji: String, val name: String, val instruction: String, val category: String = "edit", val key: String = "")
 
 /** A user-defined API connection: a GET endpoint the assistant can call. */
 data class CustomApi(val name: String, val description: String, val url: String, val headerName: String, val headerValue: String)
@@ -128,7 +129,9 @@ class Store(context: Context) {
             put("custom_apis", arr.toString())
         }
 
-    fun tools(): List<ToolSpec> = Connections.tools(weather, notionToken, calendlyToken, customApis)
+    var places: Boolean get() = bool("places", true); set(v) = put("places", v)
+
+    fun tools(): List<ToolSpec> = Connections.tools(weather, notionToken, calendlyToken, customApis, places)
 
     var skills: List<Skill>
         get() {
@@ -190,24 +193,28 @@ class Store(context: Context) {
         private fun parseSkills(arr: JSONArray) = (0 until arr.length()).map {
             val o = arr.getJSONObject(it)
             val category = o.optString("category").takeIf { c -> c in CATEGORIES } ?: "edit"
-            Skill(o.optString("emoji"), o.getString("name"), o.getString("instruction"), category)
+            val key = o.optString("key").lowercase().takeIf { k -> k.length == 1 && k[0] in 'a'..'z' } ?: ""
+            Skill(o.optString("emoji"), o.getString("name"), o.getString("instruction"), category, key)
         }
 
         private fun skillsJson(skills: List<Skill>) = JSONArray().also { arr ->
             skills.forEach {
-                arr.put(JSONObject().put("emoji", it.emoji).put("name", it.name).put("instruction", it.instruction).put("category", it.category))
+                arr.put(JSONObject().put("emoji", it.emoji).put("name", it.name).put("instruction", it.instruction).put("category", it.category).put("key", it.key))
             }
         }
 
         val DEFAULT_SKILLS = listOf(
-            Skill("✨", "Polish", "Fix spelling, grammar and punctuation and smooth out awkward phrasing. Keep the meaning, the tone and the length.", "edit"),
-            Skill("💬", "Reply", "The text is either a message the user received or rough notes for an answer. Write a natural reply the user can send as their own.", "write"),
+            Skill("✨", "Polish", "Fix spelling, grammar and punctuation and smooth out awkward phrasing. Keep the meaning, the tone and the length.", "edit", "p"),
+            Skill("💬", "Reply", "The text is either a message the user received or rough notes for an answer. Write a natural reply the user can send as their own.", "write", "r"),
             Skill("✂️", "Shorter", "Say the same thing in roughly half the words. Keep every fact and the tone.", "edit"),
             Skill("👔", "Formal", "Rewrite it so it suits a work email or a message to someone the user doesn't know well: polite, clear, no slang.", "edit"),
             Skill("😄", "Casual", "Rewrite it the way a relaxed, friendly person would text a friend. Contractions are fine; at most one emoji.", "edit"),
-            Skill("🌍", "English", "Translate the text into natural English. If it is already English, leave the wording alone and only fix mistakes.", "translate"),
-            Skill("🧾", "Summarize", "Summarise the text as a few short key points, one per line. Keep names, numbers and dates.", "summarize"),
-            Skill("🔎", "Look up", "Treat the text as a question. Find the answer, searching the web if needed, and give it in one to three short sentences.", "write"),
+            Skill("🌍", "English", "Translate the text into natural English. If it is already English, leave the wording alone and only fix mistakes.", "translate", "t"),
+            Skill("🧾", "Summarize", "Summarise the text as a few short key points, one per line. Keep names, numbers and dates.", "summarize", "s"),
+            Skill("🔎", "Look up", "Treat the text as a question. Find the answer, searching the web if needed, and give it in one to three short sentences.", "write", "g"),
+            Skill("📍", "Place", "The text names a place. Find it with the place search and return its name, address and a Google Maps link, with the map marker line.", "write", "l"),
+            Skill("👤", "Who is", "The text or the context names a person. Look them up on the web and return their name, then current role, previous role and education, one per line. If you cannot verify who they are, say so instead of guessing.", "write", "w"),
+            Skill("🗒️", "Notion", "Search the user's Notion for the page the text describes and return its title and link. If Notion is not connected, say so in one line.", "write", "n"),
             Skill("📋", "List", "Turn the text into a tidy list, one item per line, each starting with a dash. Keep the user's wording where you can.", "edit"),
         )
     }

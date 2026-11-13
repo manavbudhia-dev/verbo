@@ -128,6 +128,7 @@ function skillsTab() {
         hint: 'Rewrite it the way a cheerful pirate would say it.' },
       { key: 'category', label: 'Group', value: s.category || 'edit',
         options: [['write', 'Write'], ['edit', 'Edit'], ['translate', 'Translate'], ['summarize', 'Summarize']] },
+      { key: 'key', label: 'Hold key (optional): one letter that runs this skill when held', value: s.key, hint: 'n' },
     ], (v) => {
       const next = skills.slice();
       if (index < 0) next.push(v); else next[index] = v;
@@ -146,7 +147,7 @@ function skillsTab() {
       h('button', { class: 'btn primary', onclick: () => edit(-1) }, 'New skill')),
     skills.map((s, i) => h('div', { class: 'card row' },
       h('div', { class: 'emoji' }, s.emoji || '✦'),
-      h('div', { class: 'grow' }, h('h3', null, s.name), h('p', { class: 'muted clamp' }, s.instruction)),
+      h('div', { class: 'grow' }, h('h3', null, s.name, s.key ? h('span', { class: 'pill', style: 'margin-left:8px' }, 'hold ' + s.key.toUpperCase()) : null), h('p', { class: 'muted clamp' }, s.instruction)),
       h('button', { class: 'btn ghost', disabled: i === 0, 'aria-label': 'Move up', onclick: () => move(i, -1) }, '↑'),
       h('button', { class: 'btn ghost', disabled: i === skills.length - 1, 'aria-label': 'Move down', onclick: () => move(i, 1) }, '↓'),
       h('button', { class: 'btn', onclick: () => edit(i) }, 'Edit'))),

@@ -100,7 +100,8 @@ class PageActivity : Activity() {
             chosen = Store.CATEGORIES[(Store.CATEGORIES.indexOf(chosen) + 1) % Store.CATEGORIES.size]
             (group.getChildAt(0) as android.widget.TextView).text = "Group: ${categoryInfo[chosen]?.first}"
         }
-        form.addView(emoji); form.addView(name); form.addView(instruction)
+        val key = ui.field("Hold key (optional): one letter, e.g. n", existing?.key ?: "")
+        form.addView(emoji); form.addView(name); form.addView(instruction); form.addView(key)
         form.addView(group, LinearLayout.LayoutParams(-2, -2).apply { topMargin = ui.dp(8) })
 
         val dialog = AlertDialog.Builder(this)
@@ -112,7 +113,10 @@ class PageActivity : Activity() {
                 if (n.isEmpty() || i.isEmpty()) {
                     ui.toast("A skill needs a name and an instruction")
                 } else {
-                    val skill = Skill(emoji.text.toString().trim(), n, i, chosen)
+                    val letter = key.text.toString().trim().lowercase().take(1).takeIf { it.isNotEmpty() && it[0] in 'a'..'z' } ?: ""
+                    // A letter can run only one skill, so taking it frees it from any other skill.
+                    if (letter.isNotEmpty()) for (j in skills.indices) if (j != index && skills[j].key == letter) skills[j] = skills[j].copy(key = "")
+                    val skill = Skill(emoji.text.toString().trim(), n, i, chosen, letter)
                     if (existing == null) skills.add(skill) else skills[index] = skill
                     store.skills = skills
                     render()
@@ -135,6 +139,7 @@ class PageActivity : Activity() {
         column.addView(ui.rows(
             ui.row(R.drawable.ic_globe, "Web search", "Look up fresh facts when needed", ui.toggle(store.webSearch) { store.webSearch = it }),
             ui.row(R.drawable.ic_sun, "Weather", "Forecasts from Open-Meteo, no account", ui.toggle(store.weather) { store.weather = it }),
+            ui.row(R.drawable.ic_globe, "Places and maps", "Finds addresses and shows a map, from OpenStreetMap", ui.toggle(store.places) { store.places = it }),
         ))
         column.addView(ui.rows(ui.row(R.drawable.ic_pencil_line, "Gmail", "Writes the email and opens it as a ready draft in Gmail. No sign-in needed. Reading your inbox is not available yet", ui.icon(R.drawable.ic_check, 20, Color.parseColor("#4ADE80")))))
         column.addView(ui.rows(
@@ -202,7 +207,9 @@ class PageActivity : Activity() {
     private fun shortcutsPage(column: LinearLayout) {
         column.addView(ui.topBar("Shortcuts & Triggers", "Use / command to run actions"))
         column.addView(ui.rows(
-            ui.row(R.drawable.ic_sparkle, "Hold the wide bar", "Treats what you typed as a request and replaces it with the result"),
+            ui.row(R.drawable.ic_sparkle, "Hold the wide bar", "Treats what you typed as a request and shows the answer on a card to insert or copy"),
+            ui.row(R.drawable.ic_keyboard, "Hold a marked letter", "Runs the skill bound to that key; set the letter when editing a skill"),
+            ui.row(R.drawable.ic_message_square, "Use copied text", "Copy a message, then tap this chip above the keys to give it to the assistant as context"),
             ui.row(R.drawable.ic_mic, "Tap the microphone", "Dictate; filler words and slips are tidied up"),
             ui.row(R.drawable.ic_mic, "Hold the microphone", "Speak a request instead of typing it"),
             ui.row(R.drawable.ic_keyboard, "Space twice", "Ends the sentence with a full stop"),
@@ -210,7 +217,9 @@ class PageActivity : Activity() {
         ))
         column.addView(ui.section(R.drawable.ic_square_terminal, "Slash commands"))
         note(column, "Type your text, then / and the start of a skill's name. The skill appears above the keys; tap it to run it on the text.")
-        val rows = store.skills.map { ui.row(R.drawable.ic_zap, "/" + it.name.lowercase().replace(" ", ""), (it.emoji + " " + it.name).trim()) }
+        val rows = store.skills.map {
+            ui.row(R.drawable.ic_zap, "/" + it.name.lowercase().replace(" ", ""), (it.emoji + " " + it.name).trim() + if (it.key.isEmpty()) "" else "  ·  hold ${it.key.uppercase()}")
+        }
         if (rows.isNotEmpty()) column.addView(ui.rows(*rows.toTypedArray()))
     }
 

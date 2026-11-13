@@ -257,6 +257,44 @@ class KeyboardTest {
         assertTrue("suggestions should be for \"hel\", got ${ime.suggestions}", ime.suggestions.all { it.startsWith("hel") } && ime.suggestions.isNotEmpty())
     }
 
+    // ---------- agent features ----------
+
+    @Test
+    fun holdingABoundLetterRunsItsSkillInsteadOfTyping() {
+        type("hello")
+        val keys = ime.keys!!
+        layout(root)
+        keys.shift = 0
+        assertTrue("p is bound to Polish by default", 'p' in keys.bound)
+        val rowH = keys.height / 4f
+        val keyW = keys.width / 10f
+        val p = Triple(0, keyW * 9.5f, rowH * 0.5f)
+        touch(keys, MotionEvent.ACTION_DOWN, listOf(p))
+        org.robolectric.shadows.ShadowLooper.idleMainLooper(600, java.util.concurrent.TimeUnit.MILLISECONDS)
+        touch(keys, MotionEvent.ACTION_UP, listOf(p))
+        assertEquals("the held letter must not be typed", "hello", field.text.toString())
+        // A quick tap on the same key still types it.
+        touch(keys, MotionEvent.ACTION_DOWN, listOf(p))
+        touch(keys, MotionEvent.ACTION_UP, listOf(p))
+        assertEquals("hellop", field.text.toString())
+    }
+
+    @Test
+    fun resultMarkersAreParsedAndRemoved() {
+        val r = Ai.parse("Starbucks\n1585 Broadway, New York\nhttps://www.google.com/maps/search/?api=1&query=Starbucks\n[[map:40.7596521,-73.9852254]]\n[[open:geo:0,0?q=Starbucks]]")
+        assertEquals("Starbucks\n1585 Broadway, New York\nhttps://www.google.com/maps/search/?api=1&query=Starbucks", r.text)
+        assertEquals(40.7596521, r.map!!.first, 1e-9)
+        assertEquals("geo:0,0?q=Starbucks", r.openUri)
+        assertEquals(null, Ai.parse("hi [[map:999,10]]").map)
+    }
+
+    @Test
+    fun copiedMessageIsSentAsContext() {
+        assertEquals("plain", Ai.userMessage("plain", null))
+        val m = Ai.userMessage("who is he", "We're meeting David tomorrow")
+        assertTrue(m, m.startsWith("Context") && m.contains("We're meeting David tomorrow") && m.endsWith("who is he"))
+    }
+
     // ---------- pictures for checking layout by eye ----------
 
     private fun snap(view: View, name: String) {
@@ -304,6 +342,17 @@ class KeyboardTest {
             (ime.keys!!.parent as View).let { layout(it); snap(it, "keyboard-$skin-$shape") }
         }
         store.keyShape = "raised"
+        store.theme = "light"
+        ime.onStartInputView(field.info, false)
+        val agentRoot = ime.keys!!.parent as View
+        layout(agentRoot)
+        ime.showResult(ActionResult("Starbucks\n1585 Broadway, Times Square, New York, NY 10036\nhttps://www.google.com/maps/search/?api=1&query=Starbucks+1585+Broadway", "geo:0,0?q=Starbucks+1585+Broadway", 40.7596521 to -73.9852254), {}, {})
+        layout(agentRoot)
+        snap(agentRoot, "panel-place")
+        ime.showResult(ActionResult("Best Italian in SF\n1. Flour + Water · 4.8 · Mission District\n2. Acquerello · 4.7 · Nob Hill · Michelin-starred\n3. Itria · 4.6 · Mission District", null), {}, {})
+        layout(agentRoot)
+        snap(agentRoot, "panel-list")
+        store.theme = "system"
         store.theme = "system"
 
         val main = Robolectric.buildActivity(MainActivity::class.java).setup().get()

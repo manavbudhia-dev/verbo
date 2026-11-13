@@ -35,16 +35,19 @@ db.exec(`
 const CATEGORIES = ['write', 'edit', 'translate', 'summarize'];
 const MODELS = ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5']; // first is the default: cheapest
 const DEFAULT_SKILLS = [
-  ['✨', 'Polish', 'Fix spelling, grammar and punctuation and smooth out awkward phrasing. Keep the meaning, the tone and the length.', 'edit'],
-  ['💬', 'Reply', 'The text is either a message the user received or rough notes for an answer. Write a natural reply the user can send as their own.', 'write'],
+  ['✨', 'Polish', 'Fix spelling, grammar and punctuation and smooth out awkward phrasing. Keep the meaning, the tone and the length.', 'edit', 'p'],
+  ['💬', 'Reply', 'The text is either a message the user received or rough notes for an answer. Write a natural reply the user can send as their own.', 'write', 'r'],
   ['✂️', 'Shorter', 'Say the same thing in roughly half the words. Keep every fact and the tone.', 'edit'],
   ['👔', 'Formal', "Rewrite it so it suits a work email or a message to someone the user doesn't know well: polite, clear, no slang.", 'edit'],
   ['😄', 'Casual', 'Rewrite it the way a relaxed, friendly person would text a friend. Contractions are fine; at most one emoji.', 'edit'],
-  ['🌍', 'English', 'Translate the text into natural English. If it is already English, leave the wording alone and only fix mistakes.', 'translate'],
-  ['🧾', 'Summarize', 'Summarise the text as a few short key points, one per line. Keep names, numbers and dates.', 'summarize'],
-  ['🔎', 'Look up', 'Treat the text as a question. Find the answer, searching the web if needed, and give it in one to three short sentences.', 'write'],
+  ['🌍', 'English', 'Translate the text into natural English. If it is already English, leave the wording alone and only fix mistakes.', 'translate', 't'],
+  ['🧾', 'Summarize', 'Summarise the text as a few short key points, one per line. Keep names, numbers and dates.', 'summarize', 's'],
+  ['🔎', 'Look up', 'Treat the text as a question. Find the answer, searching the web if needed, and give it in one to three short sentences.', 'write', 'g'],
+  ['📍', 'Place', 'The text names a place. Find it with the place search and return its name, address and a Google Maps link, with the map marker line.', 'write', 'l'],
+  ['👤', 'Who is', 'The text or the context names a person. Look them up on the web and return their name, then current role, previous role and education, one per line. If you cannot verify who they are, say so instead of guessing.', 'write', 'w'],
+  ['🗒️', 'Notion', "Search the user's Notion for the page the text describes and return its title and link. If Notion is not connected, say so in one line.", 'write', 'n'],
   ['📋', 'List', "Turn the text into a tidy list, one item per line, each starting with a dash. Keep the user's wording where you can.", 'edit'],
-].map(([emoji, name, instruction, category]) => ({ emoji, name, instruction, category }));
+].map(([emoji, name, instruction, category, key = '']) => ({ emoji, name, instruction, category, key }));
 
 const defaultConfig = () => ({
   apiKey: '', model: MODELS[0], provider: 'anthropic', openaiKey: '', openaiModel: 'gpt-5.5',
@@ -155,6 +158,7 @@ function applyUpdate(config, body) {
       const skill = {
         emoji: str(s.emoji ?? '', 16, 'Emoji'), name: str(s.name, 40, 'Skill name'), instruction: str(s.instruction, 2000, 'Instruction'),
         category: CATEGORIES.includes(s.category) ? s.category : 'edit',
+        key: typeof s.key === 'string' && /^[a-z]$/.test(s.key.trim().toLowerCase()) ? s.key.trim().toLowerCase() : '',
       };
       if (!skill.name || !skill.instruction) throw new Bad(400, 'A skill needs a name and an instruction');
       return skill;
