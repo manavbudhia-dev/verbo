@@ -13,6 +13,8 @@ An Android keyboard that acts on what you type.
   hold 🎙 to speak a request.
 - **Connections** – Weather (built in), Notion and Calendly (paste a token), and any HTTPS
   API you describe. The assistant calls them while carrying out an action.
+- **Dashboard** – optional web app (see `dashboard/`) to manage skills and connections
+  from a browser; pair the keyboard with a one-time code and it syncs.
 - **Undo** – one tap restores your original text.
 
 Actions use the Claude API with your own key (entered in the app, stored on the phone).
@@ -38,5 +40,6 @@ The APK lands in `app/build/outputs/apk/debug/app-debug.apk`.
 - `VerboIme.kt` – the keyboard and the action flow
 - `Ai.kt` – the Claude request and result parsing
 - `Connections.kt` – connected apps and APIs as assistant tools
+- `Sync.kt` – pairing and syncing with the dashboard
 - `Store.kt` – settings and skills
 - `MainActivity.kt` – setup and settings screen

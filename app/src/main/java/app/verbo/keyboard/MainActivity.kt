@@ -34,6 +34,7 @@ class MainActivity : Activity() {
     private lateinit var store: Store
     private lateinit var skillsBox: LinearLayout
     private lateinit var apisBox: LinearLayout
+    private lateinit var dashBox: LinearLayout
     private lateinit var micStatus: TextView
     private lateinit var stepOne: TextView
     private lateinit var stepTwo: TextView
@@ -76,6 +77,12 @@ class MainActivity : Activity() {
             (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showInputMethodPicker()
         })
         column.addView(setup)
+
+        // --- dashboard ---
+        column.addView(section("Dashboard"))
+        dashBox = cardBox()
+        column.addView(dashBox)
+        renderDashboard()
 
         // --- assistant ---
         column.addView(section("Assistant"))
@@ -182,6 +189,50 @@ class MainActivity : Activity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         refreshSetup()
+    }
+
+    private fun renderDashboard() {
+        dashBox.removeAllViews()
+        if (store.deviceToken.isNotEmpty()) {
+            val last = if (store.lastSync == 0L) "not yet" else android.text.format.DateUtils.getRelativeTimeSpanString(store.lastSync).toString()
+            dashBox.addView(label("✓  Paired with " + store.serverUrl.removePrefix("https://"), 15f, ink, bold = true))
+            dashBox.addView(label("Skills, connections and the assistant settings come from the dashboard, so changes made below are replaced at the next sync. Last sync: $last.", 13f, muted).pad(top = 4))
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            row.addView(button("Sync now") { background({ Sync.pull(store) }, "Synced") })
+            row.addView(button("Unpair") { store.unpair(); renderDashboard() })
+            dashBox.addView(row)
+            return
+        }
+        dashBox.addView(label("Manage skills and connections from the web. Sign in to your dashboard, open Keyboards and tap Pair a keyboard to get a code.", 13f, muted))
+        val address = EditText(this).apply {
+            hint = "Dashboard address, e.g. verbo.example.com"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+            setSingleLine(); setTextColor(ink); setHintTextColor(muted)
+        }
+        val code = EditText(this).apply {
+            hint = "Pairing code"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            setSingleLine(); setTextColor(ink); setHintTextColor(muted)
+        }
+        dashBox.addView(address)
+        dashBox.addView(code)
+        dashBox.addView(button("Pair") {
+            val a = address.text.toString()
+            val c = code.text.toString()
+            if (a.isBlank() || c.isBlank()) toast("Enter the address and the code")
+            else background({ Sync.pair(store, a, c) }, "Paired")
+        })
+    }
+
+    /** Runs a dashboard call off the main thread, then redraws the screen with whatever was synced. */
+    private fun background(work: () -> Unit, done: String) {
+        Thread {
+            val message = try { work(); done } catch (e: SyncException) { e.message ?: "Failed" } catch (e: Exception) { "Something went wrong" }
+            runOnUiThread {
+                toast(message)
+                if (message == done) recreate() else renderDashboard()
+            }
+        }.start()
     }
 
     private fun tokenCard(title: String, help: String, get: () -> String, set: (String) -> Unit): LinearLayout {

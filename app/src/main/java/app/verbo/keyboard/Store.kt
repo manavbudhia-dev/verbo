@@ -25,6 +25,35 @@ class Store(context: Context) {
         get() = prefs.getBoolean("web_search", true)
         set(v) = prefs.edit().putBoolean("web_search", v).apply()
 
+    var serverUrl: String
+        get() = prefs.getString("server_url", "") ?: ""
+        set(v) = prefs.edit().putString("server_url", v).apply()
+
+    var deviceToken: String
+        get() = prefs.getString("device_token", "") ?: ""
+        set(v) = prefs.edit().putString("device_token", v).apply()
+
+    var lastSync: Long
+        get() = prefs.getLong("last_sync", 0)
+        set(v) = prefs.edit().putLong("last_sync", v).apply()
+
+    /** Replaces local settings with the dashboard's copy. While paired, the dashboard is the source of truth. */
+    fun applyRemote(o: JSONObject) {
+        prefs.edit()
+            .putString("api_key", o.optString("apiKey"))
+            .putString("model", o.optString("model", Ai.DEFAULT_MODEL))
+            .putBoolean("web_search", o.optBoolean("webSearch", true))
+            .putBoolean("weather", o.optBoolean("weather", true))
+            .putString("notion_token", o.optString("notionToken"))
+            .putString("calendly_token", o.optString("calendlyToken"))
+            .putString("custom_apis", (o.optJSONArray("customApis") ?: JSONArray()).toString())
+            .putString("skills", (o.optJSONArray("skills") ?: JSONArray()).toString())
+            .putLong("last_sync", System.currentTimeMillis())
+            .apply()
+    }
+
+    fun unpair() = prefs.edit().remove("server_url").remove("device_token").remove("last_sync").apply()
+
     var weather: Boolean
         get() = prefs.getBoolean("weather", true)
         set(v) = prefs.edit().putBoolean("weather", v).apply()

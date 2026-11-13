@@ -401,6 +401,7 @@ class VerboIme : InputMethodService() {
             buildChips()
             showChips()
             recognizer?.cancel()
+            syncIfStale()
         }
         autoCaps()
     }
@@ -408,6 +409,20 @@ class VerboIme : InputMethodService() {
     override fun onUpdateSelection(oldSelStart: Int, oldSelEnd: Int, newSelStart: Int, newSelEnd: Int, candidatesStart: Int, candidatesEnd: Int) {
         super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
         autoCaps()
+    }
+
+    /** While paired with a dashboard, refresh skills and connections every so often in the background. */
+    private fun syncIfStale() {
+        if (store.deviceToken.isEmpty() || System.currentTimeMillis() - store.lastSync < Sync.STALE_MS) return
+        store.lastSync = System.currentTimeMillis() // don't retry on every field while offline
+        worker.execute {
+            try {
+                Sync.pull(store)
+                main.post { buildChips() }
+            } catch (e: Exception) {
+                // Keep using the last synced settings.
+            }
+        }
     }
 
     // ---------- the action ----------
