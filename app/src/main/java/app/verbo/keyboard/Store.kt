@@ -47,6 +47,12 @@ class Store(context: Context) {
     val activeKey get() = when { isOpenAi -> openaiKey; isCustom -> customKey; else -> apiKey }
     val activeModel get() = when { isOpenAi -> openaiModel; isCustom -> customModel; else -> model }
     val providerName get() = when { isOpenAi -> "OpenAI"; isCustom -> "gateway"; else -> "Claude" }
+    /** A short name for the model in use, e.g. "Haiku 5.5". */
+    val activeModelLabel get() = when {
+        isCustom -> customModel.substringAfterLast('/')
+        isOpenAi -> Ai.OPENAI_MODELS.firstOrNull { it.first == openaiModel }?.second ?: openaiModel
+        else -> (Ai.MODELS.firstOrNull { it.first == model } ?: Ai.MODELS[0]).second.substringBefore(" —")
+    }
 
     // keyboard behaviour
     var assistantOn: Boolean get() = bool("assistant_on", true); set(v) = put("assistant_on", v)
@@ -339,6 +345,9 @@ class Store(context: Context) {
                 "web_search" to "webSearch", "weather" to "weather", "skills" to "skills", "custom_apis" to "customApis",
             ) + KEYBOARD_FIELDS.associate { it.pref to "keyboard." + it.name }
         }
+
+        /** The last four characters of a saved key, so it can be recognised without being shown (as on the dashboard). */
+        fun keyHint(key: String) = if (key.length >= 8) key.takeLast(4) else ""
 
         const val MIN_HEIGHT = 80
         const val MAX_HEIGHT = 130

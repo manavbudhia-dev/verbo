@@ -481,7 +481,7 @@ class KeyboardTest {
             store.resetSkills()
         }
 
-        for (tab in listOf("keys", "library", "settings")) {
+        for (tab in listOf("home", "library", "settings")) {
             MainActivity.tab = tab
             val main = Robolectric.buildActivity(MainActivity::class.java).setup().get()
             val frame = content(main)
@@ -491,8 +491,8 @@ class KeyboardTest {
             frame.layout(0, 0, 1080, h)
             snap(frame, if (tab == "settings") "settings" else "home-$tab")
         }
-        MainActivity.tab = "keys"
-        for (page in listOf("create", "wheel", "translate", "feedback", "battery", "skins", "templates", "prompts", "automate", "shortcuts", "privacy", "dashboard", "category:edit")) {
+        MainActivity.tab = "home"
+        for (page in listOf("ai", "look", "typing", "languages", "create", "wheel", "feedback", "battery", "templates", "prompts", "automate", "shortcuts", "privacy", "dashboard", "category:edit")) {
             val a = Robolectric.buildActivity(PageActivity::class.java, android.content.Intent().putExtra("page", page)).setup().get()
             val s = content(a)
             s.layout(0, 0, 1080, maxOf((s as ViewGroup).getChildAt(0).measuredHeight, 900))

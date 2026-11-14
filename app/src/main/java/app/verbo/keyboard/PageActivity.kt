@@ -36,6 +36,9 @@ class PageActivity : Activity() {
         page = intent.getStringExtra("page") ?: "prompts"
         render()
         if (savedInstanceState == null && intent.getBooleanExtra("new", false)) editSkill(-1, null)
+        // Opened from a skill card on Home: go straight to that skill.
+        val edit = intent.getIntExtra("edit", -1)
+        if (savedInstanceState == null && edit in store.skills.indices) editSkill(edit, null)
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) = render()
@@ -48,12 +51,13 @@ class PageActivity : Activity() {
             page == "automate" -> automatePage(column)
             page == "shortcuts" -> shortcutsPage(column)
             page == "privacy" -> privacyPage(column)
-            page == "languages" -> languagesPage(column)
+            page == "languages" || page == "translate" -> languagesPage(column)
+            page == "ai" -> aiPage(column)
+            page == "typing" -> typingPage(column)
             page == "dashboard" -> dashboardPage(column)
-            page == "skins" -> skinsPage(column)
+            page == "look" || page == "skins" -> skinsPage(column)
             page == "wheel" -> wheelPage(column)
             page == "create" -> createPage(column)
-            page == "translate" -> translatePage(column)
             page == "feedback" -> feedbackPage(column)
             page == "battery" -> batteryPage(column)
             page == "templates" -> templatesPage(column)
@@ -94,7 +98,7 @@ class PageActivity : Activity() {
                 .setNegativeButton("Cancel", null).show()
         }, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = ui.dp(6) })
         column.addView(buttons)
-        if (store.deviceToken.isNotEmpty()) note(column, "\nThis keyboard is paired with a dashboard, so skills edited here are replaced at the next sync. Edit them on the dashboard instead.")
+        if (store.deviceToken.isNotEmpty()) note(column, "\nThis keyboard is paired with a dashboard: skills edited here are sent to it at the next sync.")
     }
 
     private fun editSkill(index: Int, category: String?) {
@@ -219,6 +223,130 @@ class PageActivity : Activity() {
         dialog.show()
     }
 
+    // ---------- AI service ----------
+
+    private fun aiPage(column: LinearLayout) {
+        column.addView(ui.topBar("AI service", "Which AI runs your skills, and your keys"))
+        column.addView(ui.rows(ui.row(R.drawable.ic_sparkles, "Keyboard assistant", "Skills, the wheel and Ask AI", ui.toggle(store.assistantOn) { store.assistantOn = it })))
+
+        column.addView(ui.section(R.drawable.ic_box, "Provider"))
+        column.addView(ui.rows(
+            choice(R.drawable.ic_sparkles, "Claude", "Anthropic · recommended", store.provider == "anthropic") { store.provider = "anthropic" },
+            choice(R.drawable.ic_sparkles, "OpenAI", "GPT models", store.isOpenAi) { store.provider = "openai" },
+            choice(R.drawable.ic_plug, "AI Router or other gateway", "Any service that speaks the OpenAI chat format", store.isCustom) { store.provider = "custom" },
+        ))
+
+        column.addView(ui.section(R.drawable.ic_layers, "Model"))
+        when {
+            store.isOpenAi -> column.addView(ui.rows(*(Ai.OPENAI_MODELS.map { (id, label) ->
+                choice(R.drawable.ic_box, label, null, store.openaiModel == id) { store.openaiModel = id }
+            } + ui.row(R.drawable.ic_pencil_line, "Other model", if (Ai.OPENAI_MODELS.none { it.first == store.openaiModel }) store.openaiModel else "Type any model ID", ui.chevron()) { customOpenAiModel() }).toTypedArray()))
+            store.isCustom -> column.addView(ui.rows(
+                ui.row(R.drawable.ic_box, "Model", store.customModel, ui.chevron()) { customGateway() },
+                ui.row(R.drawable.ic_globe, "Address", store.customBase, ui.chevron()) { customGateway() },
+                ui.row(R.drawable.ic_refresh_cw, "Use AI Router · Claude Haiku 5.5", "The default gateway set-up") {
+                    store.customBase = ChatCompat.DEFAULT_BASE; store.customModel = ChatCompat.DEFAULT_MODEL; render()
+                },
+            ))
+            else -> column.addView(ui.rows(*Ai.MODELS.map { (id, label) ->
+                choice(R.drawable.ic_box, label.substringBefore(" —"), label.substringAfter("— ", ""), store.model == id) { store.model = id }
+            }.toTypedArray()))
+        }
+
+        column.addView(ui.section(R.drawable.ic_shield, "Keys"))
+        note(column, "Saved keys are never shown again, only their last four characters. Each key is sent only to the service it belongs to" +
+            if (store.deviceToken.isNotEmpty()) ", and to your own dashboard so it stays in sync." else ".")
+        fun keyRow(title: String, where: String, hint: String, current: String, save: (String) -> Unit): LinearLayout {
+            val tail = Store.keyHint(current)
+            val state = if (current.isEmpty()) "Not set" else if (tail.isEmpty()) "Saved" else "Saved · ends in $tail"
+            return ui.row(R.drawable.ic_shield, title, state, if (current.isEmpty()) ui.text("Add", 14f, ui.iconTint, bold = true) else ui.chevron()) {
+                editKey(title, where, hint, tail, current.isNotEmpty(), save)
+            }
+        }
+        column.addView(ui.rows(
+            keyRow("Claude key", "console.anthropic.com → API keys", "sk-ant-…", store.apiKey) { store.apiKey = it },
+            keyRow("OpenAI key", "platform.openai.com → API keys", "sk-…", store.openaiKey) { store.openaiKey = it },
+            keyRow("Gateway key", "Your AI Router or gateway account", "sk-air-v1-…", store.customKey) { store.customKey = it },
+        ))
+
+        column.addView(ui.section(R.drawable.ic_zap, "Agent mode"))
+        column.addView(ui.rows(
+            choice(R.drawable.ic_zap, "Auto", "Results go straight into the text field", store.agentMode == "auto") { store.agentMode = "auto" },
+            choice(R.drawable.ic_message_square, "Ask first", "Show the result card before anything changes", store.agentMode == "ask") { store.agentMode = "ask" },
+            choice(R.drawable.ic_settings, "Manual", "Only runs the skills you tap or hold", store.agentMode == "manual") { store.agentMode = "manual" },
+        ))
+    }
+
+    /** A saved key is never put back into the field: the field starts empty and shows the last four characters. */
+    private fun editKey(title: String, where: String, hint: String, tail: String, saved: Boolean, save: (String) -> Unit) {
+        val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(ui.dp(22), ui.dp(8), ui.dp(22), 0) }
+        form.addView(ui.text("Get one at $where." + if (saved) "\nSaved key" + (if (tail.isEmpty()) "" else " ends in $tail") + ". Paste a new one to replace it." else "", 13.5f, ui.muted))
+        val field = ui.field(hint, "", secret = true)
+        form.addView(field)
+        val dialog = AlertDialog.Builder(this).setTitle(title).setView(form)
+            .setPositiveButton("Save") { _, _ ->
+                val key = field.text.toString().trim()
+                if (key.isEmpty()) ui.toast("Nothing changed") else { save(key); ui.toast("Key saved" + if (store.deviceToken.isNotEmpty()) " and sent to your dashboard" else "") }
+                render()
+            }
+            .setNegativeButton("Cancel", null)
+        if (saved) dialog.setNeutralButton("Remove") { _, _ -> save(""); render() }
+        dialog.show()
+    }
+
+    /** Any service that speaks the OpenAI chat format: its address and the model name it expects. */
+    private fun customGateway() {
+        val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(ui.dp(22), ui.dp(8), ui.dp(22), 0) }
+        form.addView(ui.text("For AI Router, OpenRouter and other OpenAI-compatible gateways. Your text and key go to this address, so only use a service you trust.", 13.5f, ui.muted))
+        val base = ui.field("https://api.airouter.in/v1", store.customBase)
+        val model = ui.field("anthropic/claude-haiku-5.5", store.customModel)
+        form.addView(ui.text("Address", 13.5f, bold = true).apply { setPadding(0, ui.dp(12), 0, 0) })
+        form.addView(base)
+        form.addView(ui.text("Model", 13.5f, bold = true).apply { setPadding(0, ui.dp(8), 0, 0) })
+        form.addView(model)
+        AlertDialog.Builder(this).setTitle("Gateway").setView(form)
+            .setPositiveButton("Use") { _, _ ->
+                val id = model.text.toString().trim()
+                val address = try { ChatCompat.normaliseBase(base.text.toString()) } catch (e: AiException) { null }
+                if (address == null || !id.matches(Regex("[A-Za-z0-9._:/-]{1,100}"))) ui.toast("Check the address (https://…) and the model name")
+                else { store.provider = "custom"; store.customBase = address; store.customModel = id; render() }
+            }
+            .setNegativeButton("Cancel", null).show()
+    }
+
+    private fun customOpenAiModel() {
+        val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(ui.dp(22), ui.dp(8), ui.dp(22), 0) }
+        form.addView(ui.text("Type the model ID exactly as OpenAI lists it.", 13.5f, ui.muted))
+        val field = ui.field("e.g. gpt-5.5", if (store.isOpenAi) store.openaiModel else "")
+        form.addView(field)
+        AlertDialog.Builder(this).setTitle("OpenAI model").setView(form)
+            .setPositiveButton("Use") { _, _ ->
+                val id = field.text.toString().trim()
+                if (id.matches(Regex("[A-Za-z0-9._:-]{1,80}"))) { store.provider = "openai"; store.openaiModel = id; render() }
+                else ui.toast("That doesn't look like a model ID")
+            }
+            .setNegativeButton("Cancel", null).show()
+    }
+
+    // ---------- typing ----------
+
+    private fun typingPage(column: LinearLayout) {
+        column.addView(ui.topBar("Typing", "Corrections, suggestions and shortcuts"))
+        column.addView(ui.rows(
+            ui.row(R.drawable.ic_spell_check, "Auto-correct", "Fix typos as you type; backspace puts your word back", ui.toggle(store.autoCorrect) { store.autoCorrect = it }),
+            ui.row(R.drawable.ic_message_square_more, "Suggestions", "Word completions above the keys", ui.toggle(store.suggestions) { store.suggestions = it }),
+        ))
+        column.addView(ui.rows(
+            ui.row(R.drawable.ic_keyboard, "Shortcuts & slash commands", "Hold gestures and / commands", ui.chevron()) { go("shortcuts") },
+            ui.row(R.drawable.ic_layers, "Templates", "Ready-made daily actions for your apps", ui.chevron()) { go("templates") },
+            ui.row(R.drawable.ic_settings, "Android keyboard settings", "Turn Verbo on or switch keyboards", ui.chevron()) {
+                startActivity(android.content.Intent(android.provider.Settings.ACTION_INPUT_METHOD_SETTINGS))
+            },
+        ))
+    }
+
+    private fun go(page: String) = startActivity(android.content.Intent(this, PageActivity::class.java).putExtra("page", page))
+
     // ---------- shortcuts ----------
 
     private fun shortcutsPage(column: LinearLayout) {
@@ -263,9 +391,18 @@ class PageActivity : Activity() {
     // ---------- languages ----------
 
     private fun languagesPage(column: LinearLayout) {
-        column.addView(ui.topBar("Languages"))
-        column.addView(ui.rows(ui.row(R.drawable.ic_languages, "English (US)", "QWERTY", ui.icon(R.drawable.ic_check, 20, ui.iconTint))))
+        column.addView(ui.topBar("Languages", "Typing layout and translate languages"))
+        column.addView(ui.rows(ui.row(R.drawable.ic_keyboard, "English (US)", "Typing layout · QWERTY", ui.icon(R.drawable.ic_check, 20, ui.iconTint))))
         note(column, "English is the only typing layout so far. Skills and voice still work in other languages: the assistant answers in the language you write in.")
+        column.addView(ui.section(R.drawable.ic_languages, "Translate into"))
+        note(column, "Your languages appear at the top of the Translate list, with one button to translate into all of them at once.")
+        val mine = store.languages
+        column.addView(ui.rows(*Store.ALL_LANGUAGES.map { name ->
+            ui.row(R.drawable.ic_languages, name, trailing = ui.toggle(name in mine) { on ->
+                val now = store.languages
+                store.languages = if (on) (now + name).distinct() else now - name
+            })
+        }.toTypedArray()))
     }
 
     // ---------- dashboard ----------
@@ -275,7 +412,7 @@ class PageActivity : Activity() {
         if (store.deviceToken.isNotEmpty()) {
             val last = if (store.lastSync == 0L) "not yet" else DateUtils.getRelativeTimeSpanString(store.lastSync).toString()
             column.addView(ui.rows(ui.row(R.drawable.ic_cloud, "Paired with " + store.serverUrl.removePrefix("https://"), "Last sync: $last")))
-            note(column, "Skills, connections and the API key come from the dashboard, so changes made in this app are replaced at the next sync.")
+            note(column, "Skills, keys, connections and keyboard settings stay in step both ways. A change made here is sent to the dashboard first, so it is never replaced by an older copy.")
             val buttons = LinearLayout(this)
             buttons.addView(ui.button("Sync now", R.drawable.ic_refresh_cw, filled = true) { background({ Sync.pull(store) }, "Synced") }, LinearLayout.LayoutParams(0, -2, 1f).apply { rightMargin = ui.dp(6) })
             buttons.addView(ui.button("Unpair", R.drawable.ic_x) { store.unpair(); render() }, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = ui.dp(6) })
@@ -330,7 +467,7 @@ class PageActivity : Activity() {
             when {
                 designing -> {}
                 text.isEmpty() -> ui.toast("Say what the skill should do")
-                store.activeKey.isBlank() -> ui.toast("Add your ${store.providerName} API key first (Settings → AI Model)")
+                store.activeKey.isBlank() -> ui.toast("Add your ${store.providerName} API key first (Settings → AI service)")
                 else -> design(text)
             }
         })
@@ -509,27 +646,13 @@ class PageActivity : Activity() {
         column.addView(ui.button("New skill", R.drawable.ic_plus) { editSkill(-1, null) }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(8) })
     }
 
-    // ---------- translate languages ----------
-
-    private fun translatePage(column: LinearLayout) {
-        column.addView(ui.topBar("Translate languages", "Shown first when you translate"))
-        note(column, "Your languages appear at the top of the Translate list, with one button to translate into all of them at once. Every other language stays available below them.")
-        val mine = store.languages
-        column.addView(ui.rows(*Store.ALL_LANGUAGES.map { name ->
-            ui.row(R.drawable.ic_languages, name, trailing = ui.toggle(name in mine) { on ->
-                val now = store.languages
-                store.languages = if (on) (now + name).distinct() else now - name
-            })
-        }.toTypedArray()))
-    }
-
     // ---------- skins ----------
 
     private fun choice(icon: Int, title: String, subtitle: String?, selected: Boolean, onPick: () -> Unit) =
         ui.row(icon, title, subtitle, if (selected) ui.icon(R.drawable.ic_check, 20, ui.iconTint) else null) { onPick(); render() }
 
     private fun skinsPage(column: LinearLayout) {
-        column.addView(ui.topBar("Skins & key style", "Change how the keyboard looks"))
+        column.addView(ui.topBar("Look", "Skin, key style and size"))
         column.addView(ui.section(R.drawable.ic_palette, "Skin"))
         val skins = listOf(
             "system" to "Follow phone (light or dark)", "dark" to "Dark", "light" to "Light", "amoled" to "Amoled black",
@@ -563,13 +686,43 @@ class PageActivity : Activity() {
         ))
         column.addView(ui.section(R.drawable.ic_sliders_horizontal, "Layout"))
         column.addView(ui.rows(ui.row(R.drawable.ic_keyboard, "Number row", "Show 1–0 above the letters", ui.toggle(store.numberRow) { store.numberRow = it })))
-        note(column, "Key height is set on the main screen. Changes apply the next time the keyboard opens.")
+        column.addView(ui.section(R.drawable.ic_keyboard, "Height"))
+        val heightLabel = ui.text("${store.heightPercent}%", 15f, bold = true).apply {
+            gravity = Gravity.CENTER
+            background = ui.shape(ui.card, 16, ui.line)
+            setPadding(ui.dp(14), ui.dp(6), ui.dp(14), ui.dp(6))
+            minWidth = ui.dp(66)
+        }
+        val heightRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        heightRow.addView(android.widget.SeekBar(this).apply {
+            max = (Store.MAX_HEIGHT - Store.MIN_HEIGHT) / 5
+            progress = (store.heightPercent - Store.MIN_HEIGHT) / 5
+            progressTintList = android.content.res.ColorStateList.valueOf(ui.accent)
+            progressBackgroundTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#5A5880"))
+            thumbTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
+            contentDescription = "Keyboard height"
+            setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(bar: android.widget.SeekBar?, value: Int, fromUser: Boolean) {
+                    store.heightPercent = Store.MIN_HEIGHT + value * 5
+                    heightLabel.text = "${store.heightPercent}%"
+                }
+                override fun onStartTrackingTouch(bar: android.widget.SeekBar?) {}
+                override fun onStopTrackingTouch(bar: android.widget.SeekBar?) {}
+            })
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        heightRow.addView(heightLabel)
+        column.addView(heightRow)
+        note(column, "\nChanges apply the next time the keyboard opens.")
     }
 
     // ---------- sound and vibration ----------
 
     private fun feedbackPage(column: LinearLayout) {
         column.addView(ui.topBar("Sound & vibration", "Tap an option to hear or feel it"))
+        column.addView(ui.rows(
+            ui.row(R.drawable.ic_volume_2, "Sound on key press", trailing = ui.toggle(store.sound) { store.sound = it }),
+            ui.row(R.drawable.ic_vibrate, "Vibration", trailing = ui.toggle(store.haptic) { store.haptic = it }),
+        ))
         fun demo(type: KeyboardView.Type = KeyboardView.Type.CHAR) {
             preview.configure(store)
             // A freshly chosen sound needs a moment to load before it can play.
