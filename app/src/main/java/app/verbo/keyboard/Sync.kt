@@ -5,7 +5,8 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
-class SyncException(message: String) : Exception(message)
+/** [status] is the dashboard's HTTP status, or 0 when it could not be reached. */
+class SyncException(message: String, val status: Int = 0) : Exception(message)
 
 /** Pairs this keyboard with a Verbo dashboard and pulls skills, connections and settings from it. Blocking. */
 object Sync {
@@ -24,13 +25,52 @@ object Sync {
         val res = request("POST", "$url/api/device/pair", null, body)
         store.serverUrl = url
         store.deviceToken = res.getString("token")
+        // Keys typed on the phone before pairing go up instead of being wiped by an empty dashboard.
+        val remote = request("GET", "$url/api/device/config", store.deviceToken, null)
+        store.markPending(store.missingOnDashboard(remote))
         pull(store)
     }
 
+    /**
+     * Sends changes made on the phone first, then takes the dashboard's copy of everything else.
+     * Fields still pending (changed again during the upload, or refused) are never overwritten.
+     */
     fun pull(store: Store) {
         if (store.deviceToken.isEmpty()) return
-        val res = request("GET", store.serverUrl + "/api/device/config", store.deviceToken, null)
-        store.applyRemote(res)
+        val config = store.serverUrl + "/api/device/config"
+        if (store.pending.isNotEmpty()) {
+            var (body, sent) = store.pendingUpload()
+            val res = try {
+                try {
+                    request("PUT", config, store.deviceToken, body.toString())
+                } catch (e: SyncException) {
+                    if (e.status != 400) throw e
+                    // The dashboard refused a setting (an older server, say). Keep the keys, let the rest go.
+                    store.settle(sent.filterKeys { it !in Store.SECRETS })
+                    store.pendingUpload().also { body = it.first; sent = it.second }
+                    if (sent.isEmpty()) request("GET", config, store.deviceToken, null)
+                    else request("PUT", config, store.deviceToken, body.toString())
+                }
+            } catch (e: SyncException) {
+                // Still refresh what the phone did not change, then report the problem.
+                store.applyRemote(request("GET", config, store.deviceToken, null))
+                throw e
+            }
+            store.settle(sent)
+            store.applyRemote(res)
+        } else {
+            store.applyRemote(request("GET", config, store.deviceToken, null))
+        }
+    }
+
+    private val timer = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "verbo-sync").apply { isDaemon = true } }
+    private var queued: java.util.concurrent.ScheduledFuture<*>? = null
+
+    /** Syncs in the background shortly after a change (several saves in a row make one request). */
+    @Synchronized
+    fun soon(store: Store) {
+        queued?.cancel(false)
+        queued = timer.schedule({ try { pull(store) } catch (e: Exception) { } }, 1500, java.util.concurrent.TimeUnit.MILLISECONDS)
     }
 
     /** Asks the dashboard to create a Google Meet room in the owner's Google account. Returns the meeting link. */
@@ -60,7 +100,7 @@ object Sync {
             val code = conn.responseCode
             val text = (if (code in 200..299) conn.inputStream else conn.errorStream)?.bufferedReader()?.use { it.readText() } ?: ""
             val json = try { JSONObject(text) } catch (e: Exception) { JSONObject() }
-            if (code !in 200..299) throw SyncException(json.optString("error").ifEmpty { "The dashboard answered with error $code" })
+            if (code !in 200..299) throw SyncException(json.optString("error").ifEmpty { "The dashboard answered with error $code" }, code)
             return json
         } catch (e: SyncException) {
             throw e

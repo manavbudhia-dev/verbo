@@ -608,7 +608,9 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     /** While paired with a dashboard, refresh skills and connections every so often in the background. */
     private fun syncIfStale() {
         if (fb.saving) return // Battery Saver: no background network; "Sync now" in the app still works
-        if (store.deviceToken.isEmpty() || System.currentTimeMillis() - store.lastSync < Sync.STALE_MS) return
+        if (store.deviceToken.isEmpty()) return
+        val age = System.currentTimeMillis() - store.lastSync
+        if (age < 60_000 || (store.pending.isEmpty() && age < Sync.STALE_MS)) return // phone changes go up within a minute
         store.lastSync = System.currentTimeMillis() // don't retry on every field while offline
         worker.execute {
             try {

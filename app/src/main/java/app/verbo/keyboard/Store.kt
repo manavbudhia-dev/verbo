@@ -24,8 +24,10 @@ class Store(context: Context) {
 
     private fun str(key: String, default: String = "") = prefs?.getString(key, default) ?: default
     private fun bool(key: String, default: Boolean) = prefs?.getBoolean(key, default) ?: default
-    private fun put(key: String, value: String) { prefs?.edit()?.putString(key, value)?.apply() }
-    private fun put(key: String, value: Boolean) { prefs?.edit()?.putBoolean(key, value)?.apply() }
+    // Each write that really changes a value also marks the matching dashboard field as pending.
+    private fun put(key: String, value: String) { if (prefs?.contains(key) != true || str(key) != value) { prefs?.edit()?.putString(key, value)?.apply(); changed(key) } }
+    private fun put(key: String, value: Boolean) { if (prefs?.contains(key) != true || bool(key, !value) != value) { prefs?.edit()?.putBoolean(key, value)?.apply(); changed(key) } }
+    private fun putInt(key: String, value: Int) { if (prefs?.contains(key) != true || prefs.getInt(key, value.inv()) != value) { prefs?.edit()?.putInt(key, value)?.apply(); changed(key) } }
 
     var apiKey: String get() = str("api_key"); set(v) = put("api_key", v.trim())
     var model: String get() = str("model", Ai.DEFAULT_MODEL); set(v) = put("model", v)
@@ -54,10 +56,10 @@ class Store(context: Context) {
     var theme: String get() = str("theme", "system"); set(v) = put("theme", v)
     var customAccent: Int
         get() = prefs?.getInt("custom_accent", 0xFF22C55E.toInt()) ?: 0xFF22C55E.toInt()
-        set(v) { prefs?.edit()?.putInt("custom_accent", v)?.apply() }
+        set(v) = putInt("custom_accent", v)
     var heightPercent: Int
         get() = (prefs?.getInt("height_percent", 100) ?: 100).coerceIn(MIN_HEIGHT, MAX_HEIGHT)
-        set(v) { prefs?.edit()?.putInt("height_percent", v.coerceIn(MIN_HEIGHT, MAX_HEIGHT))?.apply() }
+        set(v) = putInt("height_percent", v.coerceIn(MIN_HEIGHT, MAX_HEIGHT))
     /** Key style, one of SHAPES. "raised" is a 3D key that sinks when pressed; "flat" shows letters only. */
     var keyShape: String get() = str("key_shape", "raised"); set(v) = put("key_shape", v)
     var numberRow: Boolean get() = bool("number_row", false); set(v) = put("number_row", v)
@@ -69,7 +71,7 @@ class Store(context: Context) {
     var soundPack: String get() = str("sound_pack", "system"); set(v) = put("sound_pack", v)
     var soundVolume: Int
         get() = (prefs?.getInt("sound_volume", 60) ?: 60).coerceIn(5, 100)
-        set(v) { prefs?.edit()?.putInt("sound_volume", v.coerceIn(5, 100))?.apply() }
+        set(v) = putInt("sound_volume", v.coerceIn(5, 100))
     /** While the phone's Battery Saver is on: no key sound or vibration, and no background dashboard sync. */
     var batterySaver: Boolean get() = bool("battery_saver", true); set(v) = put("battery_saver", v)
     var autoCorrect: Boolean get() = bool("auto_correct", true); set(v) = put("auto_correct", v)
@@ -109,32 +111,128 @@ class Store(context: Context) {
         get() = prefs?.getLong("last_sync", 0) ?: 0
         set(v) { prefs?.edit()?.putLong("last_sync", v)?.apply() }
 
-    /** Replaces local settings with the dashboard's copy. While paired, the dashboard is the source of truth. */
-    fun applyRemote(o: JSONObject) {
-        prefs?.edit()
-            ?.putString("api_key", o.optString("apiKey"))
-            ?.putString("model", o.optString("model", Ai.DEFAULT_MODEL))
-            ?.putString("provider", o.optString("provider").takeIf { it == "openai" || it == "custom" } ?: "anthropic")
-            ?.putString("custom_base", o.optString("customBase", ChatCompat.DEFAULT_BASE))
-            ?.putString("custom_key", o.optString("customKey"))
-            ?.putString("custom_model", o.optString("customModel", ChatCompat.DEFAULT_MODEL))
-            ?.putString("openai_key", o.optString("openaiKey"))
-            ?.putString("openai_model", o.optString("openaiModel", Ai.DEFAULT_OPENAI_MODEL))
-            ?.putBoolean("web_search", o.optBoolean("webSearch", true))
-            ?.putBoolean("weather", o.optBoolean("weather", true))
-            ?.putString("notion_token", o.optString("notionToken"))
-            ?.putString("calendly_token", o.optString("calendlyToken"))
-            ?.putString("custom_apis", (o.optJSONArray("customApis") ?: JSONArray()).toString())
-            ?.putString("skills", (o.optJSONArray("skills") ?: JSONArray()).toString())
-            ?.putBoolean("google_connected", o.optBoolean("googleConnected", false))
-            ?.putLong("last_sync", System.currentTimeMillis())
-            ?.apply()
+    // ---------- two-way sync ----------
+    // A change made on the phone while paired is recorded as pending. The next sync sends pending fields
+    // up first (PUT /api/device/config) and the download never overwrites a field that is still pending,
+    // so a key typed on the phone can no longer be replaced by the dashboard's older copy.
+
+    /** Dashboard field names changed on this phone and not yet accepted by the dashboard. */
+    val pending: Set<String> get() = str("pending").split("\n").filter { it.isNotBlank() }.toSet()
+
+    private fun setPending(fields: Set<String>) { prefs?.edit()?.putString("pending", fields.joinToString("\n"))?.apply() }
+
+    private fun changed(prefKey: String) {
+        val field = SYNCED[prefKey] ?: return
+        if (deviceToken.isEmpty()) return
+        markPending(setOf(field))
+        if (field in SECRETS) Sync.soon(this) // a key saved on the phone goes up straight away
+    }
+
+    fun markPending(fields: Set<String>) { if (fields.isNotEmpty()) setPending(pending + fields) }
+
+    /** The current value of a dashboard field, in the form the dashboard expects. */
+    fun fieldValue(field: String): Any = when (field) {
+        "apiKey" -> apiKey; "openaiKey" -> openaiKey; "customKey" -> customKey
+        "notionToken" -> notionToken; "calendlyToken" -> calendlyToken
+        "model" -> model; "provider" -> provider; "openaiModel" -> openaiModel
+        "customBase" -> customBase; "customModel" -> customModel
+        "webSearch" -> webSearch; "weather" -> weather
+        "skills" -> skillsJson(skills)
+        "customApis" -> JSONArray().also { arr ->
+            customApis.forEach { arr.put(JSONObject().put("name", it.name).put("description", it.description).put("url", it.url).put("headerName", it.headerName).put("headerValue", it.headerValue)) }
+        }
+        else -> when (field.removePrefix("keyboard.")) {
+            "assistantOn" -> assistantOn; "numberRow" -> numberRow; "sound" -> sound; "haptic" -> haptic
+            "autoCorrect" -> autoCorrect; "suggestions" -> suggestions; "wheelOn" -> wheelOn; "batterySaver" -> batterySaver
+            "agentMode" -> agentMode; "theme" -> theme; "keyShape" -> keyShape; "soundPack" -> soundPack; "hapticStrength" -> hapticStrength
+            "heightPercent" -> heightPercent; "soundVolume" -> soundVolume; "customAccent" -> customAccent
+            "wheel" -> JSONArray(wheel); "languages" -> JSONArray(languages)
+            else -> JSONObject.NULL
+        }
+    }
+
+    /** The body for PUT /api/device/config with every pending field, and a snapshot of what was sent. */
+    fun pendingUpload(): Pair<JSONObject, Map<String, String>> {
+        val body = JSONObject()
+        val sent = HashMap<String, String>()
+        for (field in pending) {
+            val value = fieldValue(field)
+            if (value == JSONObject.NULL) continue
+            sent[field] = value.toString()
+            if (field.startsWith("keyboard.")) {
+                val kb = body.optJSONObject("keyboard") ?: JSONObject().also { body.put("keyboard", it) }
+                kb.put(field.removePrefix("keyboard."), value)
+            } else body.put(field, value)
+        }
+        return body to sent
+    }
+
+    /** After an upload: clears the fields the dashboard accepted, unless they were changed again meanwhile. */
+    fun settle(sent: Map<String, String>) {
+        setPending(pending.filter { f -> f in SYNCED.values && sent[f] != fieldValue(f).toString() }.toSet())
+    }
+
+    /** Takes the dashboard's copy of every synced field except those in [keep]: changes the dashboard hasn't accepted yet. */
+    fun applyRemote(o: JSONObject, keep: Set<String> = pending) {
+        val e = prefs?.edit() ?: return
+        fun s(field: String, pref: String, value: String) { if (field !in keep) e.putString(pref, value) }
+        fun b(field: String, pref: String, value: Boolean) { if (field !in keep) e.putBoolean(pref, value) }
+        s("apiKey", "api_key", o.optString("apiKey"))
+        s("model", "model", o.optString("model", Ai.DEFAULT_MODEL))
+        s("provider", "provider", o.optString("provider").takeIf { it == "openai" || it == "custom" } ?: "anthropic")
+        s("customBase", "custom_base", o.optString("customBase", ChatCompat.DEFAULT_BASE))
+        s("customKey", "custom_key", o.optString("customKey"))
+        s("customModel", "custom_model", o.optString("customModel", ChatCompat.DEFAULT_MODEL))
+        s("openaiKey", "openai_key", o.optString("openaiKey"))
+        s("openaiModel", "openai_model", o.optString("openaiModel", Ai.DEFAULT_OPENAI_MODEL))
+        b("webSearch", "web_search", o.optBoolean("webSearch", true))
+        b("weather", "weather", o.optBoolean("weather", true))
+        s("notionToken", "notion_token", o.optString("notionToken"))
+        s("calendlyToken", "calendly_token", o.optString("calendlyToken"))
+        o.optJSONArray("customApis")?.let { s("customApis", "custom_apis", it.toString()) }
+        o.optJSONArray("skills")?.let { s("skills", "skills", it.toString()) }
+        o.optJSONObject("keyboard")?.let { applyKeyboard(e, it, keep) }
+        e.putBoolean("google_connected", o.optBoolean("googleConnected", false))
+        e.putLong("last_sync", System.currentTimeMillis())
+        e.apply()
+    }
+
+    /** Keyboard settings from the dashboard (config.keyboard), checked the same way as an imported file. */
+    private fun applyKeyboard(e: SharedPreferences.Editor, kb: JSONObject, keep: Set<String>) {
+        for (f in KEYBOARD_FIELDS) {
+            if (!kb.has(f.name) || "keyboard.${f.name}" in keep) continue
+            val v = kb.get(f.name)
+            when (f.kind) {
+                'b' -> if (v is Boolean) e.putBoolean(f.pref, v)
+                's' -> if (v is String && v in f.allowed()) e.putString(f.pref, v)
+                'i' -> if (v is Number) e.putInt(f.pref, v.toInt().let { n -> f.range?.let { n.coerceIn(it) } ?: n })
+                'l' -> if (v is JSONArray) {
+                    val ok = f.allowed()
+                    var items = (0 until v.length()).map { v.optString(it) }.filter { it in ok || (f.name == "wheel" && it.startsWith("skill:")) }
+                    if (f.name == "wheel") items = items.take(MAX_WHEEL)
+                    e.putString(f.pref, items.joinToString("\n"))
+                }
+            }
+        }
+    }
+
+    /** Fields to send when pairing: keys the phone has that the dashboard lacks, and the phone's service if the dashboard's has no key. */
+    fun missingOnDashboard(remote: JSONObject): Set<String> {
+        val out = SECRETS.filter { (fieldValue(it) as String).isNotEmpty() && remote.optString(it).isEmpty() }.toMutableSet()
+        val remoteActiveKey = when (remote.optString("provider")) { "openai" -> "openaiKey"; "custom" -> "customKey"; else -> "apiKey" }
+        val localActiveKey = when { isOpenAi -> "openaiKey"; isCustom -> "customKey"; else -> "apiKey" }
+        if (remote.optString(remoteActiveKey).isEmpty() && localActiveKey in out) {
+            out += "provider"
+            out += when { isOpenAi -> "openaiModel"; isCustom -> "customModel"; else -> "model" }
+            if (isCustom) out += "customBase"
+        }
+        return out
     }
 
     /** True when the paired dashboard has a Google account connected, so Meet links can be made. */
     val googleConnected get() = deviceToken.isNotEmpty() && bool("google_connected", false)
 
-    fun unpair() { prefs?.edit()?.remove("server_url")?.remove("device_token")?.remove("last_sync")?.remove("google_connected")?.apply() }
+    fun unpair() { prefs?.edit()?.remove("server_url")?.remove("device_token")?.remove("last_sync")?.remove("google_connected")?.remove("pending")?.apply() }
 
     // connections
     var weather: Boolean get() = bool("weather", true); set(v) = put("weather", v)
@@ -171,7 +269,7 @@ class Store(context: Context) {
         }
         set(v) = put("skills", skillsJson(v).toString())
 
-    fun resetSkills() { prefs?.edit()?.remove("skills")?.apply() }
+    fun resetSkills() { prefs?.edit()?.remove("skills")?.apply(); changed("skills") }
 
     // ---------- export / import (no keys or tokens) ----------
 
@@ -214,7 +312,34 @@ class Store(context: Context) {
         return true
     }
 
+    /** A keyboard setting kept in config.keyboard on the dashboard; see KEYBOARD_FIELDS in dashboard/server.js. */
+    class KeyboardField(val name: String, val pref: String, val kind: Char, val range: IntRange? = null, val allowed: () -> List<String> = { emptyList() })
+
     companion object {
+        val KEYBOARD_FIELDS = listOf(
+            KeyboardField("assistantOn", "assistant_on", 'b'), KeyboardField("numberRow", "number_row", 'b'),
+            KeyboardField("sound", "sound", 'b'), KeyboardField("haptic", "haptic", 'b'),
+            KeyboardField("autoCorrect", "auto_correct", 'b'), KeyboardField("suggestions", "suggestions", 'b'),
+            KeyboardField("wheelOn", "wheel_on", 'b'), KeyboardField("batterySaver", "battery_saver", 'b'),
+            KeyboardField("agentMode", "agent_mode", 's') { listOf("auto", "ask", "manual") },
+            KeyboardField("theme", "theme", 's') { THEMES }, KeyboardField("keyShape", "key_shape", 's') { SHAPES },
+            KeyboardField("soundPack", "sound_pack", 's') { Feedback.PACKS.map { it.first } },
+            KeyboardField("hapticStrength", "haptic_strength", 's') { Feedback.STRENGTHS.map { it.first } },
+            KeyboardField("heightPercent", "height_percent", 'i', MIN_HEIGHT..MAX_HEIGHT),
+            KeyboardField("soundVolume", "sound_volume", 'i', 5..100), KeyboardField("customAccent", "custom_accent", 'i'),
+            KeyboardField("wheel", "wheel", 'l') { WHEEL_TOOLS.map { it.first } },
+            KeyboardField("languages", "languages", 'l') { ALL_LANGUAGES },
+        )
+        val SECRETS = setOf("apiKey", "openaiKey", "customKey", "notionToken", "calendlyToken")
+        /** Local preference key -> dashboard field name. Keyboard settings are "keyboard.<name>". */
+        val SYNCED: Map<String, String> by lazy {
+            mapOf(
+                "api_key" to "apiKey", "openai_key" to "openaiKey", "custom_key" to "customKey", "notion_token" to "notionToken", "calendly_token" to "calendlyToken",
+                "model" to "model", "provider" to "provider", "openai_model" to "openaiModel", "custom_base" to "customBase", "custom_model" to "customModel",
+                "web_search" to "webSearch", "weather" to "weather", "skills" to "skills", "custom_apis" to "customApis",
+            ) + KEYBOARD_FIELDS.associate { it.pref to "keyboard." + it.name }
+        }
+
         const val MIN_HEIGHT = 80
         const val MAX_HEIGHT = 130
         const val MAX_WHEEL = 6
