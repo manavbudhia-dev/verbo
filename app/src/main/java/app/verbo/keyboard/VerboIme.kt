@@ -1142,6 +1142,13 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
                 main.post { if (bitmap != null && token == generation && map.isAttachedToWindow) map.setImageBitmap(bitmap) }
             }
         }
+        val person = Ai.personCard(result.text)
+        if (person != null) {
+            personCard(card, person)
+            addView(android.widget.ScrollView(this@VerboIme).apply { addView(card) }, LinearLayout.LayoutParams(-1, 0, 1f))
+            resultButtons(this, result, onInsert)
+            return@showPanel
+        }
         // A short first line reads as the title of the card.
         val lines = result.text.lines()
         val titled = lines.size >= 2 && lines[0].length <= 60
@@ -1171,6 +1178,11 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         }
         addView(android.widget.ScrollView(this@VerboIme).apply { addView(card) }, LinearLayout.LayoutParams(-1, 0, 1f))
 
+        resultButtons(this, result, onInsert)
+    }
+
+    /** Copy and Insert (or Send) under a result card. */
+    private fun resultButtons(panel: LinearLayout, result: ActionResult, onInsert: () -> Unit) {
         val footer = LinearLayout(this@VerboIme).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(8), 0, dp(2)) }
         val copy = chipView("Copy", p.key, p.keyPressed, p.text)
         copy.typeface = Typeface.DEFAULT_BOLD
@@ -1195,7 +1207,42 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             }
             footer.addView(insert, LinearLayout.LayoutParams(0, dp(46), 1.7f))
         }
-        addView(footer)
+        panel.addView(footer)
+    }
+
+    /** A LinkedIn-style card: name, headline, then each "Current: …" style line as its own labelled sub-card. */
+    private fun personCard(card: LinearLayout, person: Ai.PersonCard) {
+        val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        val initials = person.name.split(" ").filter { it.isNotBlank() }.take(2).joinToString("") { it.take(1).uppercase() }
+        head.addView(TextView(this).apply {
+            text = initials
+            gravity = Gravity.CENTER
+            setTextColor(p.onAccent)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            typeface = Typeface.DEFAULT_BOLD
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(p.accent) }
+        }, LinearLayout.LayoutParams(dp(44), dp(44)))
+        val names = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, 0, 0) }
+        names.addView(TextView(this).apply { text = person.name; setTextColor(p.text); setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f); typeface = Typeface.DEFAULT_BOLD })
+        if (person.headline.isNotEmpty()) names.addView(TextView(this).apply { text = person.headline; setTextColor(p.muted); setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f) })
+        head.addView(names, LinearLayout.LayoutParams(0, -2, 1f))
+        card.addView(head, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
+        person.facts.forEach { (label, value) ->
+            card.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                background = rounded(p.fnKey, 10)
+                setPadding(dp(12), dp(8), dp(12), dp(9))
+                addView(TextView(this@VerboIme).apply { text = label.uppercase(); setTextColor(p.muted); setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f); typeface = Typeface.DEFAULT_BOLD; letterSpacing = 0.08f })
+                addView(TextView(this@VerboIme).apply { text = value; setTextColor(p.text); setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f) })
+            }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
+        }
+        if (person.rest.isNotEmpty()) card.addView(TextView(this).apply { text = person.rest; setTextColor(p.text); setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f); setPadding(0, dp(8), 0, 0) })
+        person.link?.let { url ->
+            val open = chipView("in  Search on LinkedIn", p.fnKey, p.keyPressed, p.accent)
+            open.typeface = Typeface.DEFAULT_BOLD
+            open.setOnClickListener { feedback(KeyboardView.Type.MODE); openLink(url) }
+            card.addView(open, LinearLayout.LayoutParams(-2, dp(36)).apply { topMargin = dp(10) })
+        }
     }
 
     private fun deliver(target: Target, result: ActionResult) {

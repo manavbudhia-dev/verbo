@@ -248,4 +248,20 @@ INSTRUCTION: the instruction the assistant will follow each time, in two to four
         if (text.isEmpty() && uri == null) throw AiException("Got an empty answer. Try again")
         return ActionResult(text, uri, map)
     }
+
+    /** A person looked up by the "Who is" skill: name, headline, labelled facts and a LinkedIn link. */
+    data class PersonCard(val name: String, val headline: String, val facts: List<Pair<String, String>>, val link: String?, val rest: String)
+
+    private val FACT = Regex("""^(Current|Previous|Education|Location|Known for)\s*:\s*(.+)$""", RegexOption.IGNORE_CASE)
+
+    /** Reads a result shaped like a profile ("Current: …", "Education: …"); null for any other text. */
+    fun personCard(text: String): PersonCard? {
+        val lines = text.lines().map { it.trim().removePrefix("- ").trim() }.filter { it.isNotEmpty() }
+        val facts = lines.mapNotNull { l -> FACT.find(l)?.let { it.groupValues[1].replaceFirstChar { c -> c.uppercase() } to it.groupValues[2].trim() } }
+        if (facts.isEmpty() || lines.size < 2 || FACT.matches(lines[0]) || lines[0].length > 60) return null
+        val link = lines.firstOrNull { it.contains("linkedin.com/") }?.let { l -> Regex("""https://\S+""").find(l)?.value }
+        val others = lines.drop(1).filter { !FACT.matches(it) && !it.contains("linkedin.com/") }
+        val headline = others.firstOrNull { !it.startsWith("http") } ?: ""
+        return PersonCard(lines[0], headline, facts, link, (others - headline).joinToString("\n"))
+    }
 }

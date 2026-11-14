@@ -354,6 +354,17 @@ class KeyboardTest {
     }
 
     @Test
+    fun personResultBecomesACard() {
+        val c = Ai.personCard(PERSON)!!
+        assertEquals("Ada Lovelace", c.name)
+        assertEquals("Mathematician and writer", c.headline)
+        assertEquals(listOf("Current", "Previous", "Education"), c.facts.map { it.first })
+        assertEquals("Analytical Engine notes with Charles Babbage", c.facts[1].second)
+        assertTrue(c.link!!.startsWith("https://www.linkedin.com/search/results/people/"))
+        assertEquals("ordinary text is not a card", null, Ai.personCard("Polished text\nwith two lines"))
+    }
+
+    @Test
     fun skillDesignReplyIsParsed() {
         val reply = "NAME: Emoji Translator\nEMOJI: 😀\nDOES: Turns your text into emoji.\nINPUT: The text you typed\nOUTPUT: Emoji only\nGROUP: edit\nINSTRUCTION: Replace the text with emoji that carry the same meaning.\nUse no words at all."
         val d = Ai.parseDesign(reply)!!
@@ -448,6 +459,9 @@ class KeyboardTest {
         ime.showResult(ActionResult("Best Italian in SF\n1. Flour + Water · 4.8 · Mission District\n2. Acquerello · 4.7 · Nob Hill · Michelin-starred\n3. Itria · 4.6 · Mission District", null), {}, {})
         layout(agentRoot)
         snap(agentRoot, "panel-list")
+        ime.showResult(ActionResult(PERSON, null), {}, {})
+        layout(agentRoot)
+        snap(agentRoot, "panel-person")
         store.theme = "system"
         store.theme = "system"
 
@@ -500,3 +514,5 @@ class KeyboardTest {
         }
     }
 }
+
+private const val PERSON = "Ada Lovelace\nMathematician and writer\nCurrent: Countess of Lovelace\nPrevious: Analytical Engine notes with Charles Babbage\nEducation: Private tutoring in mathematics and science\nhttps://www.linkedin.com/search/results/people/?keywords=Ada%20Lovelace"
