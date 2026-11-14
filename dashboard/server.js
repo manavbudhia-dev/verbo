@@ -87,6 +87,7 @@ const defaultConfig = () => ({
   customBase: 'https://api.airouter.in/v1', customKey: '', customModel: 'anthropic/claude-haiku-5.5', webSearch: true, weather: true,
   notionToken: '', calendlyToken: '', slackToken: '', githubToken: '', todoistToken: '', linearToken: '', discordWebhook: '', customApis: [], skills: DEFAULT_SKILLS, googleRefresh: '', googleScopes: '',
   triggers: DEFAULT_TRIGGERS,
+  memory: [], // facts the user told the keyboard: { label, value }
   keyboard: {}, // the phone's own settings (look, sound, wheel...), kept here so they can be changed from the web
 });
 
@@ -191,6 +192,7 @@ function publicConfig(config) {
     appsSet: Object.fromEntries(APP_TOKENS.map((t) => [t, !!config[t]])),
     customApis: config.customApis.map(({ headerValue, ...rest }) => ({ ...rest, headerValueSet: !!headerValue })),
     triggers: config.triggers,
+    memory: config.memory,
   };
 }
 
@@ -249,6 +251,14 @@ function applyUpdate(config, body) {
       };
       if (!skill.name || !skill.instruction) throw new Bad(400, 'A skill needs a name and an instruction');
       return skill;
+    });
+  }
+  if ('memory' in body) {
+    if (!Array.isArray(body.memory) || body.memory.length > 100) throw new Bad(400, 'Too many things to remember');
+    next.memory = body.memory.map((f) => {
+      const fact = { label: str(f?.label ?? '', 60, 'Name'), value: str(f?.value ?? '', 500, 'Value') };
+      if (!fact.label || !fact.value) throw new Bad(400, 'Each memory needs a name and a value');
+      return fact;
     });
   }
   if ('triggers' in body) {

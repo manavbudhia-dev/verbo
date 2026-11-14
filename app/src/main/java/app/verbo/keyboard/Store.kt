@@ -146,6 +146,7 @@ class Store(context: Context) {
         "webSearch" -> webSearch; "weather" -> weather
         "skills" -> skillsJson(skills)
         "triggers" -> triggersJson(triggers)
+        "memory" -> memoryJson(memory)
         "customApis" -> JSONArray().also { arr ->
             customApis.forEach { arr.put(JSONObject().put("name", it.name).put("description", it.description).put("url", it.url).put("headerName", it.headerName).put("headerValue", it.headerValue)) }
         }
@@ -201,6 +202,7 @@ class Store(context: Context) {
         o.optJSONArray("customApis")?.let { s("customApis", "custom_apis", it.toString()) }
         o.optJSONArray("skills")?.let { s("skills", "skills", it.toString()) }
         o.optJSONArray("triggers")?.let { s("triggers", "triggers", it.toString()) }
+        o.optJSONArray("memory")?.let { s("memory", "memory", it.toString()) }
         o.optJSONObject("keyboard")?.let { applyKeyboard(e, it, keep) }
         e.putBoolean("google_connected", o.optBoolean("googleConnected", false))
         // Older dashboards don't list services; their Google sign-in covers Meet only.
@@ -282,6 +284,33 @@ class Store(context: Context) {
 
     /** Suggest (or run) skills when a copied message matches a trigger. The matching happens on the phone; nothing is sent until a skill runs. */
     var triggersOn: Boolean get() = bool("triggers_on", true); set(v) = put("triggers_on", v)
+    /** Facts the user told the keyboard. Synced with the dashboard. */
+    var memory: List<Memory.Fact>
+        get() = try { parseMemory(JSONArray(str("memory", "[]"))) } catch (e: Exception) { emptyList() }
+        set(v) = put("memory", memoryJson(v).toString())
+
+    fun remember(fact: Memory.Fact) { memory = memory.filter { !it.label.equals(fact.label, true) || fact.label == "Note" } + fact }
+    fun forget(label: String): Boolean {
+        val before = memory
+        memory = before.filter { !it.label.equals(label, true) && !it.label.equals(label.removePrefix("my ").trim(), true) }
+        return memory.size != before.size
+    }
+
+    /** Learn how the user writes from messages they send. The messages stay on the phone; only a one-line summary is used. */
+    var learnStyle: Boolean get() = bool("learn_style", true); set(v) = put("learn_style", v)
+    val styleSamples: List<String> get() = str("style_samples").split("\u0001").filter { it.isNotBlank() }
+    fun addStyleSample(text: String) {
+        if (!learnStyle) return
+        val t = text.trim()
+        if (t.length < 2 || t.length > 600) return
+        prefs?.edit()?.putString("style_samples", (styleSamples + t).takeLast(40).joinToString("\u0001"))?.apply()
+    }
+    fun clearStyle() { prefs?.edit()?.remove("style_samples")?.apply() }
+    val styleLine: String? get() = if (learnStyle) Memory.describe(styleSamples) else null
+
+    /** Offer three quick replies as chips when a message is copied (one small request per copy). */
+    var smartReplies: Boolean get() = bool("smart_replies", true); set(v) = put("smart_replies", v)
+
     /** Open the acts in place of the keys when something new was copied and the field is empty. */
     var actsOnCopy: Boolean get() = bool("acts_on_copy", true); set(v) = put("acts_on_copy", v)
     var triggers: List<Trigger>
@@ -375,7 +404,7 @@ class Store(context: Context) {
             mapOf(
                 "api_key" to "apiKey", "openai_key" to "openaiKey", "custom_key" to "customKey", "notion_token" to "notionToken", "calendly_token" to "calendlyToken",
                 "model" to "model", "provider" to "provider", "openai_model" to "openaiModel", "custom_base" to "customBase", "custom_model" to "customModel",
-                "web_search" to "webSearch", "weather" to "weather", "skills" to "skills", "custom_apis" to "customApis", "triggers" to "triggers",
+                "web_search" to "webSearch", "weather" to "weather", "skills" to "skills", "custom_apis" to "customApis", "triggers" to "triggers", "memory" to "memory",
             ) + APP_TOKENS.entries.associate { (field, pref) -> pref to field } + KEYBOARD_FIELDS.associate { it.pref to "keyboard." + it.name }
         }
 
@@ -413,6 +442,15 @@ class Store(context: Context) {
             val skill = o.optString("skill").trim().takeIf { s -> s.isNotEmpty() } ?: return@mapNotNull null
             Trigger(kind, o.optString("keyword").trim().take(100), skill.take(40), o.optBoolean("auto", false))
         }.take(20)
+
+        fun parseMemory(arr: JSONArray) = (0 until arr.length()).mapNotNull {
+            val o = arr.optJSONObject(it) ?: return@mapNotNull null
+            val label = o.optString("label").trim().take(60)
+            val value = o.optString("value").trim().take(500)
+            if (label.isEmpty() || value.isEmpty()) null else Memory.Fact(label, value)
+        }.take(100)
+
+        fun memoryJson(list: List<Memory.Fact>) = JSONArray().also { arr -> list.forEach { arr.put(JSONObject().put("label", it.label).put("value", it.value)) } }
 
         fun triggersJson(list: List<Trigger>) = JSONArray().also { arr ->
             list.forEach { arr.put(JSONObject().put("kind", it.kind).put("keyword", it.keyword).put("skill", it.skill).put("auto", it.auto)) }

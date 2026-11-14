@@ -62,6 +62,7 @@ class PageActivity : Activity() {
             page == "battery" -> batteryPage(column)
             page == "templates" -> templatesPage(column)
             page == "triggers" -> triggersPage(column)
+            page == "memory" -> memoryPage(column)
             else -> tryPage(column)
         }
     }
@@ -146,6 +147,48 @@ class PageActivity : Activity() {
         dialog.show()
     }
 
+    // ---------- memory ----------
+
+    private fun memoryPage(column: LinearLayout) {
+        column.addView(ui.topBar("Memory", "What Verbo knows about you"))
+        note(column, "Tell Verbo things once and it uses them when they help: your address, UPI ID, booking link, who \"mummy\" or \"boss\" is. " +
+            "You can also type \"remember my UPI is me@okicici\" in the keyboard and hold the space bar, or \"forget my UPI\". These sync with your dashboard.")
+        val facts = store.memory
+        if (facts.isNotEmpty()) column.addView(ui.rows(*facts.mapIndexed { i, f ->
+            ui.row(R.drawable.ic_sparkles, f.label, f.value, ui.chevron()) { editFact(i) }
+        }.toTypedArray()))
+        column.addView(ui.button("Add something to remember", R.drawable.ic_plus, filled = true) { editFact(-1) })
+        column.addView(ui.text("\nYour writing style", 16f, bold = true).apply { setPadding(ui.dp(2), ui.dp(10), 0, ui.dp(6)) })
+        val style = store.styleLine
+        note(column, (style?.let { "Learned so far: $it." } ?: "Verbo learns how you write from messages you send with it (${store.styleSamples.size} of 5 needed).") +
+            " The messages stay on this phone; only this one-line summary goes with requests, so replies sound like you.")
+        column.addView(ui.rows(ui.row(R.drawable.ic_pencil_line, "Learn my style", "From messages you send, on this phone only", ui.toggle(store.learnStyle) { store.learnStyle = it; render() })))
+        if (store.styleSamples.isNotEmpty()) column.addView(ui.button("Forget what it learned", null) { store.clearStyle(); render() })
+    }
+
+    private fun editFact(index: Int) {
+        val list = store.memory.toMutableList()
+        val existing = list.getOrNull(index)
+        val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(ui.dp(22), ui.dp(8), ui.dp(22), 0) }
+        val label = ui.field("What it is, e.g. Mummy, Home address, UPI", existing?.label ?: "")
+        val value = ui.field("The value, e.g. +91 98765 43210", existing?.value ?: "", lines = 3)
+        form.addView(label)
+        form.addView(value)
+        val dialog = AlertDialog.Builder(this).setTitle(if (existing == null) "Remember" else "Edit").setView(form)
+            .setPositiveButton("Save") { _, _ ->
+                val l = label.text.toString().trim()
+                val v = value.text.toString().trim()
+                if (l.isEmpty() || v.isEmpty()) { ui.toast("It needs both a name and a value"); return@setPositiveButton }
+                val f = Memory.Fact(l.take(60), v.take(500))
+                if (existing == null) list.add(f) else list[index] = f
+                store.memory = list
+                render()
+            }
+            .setNegativeButton("Cancel", null)
+        if (existing != null) dialog.setNeutralButton("Forget") { _, _ -> list.removeAt(index); store.memory = list; render() }
+        dialog.show()
+    }
+
     // ---------- triggers ----------
 
     private fun triggersPage(column: LinearLayout) {
@@ -155,6 +198,7 @@ class PageActivity : Activity() {
             "Turn on Automatic to run a skill as soon as you open the keyboard after copying.")
         column.addView(ui.rows(
             ui.row(R.drawable.ic_zap, "Suggest actions for copied text", "Checked on the phone only", ui.toggle(store.triggersOn) { store.triggersOn = it; render() }),
+            ui.row(R.drawable.ic_pencil_line, "Quick replies when I copy", "Three short replies as chips, one small request per copy", ui.toggle(store.smartReplies) { store.smartReplies = it }),
             ui.row(R.drawable.ic_sparkles, "Show my acts when I copy", "Opens the acts in place of the keys, once per copy", ui.toggle(store.actsOnCopy) { store.actsOnCopy = it }),
         ))
         val triggers = store.triggers

@@ -83,6 +83,9 @@ function request(method, url, body, headers = {}) {
       && (await request('GET', '/api/device/config', null, phone)).body.triggers[1].skill === 'Who is');
     check('a bad auto action is refused', (await request('PUT', '/api/config', { triggers: [{ kind: 'mind-reading', skill: 'x' }] }, web)).status === 400
       && (await request('PUT', '/api/config', { triggers: [{ kind: 'keyword', keyword: '', skill: 'x' }] }, web)).status === 400);
+    const mem = await request('PUT', '/api/config', { memory: [{ label: 'UPI', value: 'me@okicici' }] }, web);
+    check('memory is saved and reaches the phone', mem.body.memory[0].value === 'me@okicici' && (await request('GET', '/api/device/config', null, phone)).body.memory[0].label === 'UPI');
+    check('an empty memory is refused', (await request('PUT', '/api/config', { memory: [{ label: 'x', value: '' }] }, web)).status === 400);
     check('an app token can be removed', (await request('PUT', '/api/config', { slackToken: '' }, web)).body.appsSet.slackToken === false);
 
     // The assistant.

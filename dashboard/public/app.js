@@ -245,6 +245,40 @@ function triggersCard() {
         h('button', { class: 'btn ghost', onclick: () => triggerDialog(i) }, 'Edit'))));
 }
 
+// Memory: facts the keyboard uses when they help ("Mummy: +91…", "UPI: me@okicici"). Synced with the phone.
+function memoryCard() {
+  const facts = state.config.memory || [];
+  return h('div', { class: 'card', style: 'margin-top:16px' },
+    h('div', { class: 'row' }, h('div', { class: 'grow' }, h('h2', null, 'Memory'),
+      h('p', { class: 'muted' }, 'Things your keyboard knows about you and uses when they help. On the phone you can also type “remember my UPI is …” and hold the space bar.')),
+      h('button', { class: 'btn', onclick: () => factDialog(-1) }, icon('plus'), 'Add')),
+    facts.length === 0 ? h('p', { class: 'muted small' }, 'Nothing yet. Try your home address, UPI ID, or who “mummy” is.')
+      : facts.map((f, i) => h('div', { class: 'setting' },
+        h('div', { class: 'what' }, h('div', null, f.label), h('p', { class: 'muted small' }, f.value)),
+        h('button', { class: 'btn ghost', onclick: () => factDialog(i) }, 'Edit'))));
+}
+
+function factDialog(index) {
+  const list = state.config.memory || [];
+  const f = list[index] || { label: '', value: '' };
+  modal(index < 0 ? 'Remember' : 'Edit memory', (close) => {
+    const label = h('input', { type: 'text', value: f.label, placeholder: 'Mummy, Home address, UPI' });
+    const value = h('textarea', { rows: 3, placeholder: '+91 98765 43210' }, f.value);
+    const saveList = async (next, msg) => { if (await save({ memory: next }, msg)) close(); };
+    return h('div', null,
+      h('label', { class: 'field' }, 'What it is', label), h('label', { class: 'field' }, 'Value', value),
+      h('div', { class: 'actions' },
+        h('button', { class: 'btn primary', onclick: () => {
+          if (!label.value.trim() || !value.value.trim()) return toast('It needs a name and a value');
+          const next = list.slice(); const item = { label: label.value.trim(), value: value.value.trim() };
+          if (index < 0) next.push(item); else next[index] = item;
+          saveList(next, 'Remembered');
+        } }, 'Save'),
+        h('button', { class: 'btn', onclick: close }, 'Cancel'),
+        index >= 0 && h('button', { class: 'btn ghost danger', onclick: () => saveList(list.filter((_, i) => i !== index), 'Forgotten') }, 'Forget')));
+  });
+}
+
 function triggerDialog(index) {
   const list = state.config.triggers || [];
   const t = list[index] || { kind: 'person', keyword: '', skill: 'Who is', auto: false };
@@ -290,6 +324,7 @@ function skillsTab() {
         h('button', { class: byKey[l] ? 'on' : '', title: byKey[l] ? `Hold ${l.toUpperCase()}: ${byKey[l].name}` : `Hold ${l.toUpperCase()}: nothing yet`,
           'aria-label': byKey[l] ? `${l.toUpperCase()}, runs ${byKey[l].name}` : `${l.toUpperCase()}, free`, onclick: () => keyDialog(l) }, l)))))),
     triggersCard(),
+    memoryCard(),
     skills.length > 6 && h('input', { type: 'search', placeholder: 'Search my skills', value: state.search, 'aria-label': 'Search my skills',
       style: 'margin-top:16px', oninput: (e) => { state.search = e.target.value; renderKeepingFocus(e.target); } }),
     h('div', { class: 'grid', style: 'margin-top:16px' },

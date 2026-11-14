@@ -272,6 +272,15 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             suggestRow?.visibility = View.GONE
             chipsScroll?.visibility = View.VISIBLE
         }
+        // Quick replies to the copied message, fetched once per copy, one tap to put in the field.
+        val replyStamp = if (clip != null) clipStamp() else 0L
+        if (clip != null && store.smartReplies && replyStamp != 0L) {
+            if (repliesFor == replyStamp) for (r in replies) {
+                val chip = chipView("↩ $r", p.key, p.keyPressed, p.text)
+                chip.setOnClickListener { feedback(KeyboardView.Type.MODE); insert(r) }
+                row.addView(chip, chipParams())
+            } else if (repliesAsked != replyStamp && looksLikeMessage(clip) && store.activeKey.isNotBlank()) fetchReplies(clip, replyStamp)
+        }
         for (t in matched) {
             val chip = chipView("⚡ " + Cards.chipLabel(t, clip!!), p.accent, p.accentPressed, p.onAccent)
             chip.setOnClickListener { feedback(KeyboardView.Type.MODE); runTrigger(t, clip) }
@@ -343,7 +352,9 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     }
 
     override fun onChar(text: String) {
+        lastWasBackspace = false
         val ic = currentInputConnection ?: return
+        if (text[0] == ' ' || text[0] in ".,!?") main.post { noteDraft() }
         clearResult()
         val c = text[0]
         val now = System.currentTimeMillis()
@@ -400,7 +411,25 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         scheduleAuto()
     }
 
+    /** What the user has typed in this field, read at word ends, so a sent message can be learned from. */
+    private var draft = ""
+    private var lastWasBackspace = false
+
+    private fun noteDraft() {
+        if (!textField || isPasswordField()) return
+        draft = currentInputConnection?.getTextBeforeCursor(600, 0)?.toString().orEmpty()
+    }
+
+    private fun learnDraft() {
+        val d = draft.trim()
+        draft = ""
+        if (d.isEmpty() || isPasswordField()) return
+        val fromAi = undo?.second?.let { it.isNotBlank() && d.contains(it.trim()) } == true
+        if (!fromAi) store.addStyleSample(d)
+    }
+
     override fun onBackspace() {
+        lastWasBackspace = true
         val ic = currentInputConnection ?: return
         clearResult()
         val corrected = lastCorrection
@@ -448,6 +477,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         val action = options and EditorInfo.IME_MASK_ACTION
         val wantsAction = options and EditorInfo.IME_FLAG_NO_ENTER_ACTION == 0 &&
             action != EditorInfo.IME_ACTION_NONE && action != EditorInfo.IME_ACTION_UNSPECIFIED
+        if (wantsAction && action == EditorInfo.IME_ACTION_SEND) { noteDraft(); learnDraft() }
         if (wantsAction) ic.performEditorAction(action) else ic.commitText("\n", 1)
         expected.clear()
         expectedAt.clear()
@@ -518,6 +548,30 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     /** When the current clip was copied; an automatic trigger runs once per clip. */
     private var lastAutoClip = 0L
     private var lastAttachedClip = 0L
+    private var replies: List<String> = emptyList()
+    private var repliesFor = 0L
+    private var repliesAsked = 0L
+
+    /** A chat message, not a link, a code or a whole article. */
+    private fun looksLikeMessage(text: String) = text.length in 2..500 && text.count { it.isLetter() } >= 2 &&
+        !Regex("""^\s*https?://\S+\s*$""").matches(text)
+
+    private fun fetchReplies(clip: String, stamp: Long) {
+        repliesAsked = stamp
+        val engine = Engine(store)
+        worker.execute {
+            val got = try {
+                val r = engine.run(Ai.SMART_REPLY_TASK, Ai.userMessage("", clip), false, emptyList())
+                Cards.options(r.text) ?: r.text.lines().map { it.trim().removePrefix("-").trim() }.filter { it.isNotEmpty() && it.length < 80 }.take(3)
+            } catch (e: Exception) { emptyList() }
+            main.post {
+                if (got.isEmpty() || clipStamp() != stamp) return@post
+                replies = got.take(3)
+                repliesFor = stamp
+                buildChips()
+            }
+        }
+    }
     private var lastActsClip = 0L
 
     private fun clipStamp(): Long = try {
@@ -728,6 +782,8 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
 
     override fun onUpdateSelection(oldSelStart: Int, oldSelEnd: Int, newSelStart: Int, newSelEnd: Int, candidatesStart: Int, candidatesEnd: Int) {
         super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
+        // The app emptied the field (the message was sent): learn the writing style from it, on the phone.
+        if (newSelStart == 0 && newSelEnd == 0 && oldSelStart > 1 && !lastWasBackspace) learnDraft()
         // Positions we predicted long ago were never going to be reported (some apps report only the
         // last of several quick edits). Forget them, or a later tap there would look like our own edit.
         val cutoff = android.os.SystemClock.uptimeMillis() - 1500
@@ -918,12 +974,31 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     }
 
     private fun runAction(skill: Skill?) {
+        if (skill == null && rememberCommand()) return
         // Requests typed for the bar are answers to look at first, so they open as a card with Copy and Insert.
         // Skill keys rewrite your own text, so they apply straight away unless Agent Mode is "Ask first".
         runTask(
             if (skill == null) "Working on it…" else "${skill.name}…",
             skill?.let { Ai.skillTask(it.instruction) }, card = skill == null || agentMode == "ask",
         ) { runAction(skill) }
+    }
+
+    /** "remember my UPI is me@okicici" or "forget my UPI", typed for the bar: handled on the phone, nothing is sent. */
+    private fun rememberCommand(): Boolean {
+        val target = readTarget() ?: return false
+        val text = target.text.trim()
+        val fact = Memory.parseRemember(text)
+        val forget = if (fact == null) Memory.parseForget(text) else null
+        if (fact == null && forget == null) return false
+        val ic = currentInputConnection ?: return false
+        ic.beginBatchEdit()
+        if (target.selection == null) ic.deleteSurroundingText(target.before.length, target.after.length) else ic.commitText("", 1)
+        ic.endBatchEdit()
+        if (fact != null) {
+            store.remember(fact)
+            showStatus("Remembered · ${fact.label}: ${fact.value.take(40)}", "Memory" to { startActivity(Intent(this, PageActivity::class.java).putExtra("page", "memory").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) })
+        } else showStatus(if (store.forget(forget!!)) "Forgot $forget" else "Nothing saved as “$forget”")
+        return true
     }
 
     /** Runs [task] (null = "do what the text says") on the field's text, with the copied context if one is attached. */

@@ -11,11 +11,16 @@ class Engine(store: Store) {
     private val key = store.activeKey
     private val model = store.activeModel
     private val webAllowed = store.webSearch
+    /** Facts and writing style, added to every request. */
+    private val profile = Memory.profile(store.memory, store.styleLine)
 
     /** Blocking. [web] asks for web search where the service has it; [tools] are the user's connections. */
-    fun run(task: String?, input: String, web: Boolean, tools: List<ToolSpec>, cancelled: () -> Boolean = { false }): ActionResult = when {
-        custom -> ChatCompat.run(base, key, model, task, input, tools, cancelled)
-        openAi -> OpenAi.run(key, model, web && webAllowed, task, input, tools, cancelled)
-        else -> Ai.run(key, model, web && webAllowed, task, input, tools, cancelled)
+    fun run(task: String?, input: String, web: Boolean, tools: List<ToolSpec>, cancelled: () -> Boolean = { false }): ActionResult {
+        val full = if (profile.isEmpty()) task else (task ?: Ai.BAR_TASK) + profile
+        return when {
+            custom -> ChatCompat.run(base, key, model, full, input, tools, cancelled)
+            openAi -> OpenAi.run(key, model, web && webAllowed, full, input, tools, cancelled)
+            else -> Ai.run(key, model, web && webAllowed, full, input, tools, cancelled)
+        }
     }
 }

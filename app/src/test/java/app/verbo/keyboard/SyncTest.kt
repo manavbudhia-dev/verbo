@@ -163,4 +163,17 @@ class SyncTest {
         assertEquals("todo-phone-1111", remote.getString("todoistToken"))
         assertEquals("todo-phone-1111", store.token("todoistToken"))
     }
+
+    @Test
+    fun memorySyncsBothWaysAndStyleStaysOnThePhone() {
+        store.remember(Memory.Fact("UPI", "me@okicici"))
+        repeat(6) { store.addStyleSample("haan bhai theek hai $it") }
+        Sync.pull(store)
+        assertEquals("me@okicici", remote.getJSONArray("memory").getJSONObject(0).getString("value"))
+        assertTrue("style samples are never uploaded", !remote.toString().contains("theek hai"))
+        remote.put("memory", JSONArray().put(JSONObject().put("label", "Home").put("value", "Jalandhar")))
+        Sync.pull(store)
+        assertEquals(listOf(Memory.Fact("Home", "Jalandhar")), store.memory)
+        assertTrue(store.styleLine!!.contains("Hinglish"))
+    }
 }
