@@ -37,6 +37,7 @@ object OpenAi {
             if (toolDefs.isNotEmpty()) body["tools"] = toolDefs
             if (previous != null) body["previous_response_id"] = previous
             response = post(apiKey.trim(), json.writeValueAsString(body))
+            Meter.add(response.path("usage").path("input_tokens").asLong(), response.path("usage").path("output_tokens").asLong())
 
             val calls = response.path("output").filter { it.path("type").asText() == "function_call" }
             if (calls.isEmpty() || rounds++ >= MAX_ROUNDS) break

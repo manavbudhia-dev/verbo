@@ -11,8 +11,10 @@ android {
         applicationId = "app.verbo.keyboard"
         minSdk = 26
         targetSdk = 35
-        versionCode = 19
-        versionName = "0.18.0"
+        versionCode = 20
+        versionName = "0.19.0"
+        // Real phones only: the offline-translation library is ~17 MB per processor type, and x86 is for emulators.
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
 
     buildTypes {
@@ -36,6 +38,9 @@ android {
 
 dependencies {
     implementation("com.anthropic:anthropic-java:3.3.0")
+    implementation("com.google.mlkit:translate:17.0.3")
+    implementation("com.google.mlkit:genai-proofreading:1.0.0-beta1")
+    implementation("com.google.mlkit:genai-rewriting:1.0.0-beta1")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.14.1")
 }

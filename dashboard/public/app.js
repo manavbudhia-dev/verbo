@@ -803,10 +803,28 @@ function phonesCard() {
     state.devices.length === 0 && !state.code && h('p', { class: 'muted', style: 'margin-top:12px' }, 'No phone paired yet.'));
 }
 
+// What the phone reports it spent this month, and the cap it obeys.
+function usageCard() {
+  const c = state.config;
+  const u = c.usage;
+  const now = new Date().toISOString().slice(0, 7);
+  const current = u && u.month === now;
+  const limit = h('input', { type: 'number', min: 0, max: 1000, step: '0.5', value: c.monthlyLimit || '', placeholder: 'No limit', style: 'width:120px' });
+  const top = current ? Object.entries(u.skills || {}).sort((a, b) => b[1].cost - a[1].cost).slice(0, 5) : [];
+  return h('div', { class: 'card' },
+    h('h2', null, 'Usage this month'),
+    current ? [
+      h('p', { class: 'muted' }, `About $${u.cost.toFixed(3)} for ${u.requests} requests · ${u.inTokens.toLocaleString()} tokens in, ${u.outTokens.toLocaleString()} out${u.searches ? ` · ${u.searches} web searches` : ''}. Estimated from your phone's token counts at list prices.`),
+      top.length > 0 && h('div', null, top.map(([name, v]) => h('div', { class: 'setting' }, h('div', { class: 'what' }, h('div', null, name), h('p', { class: 'muted small' }, `${v.n} times`)), h('span', null, '$' + v.cost.toFixed(3))))),
+    ] : h('p', { class: 'muted' }, 'Nothing reported yet this month. The phone sends its numbers when it syncs.'),
+    setting('Monthly limit', 'AI actions stop on the phone when the month reaches this many dollars. Empty or 0 means no limit.',
+      h('div', { class: 'row' }, limit, h('button', { class: 'btn', onclick: () => save({ monthlyLimit: Number(limit.value || 0) }, 'Limit saved') }, 'Save'))));
+}
+
 function settingsTab() {
   return [
     h('div', { class: 'head' }, h('div', null, h('h1', null, 'Settings'), h('p', { class: 'muted sub' }, 'Everything here syncs with your phone.'))),
-    h('div', { class: 'stack' }, modelCard(), phonesCard(), keyboardCard(), wheelCard(), languagesCard(),
+    h('div', { class: 'stack' }, modelCard(), usageCard(), phonesCard(), keyboardCard(), wheelCard(), languagesCard(),
       h('div', { class: 'card row' }, h('div', { class: 'grow' }, h('h2', null, 'Account'), h('p', { class: 'muted' }, state.email)),
         h('button', { class: 'btn', onclick: async () => {
           await api('POST', '/api/logout').catch(() => {});

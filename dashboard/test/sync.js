@@ -89,6 +89,10 @@ function request(method, url, body, headers = {}) {
     const sc = await request('PUT', '/api/config', { shortcuts: [{ key: ';Addr', text: 'Green Park' }], clips: ['pinned one'] }, web);
     check('shortcuts and pinned clips are saved', sc.body.shortcuts[0].key === 'addr' && sc.body.clips[0] === 'pinned one');
     check('a bad shortcut key is refused', (await request('PUT', '/api/config', { shortcuts: [{ key: 'a b!', text: 'x' }] }, web)).status === 400);
+    const us = await request('PUT', '/api/device/config', { usage: { month: '2026-11', requests: 3, inTokens: 900, outTokens: 300, searches: 1, cost: 0.0102, skills: { Polish: { n: 2, cost: 0.0002 } } } }, phone);
+    check('the phone reports usage and the dashboard shows it', us.status === 200 && (await request('GET', '/api/config', null, web)).body.usage.skills.Polish.n === 2);
+    check('a monthly limit is saved and checked', (await request('PUT', '/api/config', { monthlyLimit: 2.5 }, web)).body.monthlyLimit === 2.5
+      && (await request('PUT', '/api/config', { monthlyLimit: -1 }, web)).status === 400 && (await request('GET', '/api/device/config', null, phone)).body.monthlyLimit === 2.5);
     check('an app token can be removed', (await request('PUT', '/api/config', { slackToken: '' }, web)).body.appsSet.slackToken === false);
 
     // The assistant.

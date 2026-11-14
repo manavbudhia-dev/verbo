@@ -64,6 +64,7 @@ class PageActivity : Activity() {
             page == "triggers" -> triggersPage(column)
             page == "memory" -> memoryPage(column)
             page == "textshortcuts" -> textShortcutsPage(column)
+            page == "usage" -> usagePage(column)
             else -> tryPage(column)
         }
     }
@@ -146,6 +147,49 @@ class PageActivity : Activity() {
             render()
         }
         dialog.show()
+    }
+
+    // ---------- usage and on-device AI ----------
+
+    private fun usagePage(column: LinearLayout) {
+        column.addView(ui.topBar("Usage & on-device AI", "What Verbo spends, and what runs free on the phone"))
+        val u = store.usage
+        val cost = u.optDouble("cost", 0.0)
+        val month = try { java.text.SimpleDateFormat("MMMM", java.util.Locale.getDefault()).format(java.text.SimpleDateFormat("yyyy-MM", java.util.Locale.US).parse(u.optString("month"))!!) } catch (e: Exception) { "This month" }
+        column.addView(ui.rows(
+            ui.row(R.drawable.ic_zap, "$month: about $${"%.3f".format(cost)}", "${u.optInt("requests")} requests · ${"%,d".format(u.optLong("inTokens"))} tokens in, ${"%,d".format(u.optLong("outTokens"))} out" +
+                (if (u.optLong("searches") > 0) " · ${u.optLong("searches")} web searches" else "")),
+            ui.row(R.drawable.ic_shield, "Monthly limit", if (store.monthlyLimit > 0) "$${"%.2f".format(store.monthlyLimit)} · AI actions stop when it is reached" else "No limit", ui.chevron()) { editLimit() },
+        ))
+        note(column, "An estimate from the token counts your AI service reports, at its list prices (Haiku 5.5 $0.10 / $0.50, Sonnet 5.5 $2 / $10, Opus 5.5 $4 / $20 per million tokens in / out; web search $10 per 1,000)." +
+            if (u.optBoolean("unpriced")) " Some requests used a model without a known price, so they count as $0." else "")
+        val skills = u.optJSONObject("skills")
+        if (skills != null && skills.length() > 0) {
+            column.addView(ui.text("Where it went", 16f, bold = true).apply { setPadding(ui.dp(2), ui.dp(6), 0, ui.dp(6)) })
+            val rows = skills.keys().asSequence().map { k -> k to skills.getJSONObject(k) }.sortedByDescending { it.second.optDouble("cost", 0.0) }.take(10)
+                .map { (k, o) -> ui.row(R.drawable.ic_sparkles, k, "${o.optInt("n")} times · $${"%.3f".format(o.optDouble("cost", 0.0))}") }.toList()
+            column.addView(ui.rows(*rows.toTypedArray()))
+        }
+        column.addView(ui.text("\nOn this phone", 16f, bold = true).apply { setPadding(ui.dp(2), ui.dp(10), 0, ui.dp(6)) })
+        note(column, "Polish, Shorter, Formal and Casual can run on Gemini Nano on phones that have it, and translation into one language runs on downloaded models. That is free, private and works offline. Anything else, or anything with copied text, still uses your AI service.")
+        val status = ui.text("Checking…", 14f, ui.muted).apply { setPadding(ui.dp(2), 0, 0, ui.dp(8)) }
+        column.addView(ui.rows(ui.row(R.drawable.ic_zap, "Use on-device AI for small jobs", "Falls back to your AI service when it can't", ui.toggle(store.onDevice) { store.onDevice = it })))
+        column.addView(status)
+        Thread { val s = Offline.status(this); runOnUiThread { status.text = s } }.start()
+        column.addView(ui.button("Download offline models", R.drawable.ic_upload) {
+            status.text = "Downloading… this can take a few minutes"
+            Offline.download(this, store.languages) { msg -> runOnUiThread { status.text = msg } }
+        })
+    }
+
+    private fun editLimit() {
+        val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(ui.dp(22), ui.dp(8), ui.dp(22), 0) }
+        form.addView(ui.text("Dollars per month. 0 means no limit.", 13.5f, ui.muted))
+        val field = ui.field("e.g. 2", if (store.monthlyLimit > 0) "%.2f".format(store.monthlyLimit) else "").apply { inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL }
+        form.addView(field)
+        AlertDialog.Builder(this).setTitle("Monthly limit").setView(form)
+            .setPositiveButton("Save") { _, _ -> store.monthlyLimit = field.text.toString().toDoubleOrNull() ?: 0.0; render() }
+            .setNegativeButton("Cancel", null).show()
     }
 
     // ---------- text shortcuts ----------
@@ -724,7 +768,7 @@ class PageActivity : Activity() {
         val engine = Engine(store)
         Thread {
             val outcome = try {
-                Ai.parseDesign(engine.run(Ai.DESIGN_TASK, text, web = false, tools = emptyList()) { isDestroyed }.text)
+                Ai.parseDesign(engine.run(Ai.DESIGN_TASK, text, web = false, tools = emptyList(), cancelled = { isDestroyed }, label = "Create a skill").text)
                     ?: throw AiException("The assistant's plan came back in a form Verbo couldn't read. Try again")
             } catch (e: AiException) {
                 e

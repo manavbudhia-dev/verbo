@@ -163,6 +163,7 @@ INSTRUCTION: the instruction the assistant will follow each time, in two to four
             for (tool in tools) builder.addTool(toolParam(tool))
 
             var response: BetaMessage = client.beta().messages().create(builder.build())
+            meter(response)
             var rounds = 0
             while (rounds < MAX_ROUNDS) {
                 val stop = response.stopReason().orElse(null)
@@ -190,6 +191,7 @@ INSTRUCTION: the instruction the assistant will follow each time, in two to four
                 } else break
                 if (cancelled()) throw AiException("Cancelled")
                 response = client.beta().messages().create(builder.build())
+                meter(response)
                 rounds++
             }
             if (response.stopReason().orElse(null) == BetaStopReason.REFUSAL)
@@ -213,6 +215,11 @@ INSTRUCTION: the instruction the assistant will follow each time, in two to four
     }
 
     private const val MAX_ROUNDS = 6
+
+    private fun meter(r: BetaMessage) = try {
+        val u = r.usage()
+        Meter.add(u.inputTokens(), u.outputTokens(), u.serverToolUse().map { it.webSearchRequests() }.orElse(0L))
+    } catch (e: Exception) { }
 
     private fun toolParam(tool: ToolSpec): BetaTool {
         val props = BetaTool.InputSchema.Properties.builder()

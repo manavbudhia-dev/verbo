@@ -297,6 +297,7 @@ class MainActivity : Activity() {
             ui.row(R.drawable.ic_languages, "Languages", store.languages.joinToString(", ").ifEmpty { "None chosen" }, ui.chevron()) { open("languages") },
         ))
         column.addView(ui.rows(
+            ui.row(R.drawable.ic_zap, "Usage & on-device AI", "This month about $" + "%.2f".format(store.usage.optDouble("cost", 0.0)) + if (store.monthlyLimit > 0) " of $" + "%.2f".format(store.monthlyLimit) else "", ui.chevron()) { open("usage") },
             ui.row(R.drawable.ic_sparkles, "Memory", if (store.memory.isEmpty()) "Teach Verbo about you" else "${store.memory.size} things remembered" + if (store.styleLine != null) " · knows your style" else "", ui.chevron()) { open("memory") },
             ui.row(R.drawable.ic_zap, "Auto actions", if (!store.triggersOn) "Off" else "${store.triggers.size} for copied messages", ui.chevron()) { open("triggers") },
             ui.row(R.drawable.ic_plug, "Connections", if (connected == 0) "Web search, weather, places" else "$connected connected", ui.chevron()) { open("automate") },

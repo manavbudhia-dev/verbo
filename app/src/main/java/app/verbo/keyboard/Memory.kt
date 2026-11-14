@@ -27,6 +27,12 @@ object Memory {
         "hai", "hain", "nahi", "nhi", "kya", "kar", "karo", "kr", "ho", "bhai", "haan", "ha", "theek", "thik", "acha", "accha", "mein", "main", "ka", "ki", "ko",
         "tum", "aap", "kal", "aaj", "abhi", "chal", "yaar", "bhi", "toh", "to", "se", "hu", "hoon", "raha", "rahi", "gaya", "kaise", "kyu", "kyun", "matlab",
     )
+    /** Share of words that are common Hinglish words (0..1). */
+    fun hinglishShare(text: String): Double {
+        val words = text.lowercase().split(Regex("[^a-z]+")).filter { it.isNotEmpty() }
+        return if (words.isEmpty()) 0.0 else words.count { it in HINGLISH }.toDouble() / words.size
+    }
+
     private val EMOJI = Regex("""[\x{1F300}-\x{1FAFF}\x{2600}-\x{27BF}]""")
 
     /** One sentence on how the user writes, from messages they sent. Null until there are enough of them. */

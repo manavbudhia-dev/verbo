@@ -50,7 +50,9 @@ object ChatCompat {
             body["model"] = model
             body["messages"] = messages
             if (toolDefs.isNotEmpty()) body["tools"] = toolDefs
-            val message = post(endpoint, apiKey.trim(), json.writeValueAsString(body)).path("choices").path(0).path("message")
+            val reply = post(endpoint, apiKey.trim(), json.writeValueAsString(body))
+            Meter.add(reply.path("usage").path("prompt_tokens").asLong(), reply.path("usage").path("completion_tokens").asLong())
+            val message = reply.path("choices").path(0).path("message")
             val calls = message.path("tool_calls")
             if (!calls.isArray || calls.size() == 0 || rounds++ >= MAX_ROUNDS) {
                 return Ai.parse(message.path("content").asText(""))

@@ -62,4 +62,18 @@ class MemoryTest {
         val got = Gesture.decode(p, Gesture.visited(p, keyAt), centers, 10f, { c -> words.filter { it.first[0] == c } })
         assertEquals("hello", got.first())
     }
+
+    @Test
+    fun meterPricesAndOfflineMatching() {
+        assertEquals(0.0006, Meter.cost("claude-haiku-5-5", 1000, 1000, 0), 1e-9)
+        assertEquals(0.044, Meter.cost("claude-opus-5-5", 1000, 1000, 2), 1e-9)
+        assertNull(Meter.price("gpt-5.5"))
+        assertTrue(Offline.english("Please fix this sentence for me"))
+        assertTrue(!Offline.english("bhai kal milte hai theek hai") && !Offline.english("कल मिलते हैं"))
+        assertEquals(Offline.Kind.PROOFREAD, Offline.kindFor(Ai.skillTask(Store.DEFAULT_SKILLS.first { it.name == "Polish" }.instruction)))
+        assertNull(Offline.kindFor(Ai.skillTask("Do something else")))
+        assertEquals("Hindi", Offline.translateTarget(Ai.translateTask(listOf("Hindi"))))
+        assertEquals("Hindi", Offline.translateTarget(Ai.autoTranslateTask("Hindi")))
+        assertNull(Offline.translateTarget(Ai.translateTask(listOf("Hindi", "French"))))
+    }
 }

@@ -330,7 +330,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
                 val chip = chipView("↩ $r", p.key, p.keyPressed, p.text)
                 chip.setOnClickListener { feedback(KeyboardView.Type.MODE); insert(r) }
                 row.addView(chip, chipParams())
-            } else if (repliesAsked != replyStamp && looksLikeMessage(clip) && store.activeKey.isNotBlank()) fetchReplies(clip, replyStamp)
+            } else if (repliesAsked != replyStamp && looksLikeMessage(clip) && store.activeKey.isNotBlank() && !store.overLimit) fetchReplies(clip, replyStamp)
         }
         for (t in matched) {
             val chip = chipView("⚡ " + Cards.chipLabel(t, clip!!), p.accent, p.accentPressed, p.onAccent)
@@ -626,7 +626,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         val engine = Engine(store)
         worker.execute {
             val got = try {
-                val r = engine.run(Ai.SMART_REPLY_TASK, Ai.userMessage("", clip), false, emptyList())
+                val r = engine.run(Ai.SMART_REPLY_TASK, Ai.userMessage("", clip), false, emptyList(), label = "Quick replies")
                 Cards.options(r.text) ?: r.text.lines().map { it.trim().removePrefix("-").trim() }.filter { it.isNotEmpty() && it.length < 80 }.take(3)
             } catch (e: Exception) { emptyList() }
             main.post {
@@ -1381,6 +1381,13 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     /** Runs one assistant request off the main thread and hands the result back, unless it was cancelled. */
     private fun launch(label: String, task: String?, input: String, connected: Boolean, card: Boolean = false, onResult: (ActionResult) -> Unit) {
         if (busy) return
+        val local = if (input.startsWith("Context (")) null else Offline.kindFor(task)
+        val localLang = if (input.startsWith("Context (")) null else Offline.translateTarget(task)
+        if (store.overLimit && local == null && localLang == null) {
+            showStatus("This month's limit of $${"%.2f".format(store.monthlyLimit)} is reached", "Usage" to { openPage("usage") })
+            return
+        }
+        val useDevice = store.onDevice
         busy = true
         undo = null
         val token = ++generation
@@ -1404,7 +1411,18 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         worker.execute {
             val outcome = try {
                 val cancelled = { token != generation }
-                Result.success(engine.run(task, input, connected, tools, cancelled))
+                // Small jobs run on the phone when they can (free, works offline); everything else goes to the AI service.
+                val net = Offline.online(this)
+                val done = if (useDevice || !net) when {
+                    local != null -> Offline.run(this, local, input)
+                    localLang != null -> Offline.translate(input, localLang, allowDownload = net)
+                    else -> null
+                } else null
+                when {
+                    done != null -> Result.success(ActionResult(done, null))
+                    !net -> Result.failure(AiException("No connection. Spelling, tone and translation can work offline once their models are downloaded (Settings > Usage & on-device AI)"))
+                    else -> Result.success(engine.run(task, input, connected, tools, cancelled, label))
+                }
             } catch (e: AiException) {
                 Result.failure(e)
             } catch (e: Exception) {
@@ -1930,6 +1948,10 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         }
     }
 
+    private fun openPage(page: String) {
+        startActivity(Intent(this, PageActivity::class.java).putExtra("page", page).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+
     private fun openApp() {
         startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
@@ -2062,6 +2084,9 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         if (undo != null) undo = null
         if (!busy && statusRow?.visibility == View.VISIBLE) showTyping()
     }
+
+    /** The status line's text, for tests. */
+    internal val statusMessage: String get() = (statusRow?.getChildAt(0) as? TextView)?.text?.toString().orEmpty()
 
     private fun showStatus(message: String, vararg actions: Pair<String, () -> Unit>) {
         val row = statusRow ?: return

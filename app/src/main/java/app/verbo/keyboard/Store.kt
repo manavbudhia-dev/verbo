@@ -148,6 +148,8 @@ class Store(context: Context) {
         "triggers" -> triggersJson(triggers)
         "memory" -> memoryJson(memory)
         "shortcuts" -> shortcutsJson(shortcuts)
+        "usage" -> usage
+        "monthlyLimit" -> monthlyLimit
         "clips" -> JSONArray(clips)
         "customApis" -> JSONArray().also { arr ->
             customApis.forEach { arr.put(JSONObject().put("name", it.name).put("description", it.description).put("url", it.url).put("headerName", it.headerName).put("headerValue", it.headerValue)) }
@@ -207,6 +209,7 @@ class Store(context: Context) {
         o.optJSONArray("memory")?.let { s("memory", "memory", it.toString()) }
         o.optJSONArray("shortcuts")?.let { s("shortcuts", "shortcuts", it.toString()) }
         o.optJSONArray("clips")?.let { s("clips", "clips", it.toString()) }
+        if (o.has("monthlyLimit") && "monthlyLimit" !in keep) e.putFloat("monthly_limit", o.optDouble("monthlyLimit", 0.0).toFloat().coerceIn(0f, 1000f))
         o.optJSONObject("keyboard")?.let { applyKeyboard(e, it, keep) }
         e.putBoolean("google_connected", o.optBoolean("googleConnected", false))
         // Older dashboards don't list services; their Google sign-in covers Meet only.
@@ -311,6 +314,39 @@ class Store(context: Context) {
         shortcuts.firstOrNull { it.first.equals(k, true) }?.let { return it.second }
         return memory.firstOrNull { f -> f.label.lowercase().filter { it.isLetterOrDigit() } == k }?.value
     }
+
+    /** This month's requests, tokens and estimated cost, overall and per skill. Sent to the dashboard to show there. */
+    val usage: JSONObject get() {
+        val month = java.text.SimpleDateFormat("yyyy-MM", java.util.Locale.US).format(java.util.Date())
+        val o = try { JSONObject(str("usage", "{}")) } catch (e: Exception) { JSONObject() }
+        return if (o.optString("month") == month) o else JSONObject().put("month", month).put("requests", 0).put("inTokens", 0L)
+            .put("outTokens", 0L).put("searches", 0L).put("cost", 0.0).put("skills", JSONObject())
+    }
+
+    @Synchronized
+    fun recordUsage(label: String, model: String, input: Long, output: Long, searches: Long) {
+        val u = usage
+        val cost = Meter.cost(model, input, output, searches)
+        u.put("requests", u.optInt("requests") + 1).put("inTokens", u.optLong("inTokens") + input).put("outTokens", u.optLong("outTokens") + output)
+            .put("searches", u.optLong("searches") + searches).put("cost", u.optDouble("cost", 0.0) + cost)
+        if (Meter.price(model) == null) u.put("unpriced", true)
+        val name = label.removeSuffix("…").trim().take(40).ifEmpty { "Ask AI" }
+        val skills = u.optJSONObject("skills") ?: JSONObject()
+        val s = skills.optJSONObject(name) ?: JSONObject()
+        skills.put(name, s.put("n", s.optInt("n") + 1).put("cost", s.optDouble("cost", 0.0) + cost))
+        u.put("skills", skills)
+        put("usage", u.toString())
+    }
+
+    /** Monthly spending cap in US dollars; 0 means no cap. Synced with the dashboard. */
+    var monthlyLimit: Double
+        get() = (prefs?.getFloat("monthly_limit", 0f) ?: 0f).toDouble()
+        set(v) { val f = v.coerceIn(0.0, 1000.0).toFloat(); if ((prefs?.getFloat("monthly_limit", -1f) ?: -1f) != f) { prefs?.edit()?.putFloat("monthly_limit", f)?.apply(); changed("monthly_limit") } }
+
+    val overLimit: Boolean get() = monthlyLimit > 0 && usage.optDouble("cost", 0.0) >= monthlyLimit
+
+    /** Do small jobs (spelling, tone, one-language translation) on the phone when it can. */
+    var onDevice: Boolean get() = bool("on_device", true); set(v) = put("on_device", v)
 
     /** Swipe typing, and Devanagari suggestions for Hinglish words. */
     var swipeTyping: Boolean get() = bool("swipe_typing", true); set(v) = put("swipe_typing", v)
@@ -432,7 +468,7 @@ class Store(context: Context) {
             mapOf(
                 "api_key" to "apiKey", "openai_key" to "openaiKey", "custom_key" to "customKey", "notion_token" to "notionToken", "calendly_token" to "calendlyToken",
                 "model" to "model", "provider" to "provider", "openai_model" to "openaiModel", "custom_base" to "customBase", "custom_model" to "customModel",
-                "web_search" to "webSearch", "weather" to "weather", "skills" to "skills", "custom_apis" to "customApis", "triggers" to "triggers", "memory" to "memory", "shortcuts" to "shortcuts", "clips" to "clips",
+                "web_search" to "webSearch", "weather" to "weather", "skills" to "skills", "custom_apis" to "customApis", "triggers" to "triggers", "memory" to "memory", "shortcuts" to "shortcuts", "clips" to "clips", "usage" to "usage", "monthly_limit" to "monthlyLimit",
             ) + APP_TOKENS.entries.associate { (field, pref) -> pref to field } + KEYBOARD_FIELDS.associate { it.pref to "keyboard." + it.name }
         }
 

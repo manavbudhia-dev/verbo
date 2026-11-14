@@ -90,6 +90,8 @@ const defaultConfig = () => ({
   memory: [], // facts the user told the keyboard: { label, value }
   shortcuts: [], // ;key -> text
   clips: [], // pinned clips
+  usage: null, // this month's requests, tokens and estimated cost, reported by the phone
+  monthlyLimit: 0, // US dollars; 0 = no limit
   keyboard: {}, // the phone's own settings (look, sound, wheel...), kept here so they can be changed from the web
 });
 
@@ -197,6 +199,8 @@ function publicConfig(config) {
     memory: config.memory,
     shortcuts: config.shortcuts,
     clips: config.clips,
+    usage: config.usage,
+    monthlyLimit: config.monthlyLimit,
   };
 }
 
@@ -266,6 +270,22 @@ function applyUpdate(config, body) {
       if (!text.trim()) throw new Bad(400, 'A shortcut needs its text');
       return { key, text };
     });
+  }
+  if ('monthlyLimit' in body) {
+    const n = Number(body.monthlyLimit);
+    if (!Number.isFinite(n) || n < 0 || n > 1000) throw new Bad(400, 'The monthly limit must be between 0 and 1000 dollars');
+    next.monthlyLimit = Math.round(n * 100) / 100;
+  }
+  if ('usage' in body) {
+    const u = body.usage;
+    const num = (v) => (Number.isFinite(Number(v)) && Number(v) >= 0 ? Number(v) : 0);
+    if (!u || typeof u !== 'object' || !/^\d{4}-\d{2}$/.test(String(u.month))) throw new Bad(400, 'Usage report is not readable');
+    const skills = u.skills && typeof u.skills === 'object' ? Object.entries(u.skills).slice(0, 40) : [];
+    next.usage = {
+      month: String(u.month), requests: num(u.requests), inTokens: num(u.inTokens), outTokens: num(u.outTokens), searches: num(u.searches), cost: num(u.cost),
+      unpriced: u.unpriced === true,
+      skills: Object.fromEntries(skills.map(([k, v]) => [String(k).slice(0, 40), { n: num(v?.n), cost: num(v?.cost) }])),
+    };
   }
   if ('clips' in body) {
     if (!Array.isArray(body.clips) || body.clips.length > 30 || !body.clips.every((c) => typeof c === 'string' && c.length <= 2000)) throw new Bad(400, 'Pinned clips must be up to 30 texts');
