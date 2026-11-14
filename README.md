@@ -10,6 +10,10 @@ An Android keyboard that acts on what you type.
 - **Meeting link** – a wheel shortcut that inserts a Google Meet link (with Google connected on the dashboard)
   or an instant no-account link.
 - **Translate** – pick a language, or translate into all of your languages at once.
+- **Auto-translate** – switch it on for a chat app and whatever you type is translated into the chosen
+  language each time you pause, until you stop it.
+- **Create a skill** – describe what you want; the assistant drafts the skill for approval, then you put it on
+  the wheel, give it a hold key, or connect apps for it.
 - **Voice panel** – a listening panel with a level meter; Transcribe tidies speech, Command treats it as a request.
 - **Clips** – save copied text and paste it any time.
 - **Skill library** – ready-made skills on shelves (Featured, Work, Social, Fun, Languages), added with one tap.
@@ -63,6 +67,7 @@ Tests (typing logic, plus screenshots of every screen written to `app/build/shot
 - `VerboIme.kt` – the keyboard service: word tracking, suggestions, actions, voice
 - `KeyboardView.kt` – the keys: drawing, themes and touch handling
 - `Dictionary.kt` – word list lookups for suggestions and auto-correct
+- `Engine.kt` – runs a request on whichever provider is selected
 - `Library.kt` – the catalogue of ready-made skills
 - `Ui.kt`, `PageActivity.kt` – settings look and detail screens
 - `Ai.kt` – the Claude request, prompts and result parsing

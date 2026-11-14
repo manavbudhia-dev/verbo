@@ -18,6 +18,12 @@ class PageActivity : Activity() {
     private lateinit var page: String
     private val preview by lazy { Feedback(this) }
 
+    // "Create a skill" screen state
+    private var wish = ""
+    private var designing = false
+    private var draft: Ai.SkillDraft? = null
+    private var createdName: String? = null
+
     override fun onDestroy() {
         preview.release()
         super.onDestroy()
@@ -46,6 +52,7 @@ class PageActivity : Activity() {
             page == "dashboard" -> dashboardPage(column)
             page == "skins" -> skinsPage(column)
             page == "wheel" -> wheelPage(column)
+            page == "create" -> createPage(column)
             page == "translate" -> translatePage(column)
             page == "feedback" -> feedbackPage(column)
             page == "battery" -> batteryPage(column)
@@ -295,6 +302,139 @@ class PageActivity : Activity() {
             val message = try { work(); done } catch (e: SyncException) { e.message ?: "Failed" } catch (e: Exception) { "Something went wrong" }
             runOnUiThread { if (!isFinishing && !isDestroyed) { ui.toast(message); render() } }
         }.start()
+    }
+
+    // ---------- create a skill by describing it ----------
+
+    private fun labelled(box: LinearLayout, label: String, value: String) {
+        if (value.isBlank()) return
+        box.addView(ui.text(label, 11.5f, ui.muted, bold = true).apply { letterSpacing = 0.08f; setPadding(0, ui.dp(12), 0, ui.dp(4)) })
+        box.addView(ui.text(value, 14.5f).apply {
+            background = ui.shape(Color.parseColor("#1F1E36"), 10)
+            setPadding(ui.dp(12), ui.dp(10), ui.dp(12), ui.dp(10))
+            setLineSpacing(0f, 1.15f)
+        })
+    }
+
+    private fun createPage(column: LinearLayout) {
+        column.addView(ui.topBar("Create a skill", "Describe it and the assistant designs it"))
+        val made = createdName?.let { name -> store.skills.firstOrNull { it.name == name } }
+        if (made != null) return connectSkill(column, made)
+
+        val box = ui.cardBox().apply { setPadding(ui.dp(14), ui.dp(8), ui.dp(14), ui.dp(12)) }
+        val field = ui.field("e.g. Replace my text with emojis", wish, lines = 3)
+        box.addView(field)
+        column.addView(box)
+        column.addView(ui.button(if (designing) "Designing…" else if (draft == null) "Design it" else "Design it again", R.drawable.ic_wand_sparkles, filled = true) {
+            val text = field.text.toString().trim()
+            when {
+                designing -> {}
+                text.isEmpty() -> ui.toast("Say what the skill should do")
+                store.activeKey.isBlank() -> ui.toast("Add your ${store.providerName} API key first (Settings → AI Model)")
+                else -> design(text)
+            }
+        })
+
+        val plan = draft
+        if (plan == null) {
+            column.addView(ui.section(R.drawable.ic_sparkles, "Ideas"))
+            column.addView(ui.rows(*listOf(
+                "Turn my notes into a polite email to my landlord",
+                "Reply to the copied message in Hindi, friendly and short",
+                "Find this place and share its address with a map link",
+                "Make my message sound confident, not apologetic",
+            ).map { idea -> ui.row(R.drawable.ic_zap, idea, null, ui.chevron()) { wish = idea; render() } }.toTypedArray()))
+            column.addView(ui.button("Write it myself", R.drawable.ic_pencil_line) { editSkill(-1, null) }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(10) })
+            return
+        }
+        // The plan, shown for approval before anything is saved.
+        column.addView(ui.section(R.drawable.ic_layers, "The plan"))
+        val card = ui.cardBox().apply { setPadding(ui.dp(16), ui.dp(14), ui.dp(16), ui.dp(16)) }
+        val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        head.addView(ui.text(plan.emoji.ifEmpty { "✦" }, 22f).apply { gravity = Gravity.CENTER; background = ui.shape(ui.accentSoft, 12) }, LinearLayout.LayoutParams(ui.dp(44), ui.dp(44)))
+        head.addView(ui.text(plan.name, 18f, bold = true).apply { setPadding(ui.dp(12), 0, 0, 0) })
+        card.addView(head)
+        labelled(card, "WHAT IT DOES", plan.does)
+        labelled(card, "INPUT", plan.input)
+        labelled(card, "OUTPUT", plan.output)
+        labelled(card, "INSTRUCTION THE ASSISTANT FOLLOWS", plan.instruction)
+        column.addView(card)
+        column.addView(ui.button("Create this skill", R.drawable.ic_check, filled = true) {
+            val skills = store.skills
+            // Names must be unique: skills are found by name on the wheel and in slash commands.
+            var name = plan.name
+            var n = 2
+            while (skills.any { it.name.equals(name, ignoreCase = true) }) name = plan.name + " " + n++
+            store.skills = skills + Skill(plan.emoji, name, plan.instruction, plan.group)
+            createdName = name
+            draft = null
+            render()
+        })
+    }
+
+    private fun design(text: String) {
+        wish = text
+        designing = true
+        render()
+        val engine = Engine(store)
+        Thread {
+            val outcome = try {
+                Ai.parseDesign(engine.run(Ai.DESIGN_TASK, text, web = false, tools = emptyList()) { isDestroyed }.text)
+                    ?: throw AiException("The assistant's plan came back in a form Verbo couldn't read. Try again")
+            } catch (e: AiException) {
+                e
+            } catch (e: Exception) {
+                AiException("Something went wrong. Try again")
+            }
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                designing = false
+                if (outcome is Ai.SkillDraft) draft = outcome else ui.toast((outcome as Exception).message ?: "Failed")
+                render()
+            }
+        }.start()
+    }
+
+    /** Shown right after a skill is created: where it should live and what it can use. */
+    private fun connectSkill(column: LinearLayout, skill: Skill) {
+        val id = "skill:" + skill.name
+        column.addView(ui.rows(ui.row(R.drawable.ic_check, (skill.emoji + "  " + skill.name).trim(), "Created. It is now a skill key above your keyboard", ui.icon(R.drawable.ic_check, 20, Color.parseColor("#4ADE80")))))
+        column.addView(ui.section(R.drawable.ic_plug, "Connect it"))
+        val wheel = store.wheel
+        column.addView(ui.rows(
+            ui.row(R.drawable.ic_circle_dashed, "On the shortcut wheel", if (id in wheel) "Slide to it after holding the bar" else "Hold the bar, slide, release", ui.toggle(id in wheel) { on ->
+                val now = store.wheel
+                when {
+                    !on -> store.wheel = now - id
+                    now.size >= Store.MAX_WHEEL -> { ui.toast("The wheel holds ${Store.MAX_WHEEL}. Remove one on the wheel page first"); render() }
+                    else -> store.wheel = now + id
+                }
+            }),
+            ui.row(R.drawable.ic_keyboard, "Hold key", if (skill.key.isEmpty()) "None. Pick a letter to run it by holding that key" else "Hold ${skill.key.uppercase()} to run it", ui.chevron()) { pickKey(skill) },
+            ui.row(R.drawable.ic_zap, "Apps and APIs it can use", "Web search, places, weather, Notion, Calendly, Google Meet, your own APIs", ui.chevron()) {
+                startActivity(android.content.Intent(this, PageActivity::class.java).putExtra("page", "automate"))
+            },
+        ))
+        note(column, "Every skill can use everything you have connected under Apps and APIs. Apps like Gmail, WhatsApp, Calendar and Maps need no connection: the skill opens them with a draft filled in.")
+        val buttons = LinearLayout(this)
+        buttons.addView(ui.button("Try it", R.drawable.ic_keyboard, filled = true) {
+            startActivity(android.content.Intent(this, PageActivity::class.java).putExtra("page", "try"))
+        }, LinearLayout.LayoutParams(0, -2, 1f).apply { rightMargin = ui.dp(6) })
+        buttons.addView(ui.button("Create another", R.drawable.ic_plus) { createdName = null; wish = ""; render() }, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = ui.dp(6) })
+        column.addView(buttons)
+    }
+
+    private fun pickKey(skill: Skill) {
+        val skills = store.skills
+        val taken = skills.filter { it.name != skill.name && it.key.isNotEmpty() }.associate { it.key to it.name }
+        val letters = ('a'..'z').map { it.toString() }
+        val labels = listOf("No key") + letters.map { l -> l.uppercase() + (taken[l]?.let { "   (now runs $it)" } ?: "") }
+        AlertDialog.Builder(this).setTitle("Hold key for ${skill.name}").setItems(labels.toTypedArray()) { _, which ->
+            val letter = if (which == 0) "" else letters[which - 1]
+            // A letter runs one skill, so taking it frees it from whichever skill had it.
+            store.skills = skills.map { if (it.name == skill.name) it.copy(key = letter) else if (letter.isNotEmpty() && it.key == letter) it.copy(key = "") else it }
+            render()
+        }.show()
     }
 
     // ---------- wheel ----------

@@ -82,6 +82,44 @@ You may also have tools for apps and APIs the user connected. Use them when the 
         if (languages.size == 1) "Task: translate the text into ${languages[0]}. Return only the translation, natural and idiomatic, keeping the tone, emoji and names."
         else "Task: translate the text into each of these languages: ${languages.joinToString(", ")}. Put a short title on the first line, then one line per language in the form \"Language: translation\"."
 
+    /** Used while auto-translate is on: the field may already hold some translated text from a moment ago. */
+    fun autoTranslateTask(language: String) = translateTask(listOf(language)) +
+        " Any part that is already in $language stays exactly as it is. If the whole text is already in $language, return it unchanged."
+
+    /** Turns a plain-language wish into a skill definition. The reply is read by [parseDesign], so the format is fixed. */
+    const val DESIGN_TASK = """Task: the user's text describes a keyboard skill they want. A skill is one saved instruction that the assistant applies to whatever text is in the field (or to a copied message) when the user triggers it. Design that skill.
+
+Reply with exactly these seven lines and nothing else, each starting with its label:
+NAME: two or three words
+EMOJI: one emoji that fits
+DOES: one sentence saying what the skill does, written for the user
+INPUT: what the skill works on, in a few words
+OUTPUT: what comes back, in a few words
+GROUP: one of write, edit, translate, summarize
+INSTRUCTION: the instruction the assistant will follow each time, in two to four sentences. Address the assistant directly. Say what to do with the text, what to keep, and what the result should look like. If the wish involves an app (Gmail, WhatsApp, Calendar, Maps, YouTube, X, Notion, Calendly) or current facts, tell the assistant to use that app's link or tool or to search the web."""
+
+    class SkillDraft(val name: String, val emoji: String, val does: String, val input: String, val output: String, val group: String, val instruction: String)
+
+    /** Reads the seven labelled lines of a design reply. Null if the name or the instruction is missing. */
+    fun parseDesign(text: String): SkillDraft? {
+        val fields = HashMap<String, String>()
+        var current: String? = null
+        for (line in text.lines()) {
+            val match = Regex("""^\s*\**(NAME|EMOJI|DOES|INPUT|OUTPUT|GROUP|INSTRUCTION)\**\s*:\s*(.*)$""").find(line)
+            if (match != null) {
+                current = match.groupValues[1]
+                fields[current] = match.groupValues[2].trim()
+            } else if (current == "INSTRUCTION" && line.isNotBlank()) {
+                fields[current] = (fields[current].orEmpty() + " " + line.trim()).trim() // a long instruction may wrap
+            }
+        }
+        val name = fields["NAME"].orEmpty().trim('"', ' ').take(40)
+        val instruction = fields["INSTRUCTION"].orEmpty().take(2000)
+        if (name.isEmpty() || instruction.isEmpty()) return null
+        val group = fields["GROUP"].orEmpty().lowercase().takeIf { it in listOf("write", "edit", "translate", "summarize") } ?: "edit"
+        return SkillDraft(name, fields["EMOJI"].orEmpty().take(8), fields["DOES"].orEmpty(), fields["INPUT"].orEmpty(), fields["OUTPUT"].orEmpty(), group, instruction)
+    }
+
     fun skillTask(instruction: String) = "Task: apply this skill to the user's text. $instruction"
 
     /** The phone's date and time go in so requests like "tomorrow at 5" can be turned into real dates. */

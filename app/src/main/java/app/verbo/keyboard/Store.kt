@@ -89,6 +89,19 @@ class Store(context: Context) {
         get() = try { JSONArray(str("clips", "[]")).let { a -> (0 until a.length()).map { a.getString(it) } } } catch (e: Exception) { emptyList() }
         set(v) = put("clips", JSONArray(v.take(30)).toString())
 
+    /** Auto-translate is remembered per app, so it stays on in the chat app where it was switched on. */
+    fun autoTranslate(app: String?): String? {
+        if (app.isNullOrEmpty()) return null
+        return try { JSONObject(str("auto_translate", "{}")).optString(app).takeIf { it in ALL_LANGUAGES } } catch (e: Exception) { null }
+    }
+
+    fun setAutoTranslate(app: String?, language: String?) {
+        if (app.isNullOrEmpty()) return
+        val all = try { JSONObject(str("auto_translate", "{}")) } catch (e: Exception) { JSONObject() }
+        if (language == null) all.remove(app) else all.put(app, language)
+        put("auto_translate", all.toString())
+    }
+
     // dashboard pairing
     var serverUrl: String get() = str("server_url"); set(v) = put("server_url", v)
     var deviceToken: String get() = str("device_token"); set(v) = put("device_token", v)

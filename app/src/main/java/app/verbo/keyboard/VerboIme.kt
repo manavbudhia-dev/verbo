@@ -57,6 +57,9 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     private var contextBox: LinearLayout? = null
     private var contextText: String? = null
     private var wheelIds: List<String> = emptyList()
+    private var modeBox: LinearLayout? = null
+    private var autoLang: String? = null // while set, what you type is translated into this language whenever you pause
+    private var lastAuto = "" // the last text auto-translate produced, so it isn't translated again
     private var voiceCommand = false
     private var levels: LevelView? = null
     private var heardView: TextView? = null // a copied message the user chose to give the assistant as context
@@ -141,6 +144,12 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             setPadding(dp(10), dp(2), dp(4), dp(4))
         }
         root.addView(contextBox, LinearLayout.LayoutParams(-1, -2))
+        modeBox = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            visibility = View.GONE
+            setPadding(dp(12), dp(2), dp(4), dp(2))
+        }
+        root.addView(modeBox, LinearLayout.LayoutParams(-1, -2))
         panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
@@ -330,6 +339,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         lastTyped = text.last()
         applyCaps()
         updateSuggestions()
+        scheduleAuto()
     }
 
     override fun onBackspace() {
@@ -370,6 +380,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         spaceAfterWordAt = 0
         applyCaps()
         updateSuggestions()
+        scheduleAuto()
     }
 
     override fun onEnter() {
@@ -568,6 +579,10 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             loadSettings()
             buildChips()
             contextText = null // context belongs to the conversation it was copied for
+            main.removeCallbacks(autoRun)
+            autoLang = if (assistantOn) store.autoTranslate(info?.packageName) else null
+            lastAuto = ""
+            refreshMode()
             hidePanel()
             showTyping()
             recognizer?.cancel()
@@ -685,6 +700,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         spaceAfterWordAt = 0
         applyCaps()
         updateSuggestions()
+        scheduleAuto()
     }
 
     // ---------- the action ----------
@@ -840,17 +856,105 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         }
     }
 
-    private fun showLanguages() {
+    /** [auto] = choosing the language to keep translating into, rather than translating once. */
+    private fun showLanguages(auto: Boolean = false) {
         val mine = store.languages
         fun go(languages: List<String>) {
             hidePanel()
+            if (auto) return setAuto(languages[0])
             runTask(if (languages.size == 1) "Into ${languages[0]}…" else "Translating…", Ai.translateTask(languages), card = true) { showLanguages() }
         }
         val choices = ArrayList<Pair<String, () -> Unit>>()
-        if (mine.size > 1) choices += "All ${mine.size} of my languages" to { go(mine) }
+        val current = autoLang
+        if (!auto) {
+            if (current != null) choices += "Stop auto-translate ($current)" to { hidePanel(); setAuto(null) }
+            else choices += "Auto-translate every message…" to { showLanguages(auto = true) }
+            if (mine.size > 1) choices += "All ${mine.size} of my languages" to { go(mine) }
+        }
         mine.forEach { choices += it to { go(listOf(it)) } }
         Store.ALL_LANGUAGES.filter { it !in mine }.forEach { choices += it to { go(listOf(it)) } }
-        showChoices("Translate into", choices, highlightFirst = mine.size > 1)
+        showChoices(if (auto) "Keep translating into" else "Translate into", choices, highlightFirst = !auto)
+    }
+
+    // ---------- auto-translate ----------
+
+    /** Turns auto-translate on (into [language]) or off for the app being typed in, and translates what is there now. */
+    private fun setAuto(language: String?) {
+        autoLang = language
+        lastAuto = ""
+        store.setAutoTranslate(currentInputEditorInfo?.packageName, language)
+        main.removeCallbacks(autoRun)
+        refreshMode()
+        showTyping()
+        if (language != null) main.postDelayed(autoRun, 300)
+    }
+
+    private fun refreshMode() {
+        val box = modeBox ?: return
+        box.removeAllViews()
+        val language = autoLang
+        if (language == null) {
+            box.visibility = View.GONE
+            return
+        }
+        box.addView(ImageView(this).apply { setImageResource(R.drawable.ic_languages); setColorFilter(p.accent) }, LinearLayout.LayoutParams(dp(18), dp(18)))
+        box.addView(TextView(this).apply {
+            text = "Auto-translating into $language when you pause"
+            setTextColor(p.muted)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            setPadding(dp(8), 0, dp(6), 0)
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        val stop = chipView("Stop", Color.TRANSPARENT, p.keyPressed, p.accent)
+        stop.typeface = Typeface.DEFAULT_BOLD
+        stop.setOnClickListener { feedback(KeyboardView.Type.MODE); setAuto(null) }
+        box.addView(stop, LinearLayout.LayoutParams(-2, dp(32)))
+        box.visibility = View.VISIBLE
+    }
+
+    /** Called after every edit: restarts the pause timer. */
+    private fun scheduleAuto() {
+        if (autoLang == null) return
+        main.removeCallbacks(autoRun)
+        main.postDelayed(autoRun, AUTO_PAUSE_MS)
+    }
+
+    private val autoRun = Runnable { autoTranslateNow() }
+
+    private fun autoTranslateNow() {
+        val language = autoLang ?: return
+        if (busy || listening || panel?.visibility == View.VISIBLE || isPasswordField()) return
+        if (store.activeKey.isBlank()) {
+            showStatus("Auto-translate needs your API key", "Set up" to { openApp() })
+            return
+        }
+        val target = readTarget() ?: return
+        val text = target.text
+        // Nothing to do for an empty field, for text we just produced, or for a selection the user is working on.
+        if (text.isBlank() || text == lastAuto || target.selection != null || text.length > AUTO_MAX_CHARS) return
+        launch("→ $language…", Ai.autoTranslateTask(language), text, connected = false) { result ->
+            val now = readTarget()
+            val unchanged = now != null && now.selection == null && now.before == target.before && now.after == target.after
+            if (!unchanged || result.text.isEmpty()) {
+                // The user kept typing: drop this translation and wait for the next pause.
+                showTyping()
+                scheduleAuto()
+                return@launch
+            }
+            lastAuto = result.text
+            if (result.text == text) {
+                showTyping() // it was already in the target language
+                return@launch
+            }
+            val ic = currentInputConnection ?: return@launch
+            ic.beginBatchEdit()
+            ic.deleteSurroundingText(target.before.length, target.after.length)
+            ic.commitText(result.text, 1)
+            ic.endBatchEdit()
+            undo = text to result.text
+            showStatus("Translated into $language", "Undo" to { lastAuto = text; undoLast() })
+        }
     }
 
     private fun showRewrite() {
@@ -920,12 +1024,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         busy = true
         undo = null
         val token = ++generation
-        val openAi = store.isOpenAi
-        val custom = store.isCustom
-        val base = store.customBase
-        val key = store.activeKey
-        val model = store.activeModel
-        val web = connected && store.webSearch
+        val engine = Engine(store)
         val tools = if (connected) store.tools() else emptyList()
         val cancel = {
             generation++
@@ -937,11 +1036,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         worker.execute {
             val outcome = try {
                 val cancelled = { token != generation }
-                Result.success(when {
-                    custom -> ChatCompat.run(base, key, model, task, input, tools, cancelled)
-                    openAi -> OpenAi.run(key, model, web, task, input, tools, cancelled)
-                    else -> Ai.run(key, model, web, task, input, tools, cancelled)
-                })
+                Result.success(engine.run(task, input, connected, tools, cancelled))
             } catch (e: AiException) {
                 Result.failure(e)
             } catch (e: Exception) {
@@ -1327,6 +1422,8 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
 
     companion object {
         private const val MAX_CHARS = 20000
+        private const val AUTO_PAUSE_MS = 1600L
+        private const val AUTO_MAX_CHARS = 2000
     }
 }
 

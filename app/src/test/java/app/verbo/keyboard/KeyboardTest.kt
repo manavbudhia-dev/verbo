@@ -354,6 +354,29 @@ class KeyboardTest {
     }
 
     @Test
+    fun skillDesignReplyIsParsed() {
+        val reply = "NAME: Emoji Translator\nEMOJI: 😀\nDOES: Turns your text into emoji.\nINPUT: The text you typed\nOUTPUT: Emoji only\nGROUP: edit\nINSTRUCTION: Replace the text with emoji that carry the same meaning.\nUse no words at all."
+        val d = Ai.parseDesign(reply)!!
+        assertEquals("Emoji Translator", d.name)
+        assertEquals("edit", d.group)
+        assertEquals("Replace the text with emoji that carry the same meaning. Use no words at all.", d.instruction)
+        assertEquals("a bad group falls back to edit", "edit", Ai.parseDesign("NAME: X\nGROUP: banana\nINSTRUCTION: Do it.")!!.group)
+        assertEquals("no instruction means no skill", null, Ai.parseDesign("NAME: X\nDOES: something"))
+    }
+
+    @Test
+    fun autoTranslateIsRememberedPerApp() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        assertEquals(null, store.autoTranslate("com.chat"))
+        store.setAutoTranslate("com.chat", "Hindi")
+        assertEquals("Hindi", store.autoTranslate("com.chat"))
+        assertEquals("another app is unaffected", null, store.autoTranslate("com.mail"))
+        store.setAutoTranslate("com.chat", null)
+        assertEquals(null, store.autoTranslate("com.chat"))
+        assertTrue(Ai.autoTranslateTask("Hindi").contains("already in Hindi"))
+    }
+
+    @Test
     fun translateTaskNamesTheLanguages() {
         assertTrue(Ai.translateTask(listOf("Hindi")).contains("into Hindi"))
         assertTrue(Ai.translateTask(listOf("Hindi", "French")).contains("Hindi, French"))
@@ -428,6 +451,36 @@ class KeyboardTest {
         store.theme = "system"
         store.theme = "system"
 
+        // Auto-translate switched on for this app: the banner above the keys.
+        store.setAutoTranslate("com.chat", "Hindi")
+        field.info.packageName = "com.chat"
+        ime.onStartInputView(field.info, false)
+        type("see you at 7")
+        org.robolectric.shadows.ShadowLooper.idleMainLooper(2500, java.util.concurrent.TimeUnit.MILLISECONDS)
+        assertEquals("with no API key nothing is replaced", "see you tomorsee you at 7", field.text.toString())
+        (ime.keys!!.parent as View).let { layout(it); snap(it, "keyboard-auto-translate") }
+        store.setAutoTranslate("com.chat", null)
+
+        // The create screen with a plan ready for approval, then the connect step after creating it.
+        run {
+            val a = Robolectric.buildActivity(PageActivity::class.java, android.content.Intent().putExtra("page", "create")).setup().get()
+            fun set(name: String, value: Any?) = PageActivity::class.java.getDeclaredField(name).apply { isAccessible = true }.set(a, value)
+            fun shot(name: String) {
+                PageActivity::class.java.getDeclaredMethod("render").apply { isAccessible = true }.invoke(a)
+                val sc = content(a)
+                sc.layout(0, 0, 1080, maxOf((sc as ViewGroup).getChildAt(0).measuredHeight, 900))
+                snap(sc, name)
+            }
+            set("wish", "Replace my text with emojis")
+            set("draft", Ai.parseDesign("NAME: Emoji Translator\nEMOJI: 😀\nDOES: Turns your message into emoji that carry the same meaning.\nINPUT: The text you typed\nOUTPUT: Emoji only, no words\nGROUP: edit\nINSTRUCTION: Replace the text with emoji that express the same meaning. Use no words. Keep the order of ideas."))
+            shot("page-create-plan")
+            store.skills = store.skills + Skill("😀", "Emoji Translator", "Replace the text with emoji.", "edit")
+            set("draft", null)
+            set("createdName", "Emoji Translator")
+            shot("page-create-connect")
+            store.resetSkills()
+        }
+
         for (tab in listOf("keys", "library", "settings")) {
             MainActivity.tab = tab
             val main = Robolectric.buildActivity(MainActivity::class.java).setup().get()
@@ -439,7 +492,7 @@ class KeyboardTest {
             snap(frame, if (tab == "settings") "settings" else "home-$tab")
         }
         MainActivity.tab = "keys"
-        for (page in listOf("wheel", "translate", "feedback", "battery", "skins", "templates", "prompts", "automate", "shortcuts", "privacy", "dashboard", "category:edit")) {
+        for (page in listOf("create", "wheel", "translate", "feedback", "battery", "skins", "templates", "prompts", "automate", "shortcuts", "privacy", "dashboard", "category:edit")) {
             val a = Robolectric.buildActivity(PageActivity::class.java, android.content.Intent().putExtra("page", page)).setup().get()
             val s = content(a)
             s.layout(0, 0, 1080, maxOf((s as ViewGroup).getChildAt(0).measuredHeight, 900))

@@ -88,7 +88,7 @@ class MainActivity : Activity() {
         item("keys", R.drawable.ic_keyboard, "Skill keys") { tab = "keys"; build() }
         item("library", R.drawable.ic_wand_sparkles, "Skill library") { tab = "library"; build() }
         item("settings", R.drawable.ic_settings, "Settings") { tab = "settings"; build() }
-        item(null, R.drawable.ic_plus, "New skill") { startActivity(Intent(this, PageActivity::class.java).putExtra("page", "prompts").putExtra("new", true)) }
+        item(null, R.drawable.ic_plus, "Create a skill") { open("create") }
         return bar
     }
 
