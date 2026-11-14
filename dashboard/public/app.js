@@ -1,6 +1,8 @@
 'use strict';
 
-// Tiny DOM helper: h('div', {class: 'x', onclick: fn}, child, 'text')
+// ---------- small helpers ----------
+
+// DOM helper: h('div', {class: 'x', onclick: fn}, child, 'text')
 function h(tag, props, ...children) {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(props || {})) {
@@ -12,6 +14,15 @@ function h(tag, props, ...children) {
   }
   for (const c of children.flat(Infinity)) if (c != null && c !== false) el.append(c);
   return el;
+}
+
+function icon(name) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('class', 'icon');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.innerHTML = window.ICONS[name] || '';
+  return svg;
 }
 
 async function api(method, url, body) {
@@ -35,25 +46,71 @@ function toast(message) {
 }
 
 const app = document.getElementById('app');
-const state = { email: null, allowSignup: true, tab: 'skills', config: null, devices: [], code: null };
+const state = {
+  email: null, allowSignup: true, tab: 'skills', config: null, devices: [], code: null,
+  search: '', chat: [], thinking: false, draftMessage: '',
+};
 
-const MODELS = [
-  ['claude-haiku-5-5', 'Haiku 5.5 — cheapest, fast'],
-  ['claude-sonnet-5-5', 'Sonnet 5.5 — balanced'],
-  ['claude-opus-5-5', 'Opus 5.5 — most capable'],
-];
+// ---------- saving ----------
 
 let saveSeq = 0;
 async function save(patch, message) {
   const seq = ++saveSeq;
   try {
     const config = await api('PUT', '/api/config', patch);
-    if (seq !== saveSeq) return; // a newer save is on its way; its reply is the one to show
+    if (seq !== saveSeq) return true; // a newer save is on its way; its reply is the one to show
     state.config = config;
     toast(message || 'Saved');
     render();
-  } catch (e) { toast(e.message); }
+    return true;
+  } catch (e) {
+    toast(e.message);
+    return false;
+  }
 }
+
+const saveKeyboard = (patch, message) => save({ keyboard: patch }, message);
+
+// Skills are identified by name on the wheel, so a rename or delete has to be mirrored there.
+const wheelId = (name) => 'skill:' + name;
+const cleanSkill = (s) => ({ emoji: s.emoji || '', name: s.name, instruction: s.instruction, category: s.category || 'edit', key: s.key || '' });
+
+function saveSkills(skills, wheel, message) {
+  const patch = { skills: skills.map(cleanSkill) };
+  if (wheel) patch.keyboard = { wheel };
+  return save(patch, message);
+}
+
+// ---------- shared pieces ----------
+
+function toggle(checked, onChange, label) {
+  return h('label', { class: 'switch' },
+    h('input', { type: 'checkbox', checked, 'aria-label': label, onchange: (e) => onChange(e.target.checked) }), h('span'));
+}
+
+function setting(title, help, control) {
+  return h('div', { class: 'setting' },
+    h('div', { class: 'what' }, h('div', null, title), help && h('p', { class: 'muted small' }, help)), control);
+}
+
+function select(value, options, onChange, label) {
+  return h('select', { 'aria-label': label, onchange: (e) => onChange(e.target.value) },
+    options.map(([v, name]) => h('option', { value: v, selected: v === value }, name)));
+}
+
+function modal(title, build) {
+  const d = h('dialog');
+  const close = () => d.close();
+  d.append(h('h2', null, title), build(close));
+  d.addEventListener('close', () => d.remove());
+  document.body.append(d);
+  d.showModal();
+  return d;
+}
+
+const WHEEL_TOOLS = { ai: 'Ask AI', translate: 'Translate', rewrite: 'Rewrite', meet: 'Meeting link', voice: 'Voice', clips: 'Clips' };
+const MAX_WHEEL = 6;
+const GROUPS = [['write', 'Write'], ['edit', 'Edit'], ['translate', 'Translate'], ['summarize', 'Summarize']];
 
 // ---------- sign in ----------
 
@@ -73,10 +130,10 @@ function authView() {
       } catch (err) { toast(err.message); }
     } },
       h('h2', null, mode === 'signup' ? 'Create your account' : 'Sign in'),
-      h('p', { class: 'muted' }, 'Manage your keyboard’s skills and connected apps.'),
-      h('label', null, 'Email', email),
-      h('label', null, mode === 'signup' ? 'Password (10 characters or more)' : 'Password', password),
-      h('div', { class: 'actions' },
+      h('p', { class: 'muted' }, 'Set up your keyboard from the web.'),
+      h('label', { class: 'field' }, 'Email', email),
+      h('label', { class: 'field' }, mode === 'signup' ? 'Password (10 characters or more)' : 'Password', password),
+      h('div', { class: 'actions', style: 'margin-top:18px' },
         h('button', { class: 'btn primary', type: 'submit' }, mode === 'signup' ? 'Create account' : 'Sign in'),
         state.allowSignup && h('button', { class: 'btn ghost', type: 'button', onclick: () => { mode = mode === 'signup' ? 'login' : 'signup'; draw(); } },
           mode === 'signup' ? 'I have an account' : 'Create an account')));
@@ -86,223 +143,459 @@ function authView() {
   return box;
 }
 
-// ---------- dialogs ----------
+// ---------- My skills ----------
 
-function dialog(title, fields, onSave, onDelete) {
-  const d = h('dialog');
-  const inputs = {};
-  const form = h('form', { onsubmit: async (e) => {
-    e.preventDefault();
-    const values = Object.fromEntries(Object.entries(inputs).map(([k, el]) => [k, el.value]));
-    if (await onSave(values) !== false) d.close();
-  } },
-    h('h2', null, title),
-    fields.map((f) => {
-      const el = f.options ? h('select', null, f.options.map(([value, label]) => h('option', { value }, label)))
-        : f.multiline ? h('textarea', { placeholder: f.hint || '' }) : h('input', { type: f.type || 'text', placeholder: f.hint || '' });
-      el.value = f.value || (f.options ? f.options[0][0] : '');
-      if (f.required) el.required = true;
-      inputs[f.key] = el;
-      return h('label', null, f.label, el);
-    }),
-    h('div', { class: 'actions' },
-      h('button', { class: 'btn primary', type: 'submit' }, 'Save'),
-      h('button', { class: 'btn', type: 'button', onclick: () => d.close() }, 'Cancel'),
-      onDelete && h('button', { class: 'btn ghost danger', type: 'button', onclick: () => { d.close(); onDelete(); } }, 'Delete')));
-  d.append(form);
-  d.addEventListener('close', () => d.remove());
-  document.body.append(d);
-  d.showModal();
+/** Pick which skill a letter runs. One letter runs one skill, so choosing a skill moves the letter to it. */
+function keyDialog(letter) {
+  const skills = state.config.skills;
+  const current = skills.findIndex((s) => s.key === letter);
+  modal(`Hold ${letter.toUpperCase()} to run…`, (close) => {
+    const pick = async (index) => {
+      const next = skills.map((s, i) => ({ ...s, key: i === index ? letter : s.key === letter ? '' : s.key }));
+      if (await saveSkills(next, null, index < 0 ? `${letter.toUpperCase()} is free again` : `Hold ${letter.toUpperCase()} runs ${skills[index].name}`)) close();
+    };
+    return h('div', null,
+      h('p', { class: 'muted', style: 'margin:4px 0 14px' }, 'A quick tap still types the letter. Holding it runs the skill.'),
+      h('div', { class: 'chips' },
+        skills.map((s, i) => h('button', { class: 'chip' + (i === current ? ' on' : ''), onclick: () => pick(i) },
+          (s.emoji ? s.emoji + ' ' : '') + s.name, s.key && s.key !== letter ? h('span', { class: 'muted small' }, s.key.toUpperCase()) : null)),
+        current >= 0 && h('button', { class: 'chip', onclick: () => pick(-1) }, 'Nothing')),
+      skills.length === 0 && h('p', { class: 'muted' }, 'Create a skill first.'),
+      h('div', { class: 'actions' }, h('button', { class: 'btn', onclick: close }, 'Close')));
+  });
 }
 
-// ---------- tabs ----------
+function skillDialog(index, preset) {
+  const skills = state.config.skills;
+  const wheel = state.config.keyboard.wheel;
+  const s = skills[index] || preset || {};
+  const isNew = index < 0;
+  let key = s.key || '';
+  let onWheel = isNew ? !!s.wheel : wheel.includes(wheelId(s.name));
+  modal(isNew ? 'New skill' : 'Edit skill', (close) => {
+    const name = h('input', { type: 'text', value: s.name || '', required: true, placeholder: 'Pirate', maxLength: 40 });
+    const emoji = h('input', { type: 'text', value: s.emoji || '', placeholder: '🏴‍☠️', maxLength: 16 });
+    const instruction = h('textarea', { required: true, placeholder: 'Rewrite it the way a cheerful pirate would say it.' });
+    instruction.value = s.instruction || '';
+    const group = select(s.category || s.group || 'edit', GROUPS, () => {}, 'Group');
+    const letters = h('div', { class: 'letters' });
+    const drawLetters = () => letters.replaceChildren(
+      ...'abcdefghijklmnopqrstuvwxyz'.split('').map((l) => {
+        const owner = skills.find((x, i) => x.key === l && i !== index);
+        return h('button', { type: 'button', class: (l === key ? 'on' : '') + (owner ? ' taken' : ''), title: owner ? `Now runs ${owner.name}` : '',
+          onclick: () => { key = l; drawLetters(); } }, l);
+      }),
+      h('button', { type: 'button', class: 'none' + (key === '' ? ' on' : ''), onclick: () => { key = ''; drawLetters(); } }, 'No key'));
+    drawLetters();
+    return h('form', { onsubmit: async (e) => {
+      e.preventDefault();
+      const fresh = { emoji: emoji.value.trim(), name: name.value.trim(), instruction: instruction.value.trim(), category: group.value, key };
+      if (skills.some((x, i) => i !== index && x.name.toLowerCase() === fresh.name.toLowerCase())) return toast('Another skill already has that name');
+      // Taking a letter frees it from the skill that had it.
+      const next = skills.map((x) => (key && x.key === key ? { ...x, key: '' } : x));
+      if (isNew) next.push(fresh); else next[index] = fresh;
+      let nextWheel = wheel.filter((id) => id !== wheelId(s.name));
+      if (onWheel) {
+        if (nextWheel.length >= MAX_WHEEL) return toast(`The wheel holds ${MAX_WHEEL}. Remove one under Settings first`);
+        // Keep its place on the wheel when it was already there.
+        const at = wheel.indexOf(wheelId(s.name));
+        if (at >= 0) nextWheel.splice(Math.min(at, nextWheel.length), 0, wheelId(fresh.name)); else nextWheel.push(wheelId(fresh.name));
+      }
+      if (await saveSkills(next, nextWheel, isNew ? 'Skill created' : 'Skill saved')) close();
+    } },
+      h('div', { class: 'row', style: 'align-items:flex-end' },
+        h('label', { class: 'field grow' }, 'Name', name),
+        h('label', { class: 'field', style: 'width:90px' }, 'Emoji', emoji)),
+      h('label', { class: 'field' }, 'What should it do with the text?', instruction),
+      h('label', { class: 'field' }, 'Hold key', h('p', { class: 'muted small', style: 'font-weight:400' }, 'Holding this letter on the keyboard runs the skill.'), letters),
+      // The wheel holds six. When it is full, say so here rather than failing on save.
+      (!onWheel && wheel.length >= MAX_WHEEL)
+        ? h('div', { class: 'setting', style: 'margin-top:10px' }, h('div', { class: 'what' }, 'On the wheel', h('p', { class: 'muted small' }, `The wheel is full (${MAX_WHEEL}). Remove one under Settings → Wheel to add this.`)))
+        : h('div', { class: 'setting', style: 'margin-top:10px' }, h('div', { class: 'what' }, 'On the wheel', h('p', { class: 'muted small' }, 'Hold the space bar, slide to it, release')),
+          toggle(onWheel, (v) => { onWheel = v; }, 'On the wheel')),
+      h('div', { class: 'setting' }, h('div', { class: 'what' }, 'Group', h('p', { class: 'muted small' }, 'Edit skills also appear under Rewrite')), group),
+      h('div', { class: 'actions' },
+        h('button', { class: 'btn primary', type: 'submit' }, isNew ? 'Create skill' : 'Save'),
+        h('button', { class: 'btn', type: 'button', onclick: close }, 'Cancel'),
+        !isNew && h('button', { class: 'btn ghost danger', type: 'button', onclick: async () => {
+          if (!confirm(`Delete ${s.name}?`)) return;
+          if (await saveSkills(skills.filter((_, i) => i !== index), wheel.filter((id) => id !== wheelId(s.name)), 'Skill deleted')) close();
+        } }, 'Delete')));
+  });
+}
 
 function skillsTab() {
-  const skills = state.config.skills;
-  const edit = (index) => {
-    const s = skills[index] || {};
-    dialog(index < 0 ? 'New skill' : 'Edit skill', [
-      { key: 'emoji', label: 'Emoji (optional)', value: s.emoji },
-      { key: 'name', label: 'Name', value: s.name, required: true, hint: 'Pirate' },
-      { key: 'instruction', label: 'What should it do with the text?', value: s.instruction, required: true, multiline: true,
-        hint: 'Rewrite it the way a cheerful pirate would say it.' },
-      { key: 'category', label: 'Group', value: s.category || 'edit',
-        options: [['write', 'Write'], ['edit', 'Edit'], ['translate', 'Translate'], ['summarize', 'Summarize']] },
-      { key: 'key', label: 'Hold key (optional): one letter that runs this skill when held', value: s.key, hint: 'n' },
-    ], (v) => {
-      const next = skills.slice();
-      if (index < 0) next.push(v); else next[index] = v;
-      return save({ skills: next });
-    }, index >= 0 && (() => save({ skills: skills.filter((_, i) => i !== index) }, 'Skill deleted')));
-  };
-  const move = (index, by) => {
-    const next = skills.slice();
-    const [item] = next.splice(index, 1);
-    next.splice(index + by, 0, item);
-    save({ skills: next }, 'Order saved');
-  };
+  const { skills, keyboard } = state.config;
+  const byKey = Object.fromEntries(skills.filter((s) => s.key).map((s) => [s.key, s]));
+  const q = state.search.trim().toLowerCase();
+  const shown = skills.map((s, i) => [s, i]).filter(([s]) => !q || (s.name + ' ' + s.instruction).toLowerCase().includes(q));
   return [
     h('div', { class: 'head' },
-      h('div', null, h('h2', null, 'Skill keys'), h('p', { class: 'muted' }, 'Each skill is a key above the keyboard that applies one instruction to what you typed.')),
-      h('button', { class: 'btn primary', onclick: () => edit(-1) }, 'New skill')),
-    skills.map((s, i) => h('div', { class: 'card row' },
-      h('div', { class: 'emoji' }, s.emoji || '✦'),
-      h('div', { class: 'grow' }, h('h3', null, s.name, s.key ? h('span', { class: 'pill', style: 'margin-left:8px' }, 'hold ' + s.key.toUpperCase()) : null), h('p', { class: 'muted clamp' }, s.instruction)),
-      h('button', { class: 'btn ghost', disabled: i === 0, 'aria-label': 'Move up', onclick: () => move(i, -1) }, '↑'),
-      h('button', { class: 'btn ghost', disabled: i === skills.length - 1, 'aria-label': 'Move down', onclick: () => move(i, 1) }, '↓'),
-      h('button', { class: 'btn', onclick: () => edit(i) }, 'Edit'))),
-    skills.length === 0 && h('div', { class: 'card muted' }, 'No skills yet. Create one to see it on your keyboard.'),
+      h('div', null, h('h1', null, 'My skills'), h('p', { class: 'muted sub' }, 'Each skill is one instruction your keyboard can apply to what you typed.')),
+      h('div', { class: 'actions' },
+        h('button', { class: 'btn', onclick: () => go('assistant') }, icon('sparkles'), 'Ask the assistant'),
+        h('button', { class: 'btn primary', onclick: () => skillDialog(-1) }, icon('plus'), 'New skill'))),
+    h('div', { class: 'card' },
+      h('h2', null, 'Hold keys'),
+      h('p', { class: 'muted' }, 'Click a letter to choose the skill it runs when held. Purple letters already run one.'),
+      h('div', { class: 'keymap' }, ['qwertyuiop', 'asdfghjkl', 'zxcvbnm'].map((row) => h('div', null, row.split('').map((l) =>
+        h('button', { class: byKey[l] ? 'on' : '', title: byKey[l] ? `Hold ${l.toUpperCase()}: ${byKey[l].name}` : `Hold ${l.toUpperCase()}: nothing yet`,
+          'aria-label': byKey[l] ? `${l.toUpperCase()}, runs ${byKey[l].name}` : `${l.toUpperCase()}, free`, onclick: () => keyDialog(l) }, l)))))),
+    skills.length > 6 && h('input', { type: 'search', placeholder: 'Search my skills', value: state.search, 'aria-label': 'Search my skills',
+      style: 'margin-top:16px', oninput: (e) => { state.search = e.target.value; renderKeepingFocus(e.target); } }),
+    h('div', { class: 'grid', style: 'margin-top:16px' },
+      shown.map(([s, i]) => h('button', { class: 'card tile', onclick: () => skillDialog(i) },
+        h('div', { class: 'top' }, h('div', { class: 'emoji' }, s.emoji || '✦'), h('h3', null, s.name), s.key && h('span', { class: 'keycap', title: `Hold ${s.key.toUpperCase()}` }, s.key.toUpperCase())),
+        h('p', { class: 'muted clamp' }, s.instruction),
+        h('div', { class: 'foot' },
+          h('span', { class: 'pill off' }, (GROUPS.find((g) => g[0] === s.category) || GROUPS[1])[1]),
+          keyboard.wheel.includes(wheelId(s.name)) && h('span', { class: 'pill' }, 'On the wheel')))),
+      !q && h('button', { class: 'card tile dashed', onclick: () => skillDialog(-1) }, icon('plus'), 'New skill')),
+    q && shown.length === 0 && h('p', { class: 'muted', style: 'margin-top:16px' }, 'No skill matches that search.'),
   ];
 }
 
-function tokenCard(icon, title, help, isSet, field) {
-  const input = h('input', { type: 'password', placeholder: isSet ? 'Saved. Paste a new token to replace it' : 'Paste token', autocomplete: 'off' });
-  return h('div', { class: 'card' },
-    h('div', { class: 'row' }, h('div', { class: 'emoji' }, icon),
-      h('div', { class: 'grow' }, h('h3', null, title), h('p', { class: 'muted' }, help)),
-      h('span', { class: 'pill' + (isSet ? '' : ' off') }, isSet ? 'Connected' : 'Not connected')),
-    h('div', { class: 'row', style: 'margin-top:12px' }, h('div', { class: 'grow' }, input),
-      h('button', { class: 'btn primary', onclick: () => input.value.trim() ? save({ [field]: input.value }, 'Connected') : toast('Paste a token first') }, 'Save'),
-      isSet && h('button', { class: 'btn ghost danger', onclick: () => save({ [field]: '' }, 'Disconnected') }, 'Disconnect')));
+// Typing in the search box re-renders the page; put the cursor back where it was.
+function renderKeepingFocus(input) {
+  const at = input.selectionStart;
+  render();
+  const again = app.querySelector('input[type=search]');
+  if (again) { again.focus(); again.setSelectionRange(at, at); }
 }
 
-// Google is connected by signing in, not by pasting a token, and only when the server has been given a Google client.
-function googleCard(c) {
-  const status = !c.googleAvailable ? 'Not set up' : c.googleConnected ? 'Connected' : 'Not connected';
-  return h('div', { class: 'card' },
-    h('div', { class: 'row' }, h('div', { class: 'emoji' }, '🎥'),
-      h('div', { class: 'grow' }, h('h3', null, 'Google Meet'),
-        h('p', { class: 'muted' }, c.googleAvailable
-          ? 'One-tap meeting links from the keyboard. Sign in with the Google account the meetings should belong to.'
-          : 'One-tap meeting links from the keyboard. This server has no Google client yet: see “Google Meet” in the dashboard README.')),
-      h('span', { class: 'pill' + (c.googleConnected ? '' : ' off') }, status)),
-    c.googleAvailable && h('div', { class: 'actions' },
-      c.googleConnected
-        ? h('button', { class: 'btn ghost danger', onclick: async () => {
-            try { state.config = await api('POST', '/api/google/disconnect'); toast('Google disconnected'); render(); } catch (e) { toast(e.message); }
-          } }, 'Disconnect')
-        : h('button', { class: 'btn primary', onclick: () => { location.href = '/api/google/start'; } }, 'Connect Google')));
+// ---------- Assistant ----------
+
+const IDEAS = [
+  'Create a skill that turns my text into emoji',
+  'I want to reply to messages in Hindi with one key',
+  'Set up a skill that writes a polite email and opens it in Gmail',
+  'How do I get a Google Meet link from the keyboard?',
+];
+
+async function sendChat(text) {
+  const content = text.trim();
+  if (!content || state.thinking) return;
+  state.chat.push({ role: 'user', content });
+  state.draftMessage = '';
+  state.thinking = true;
+  render();
+  try {
+    const messages = state.chat.filter((m) => m.role === 'user' || m.role === 'assistant').map((m) => ({ role: m.role, content: m.content }));
+    const answer = await api('POST', '/api/chat', { messages });
+    state.chat.push({ role: 'assistant', content: answer.reply, actions: answer.actions.map((a) => ({ ...a, done: false })) });
+  } catch (e) {
+    state.chat.push({ role: 'error', content: e.message });
+  }
+  state.thinking = false;
+  render();
+  window.scrollTo(0, document.body.scrollHeight);
 }
 
-function connectionsTab() {
-  const c = state.config;
-  const apis = c.customApis;
-  const strip = (a) => ({ id: a.id, name: a.name, description: a.description, url: a.url, headerName: a.headerName });
-  const edit = (index) => {
-    const a = apis[index] || {};
-    dialog(index < 0 ? 'Connect an API' : 'Edit connection', [
-      { key: 'name', label: 'Name', value: a.name, required: true, hint: 'NBA scores' },
-      { key: 'description', label: 'What it returns and when to use it', value: a.description, multiline: true },
-      { key: 'url', label: 'Address (https). Put {query} where the search term goes', value: a.url, required: true, type: 'url', hint: 'https://api.example.com/search?q={query}' },
-      { key: 'headerName', label: 'Header name (optional)', value: a.headerName, hint: 'X-Api-Key' },
-      { key: 'headerValue', label: a.headerValueSet ? 'Header value (saved; leave empty to keep it)' : 'Header value (optional)', type: 'password' },
-    ], (v) => {
-      const item = { id: a.id, name: v.name, description: v.description, url: v.url, headerName: v.headerName };
-      if (v.headerValue || !a.headerValueSet) item.headerValue = v.headerValue;
-      const next = apis.map(strip);
-      if (index < 0) next.push(item); else next[index] = item;
-      return save({ customApis: next });
-    }, index >= 0 && (() => save({ customApis: apis.filter((_, i) => i !== index).map(strip) }, 'Connection removed')));
-  };
-  return [
-    h('div', { class: 'head' },
-      h('div', null, h('h2', null, 'Connections'), h('p', { class: 'muted' }, 'Apps and APIs the assistant can use while carrying out an action.')),
-      h('button', { class: 'btn primary', onclick: () => edit(-1) }, 'Connect an API')),
-    h('div', { class: 'card row' }, h('div', { class: 'emoji' }, '☀️'),
-      h('div', { class: 'grow' }, h('h3', null, 'Weather'), h('p', { class: 'muted' }, 'Forecasts from Open-Meteo. No account needed.')),
-      h('label', { class: 'switch' }, h('input', { type: 'checkbox', checked: c.weather, 'aria-label': 'Weather', onchange: (e) => save({ weather: e.target.checked }) }))),
-    googleCard(c),
-    tokenCard('📝', 'Notion', 'Search, read and create pages. Use an internal integration token and share the pages you want with it.', c.notionSet, 'notionToken'),
-    tokenCard('📅', 'Calendly', 'Drop your booking links into a message. Use a personal access token.', c.calendlySet, 'calendlyToken'),
-    apis.map((a, i) => h('div', { class: 'card row' }, h('div', { class: 'emoji' }, '🔌'),
-      h('div', { class: 'grow' }, h('h3', null, a.name), h('p', { class: 'muted clamp' }, a.description || a.url)),
-      h('span', { class: 'pill' }, 'API'),
-      h('button', { class: 'btn', onclick: () => edit(i) }, 'Edit'))),
-  ];
+async function applyAction(action) {
+  const { skills, keyboard } = state.config;
+  if (action.type === 'create_skill') {
+    let name = action.name;
+    for (let n = 2; skills.some((s) => s.name.toLowerCase() === name.toLowerCase()); n++) name = `${action.name} ${n}`;
+    const key = action.key && !skills.some((s) => s.key === action.key) ? action.key : '';
+    const wheel = action.wheel && keyboard.wheel.length < MAX_WHEEL ? [...keyboard.wheel, wheelId(name)] : null;
+    const note = action.wheel && !wheel ? `${name} created. The wheel is full, so it was not added there` : `${name} created`;
+    if (await saveSkills([...skills, { emoji: action.emoji, name, instruction: action.instruction, category: action.group, key }], wheel, note)) action.done = true;
+  } else if (action.type === 'bind_key') {
+    const index = skills.findIndex((s) => s.name.toLowerCase() === action.skill.toLowerCase());
+    if (index < 0) return toast(`There is no skill called ${action.skill}`);
+    const next = skills.map((s, i) => ({ ...s, key: i === index ? action.key : s.key === action.key ? '' : s.key }));
+    if (await saveSkills(next, null, `Hold ${action.key.toUpperCase()} runs ${skills[index].name}`)) action.done = true;
+  } else if (action.type === 'add_to_wheel') {
+    const skill = skills.find((s) => s.name.toLowerCase() === action.skill.toLowerCase());
+    if (!skill) return toast(`There is no skill called ${action.skill}`);
+    if (keyboard.wheel.includes(wheelId(skill.name))) { action.done = true; return render(); }
+    if (keyboard.wheel.length >= MAX_WHEEL) return toast(`The wheel holds ${MAX_WHEEL}. Remove one under Settings first`);
+    if (await saveKeyboard({ wheel: [...keyboard.wheel, wheelId(skill.name)] }, `${skill.name} is on the wheel`)) action.done = true;
+  }
+  render();
 }
 
-function keyCard(title, help, isSet, field, hint) {
-  const key = h('input', { type: 'password', placeholder: isSet ? 'Saved. Paste a new key to replace it' : hint, autocomplete: 'off' });
-  return h('div', { class: 'card' },
-    h('div', { class: 'row' }, h('div', { class: 'grow' }, h('h3', null, title), h('p', { class: 'muted' }, help)),
-      h('span', { class: 'pill' + (isSet ? '' : ' off') }, isSet ? 'Saved' : 'Missing')),
-    h('div', { class: 'row', style: 'margin-top:12px' }, h('div', { class: 'grow' }, key),
-      h('button', { class: 'btn primary', onclick: () => key.value.trim() ? save({ [field]: key.value }, 'Key saved') : toast('Paste a key first') }, 'Save'),
-      isSet && h('button', { class: 'btn ghost danger', onclick: () => save({ [field]: '' }, 'Key removed') }, 'Remove')));
+function actionCard(action) {
+  const done = h('span', { class: 'pill ok' }, 'Done');
+  if (action.type === 'create_skill') {
+    return h('div', { class: 'card proposal' },
+      h('div', { class: 'row' }, h('div', { class: 'emoji' }, action.emoji || '✦'), h('h3', { class: 'grow' }, action.name),
+        action.key && h('span', { class: 'keycap', title: 'Suggested hold key' }, action.key.toUpperCase())),
+      action.does && [h('div', { class: 'label' }, 'WHAT IT DOES'), h('div', { class: 'box' }, action.does)],
+      h('div', { class: 'label' }, 'INSTRUCTION'), h('div', { class: 'box' }, action.instruction),
+      h('div', { class: 'foot', style: 'margin-top:12px' },
+        h('span', { class: 'pill off' }, (GROUPS.find((g) => g[0] === action.group) || GROUPS[1])[1]), action.wheel && h('span', { class: 'pill' }, 'Goes on the wheel')),
+      h('div', { class: 'actions', style: 'margin-top:14px' }, action.done ? done : [
+        h('button', { class: 'btn primary', onclick: () => applyAction(action) }, icon('check'), 'Create skill'),
+        h('button', { class: 'btn', onclick: () => skillDialog(-1, { ...action, category: action.group }) }, 'Edit first')]));
+  }
+  if (action.type === 'bind_key') {
+    return h('div', { class: 'card proposal row' }, h('span', { class: 'keycap' }, action.key.toUpperCase()),
+      h('div', { class: 'grow' }, `Hold ${action.key.toUpperCase()} to run ${action.skill}`),
+      action.done ? done : h('button', { class: 'btn primary', onclick: () => applyAction(action) }, 'Apply'));
+  }
+  if (action.type === 'add_to_wheel') {
+    return h('div', { class: 'card proposal row' }, h('div', { class: 'emoji' }, icon('circle_dashed')),
+      h('div', { class: 'grow' }, `Put ${action.skill} on the wheel`),
+      action.done ? done : h('button', { class: 'btn primary', onclick: () => applyAction(action) }, 'Apply'));
+  }
+  return h('div', { class: 'card proposal row' }, h('div', { class: 'emoji' }, icon('plug')),
+    h('div', { class: 'grow' }, h('div', null, action.label), action.why && h('p', { class: 'muted small' }, action.why)),
+    h('button', { class: 'btn', onclick: () => go(action.page === 'phones' ? 'settings' : action.page) }, 'Open', icon('arrow_right')));
 }
 
 function assistantTab() {
   const c = state.config;
-  const openai = c.provider === 'openai';
-  const provider = h('select', { onchange: (e) => save({ provider: e.target.value }) },
-    [['anthropic', 'Claude (Anthropic)'], ['openai', 'GPT (OpenAI)'], ['custom', 'AI Router or other gateway']].map(([id, name]) => h('option', { value: id, selected: id === c.provider }, name)));
-  const model = h('select', { onchange: (e) => save({ model: e.target.value }) },
-    MODELS.map(([id, name]) => h('option', { value: id, selected: id === c.model }, name)));
-  const openaiModel = h('input', { type: 'text', value: c.openaiModel, placeholder: 'gpt-5.5' });
-  const customBase = h('input', { type: 'url', value: c.customBase, placeholder: 'https://api.airouter.in/v1' });
-  const customModel = h('input', { type: 'text', value: c.customModel, placeholder: 'anthropic/claude-haiku-5.5' });
+  const hasKey = c.provider === 'openai' ? c.openaiKeySet : c.provider === 'custom' ? c.customKeySet : c.apiKeySet;
+  const input = h('textarea', { placeholder: 'Describe what you want your keyboard to do…', rows: 1, 'aria-label': 'Message to the assistant',
+    oninput: (e) => { state.draftMessage = e.target.value; },
+    onkeydown: (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(input.value); } } });
+  input.value = state.draftMessage;
   return [
-    h('div', null, h('h2', null, 'Assistant'), h('p', { class: 'muted' }, 'The model behind your keyboard’s actions.')),
-    h('div', { class: 'card' }, h('h3', null, 'Provider'), h('label', null, 'Which service runs actions', provider),
-      c.provider === 'custom'
-        ? [h('label', null, 'Gateway address', customBase), h('label', null, 'Model name', customModel),
-            h('div', { class: 'actions' }, h('button', { class: 'btn primary', onclick: () => save({ customBase: customBase.value, customModel: customModel.value }) }, 'Save'))]
-        : openai
-        ? h('label', null, 'OpenAI model ID', h('div', { class: 'row' }, h('div', { class: 'grow' }, openaiModel),
-            h('button', { class: 'btn primary', onclick: () => save({ openaiModel: openaiModel.value }) }, 'Save')))
-        : h('label', null, 'Claude model', model)),
-    keyCard('Claude API key', 'From console.anthropic.com. Stored encrypted here and sent only to your paired keyboards.', c.apiKeySet, 'apiKey', 'sk-ant-…'),
-    keyCard('OpenAI API key', 'From platform.openai.com. Stored encrypted here and sent only to your paired keyboards.', c.openaiKeySet, 'openaiKey', 'sk-…'),
-    keyCard('Gateway API key', 'For AI Router or another OpenAI-compatible gateway. Your text and this key go to the address above.', c.customKeySet, 'customKey', 'sk-air-v1-…'),
-    h('div', { class: 'card' }, h('label', { class: 'switch' },
-      h('input', { type: 'checkbox', checked: c.webSearch, onchange: (e) => save({ webSearch: e.target.checked }) }),
-      'Search the web when an action needs fresh facts')),
+    h('div', { class: 'head' },
+      h('div', null, h('h1', null, 'Assistant'), h('p', { class: 'muted sub' }, 'Say what you want. It drafts the skill or shows the next step, and nothing changes until you approve.')),
+      state.chat.length > 0 && h('button', { class: 'btn', onclick: () => { state.chat = []; render(); } }, 'New chat')),
+    !hasKey && h('div', { class: 'card row' }, h('div', { class: 'emoji' }, icon('key_round')),
+      h('div', { class: 'grow' }, h('h3', null, 'Add your AI key first'), h('p', { class: 'muted' }, 'The assistant runs on the same key your keyboard uses.')),
+      h('button', { class: 'btn primary', onclick: () => go('settings') }, 'Open settings')),
+    h('div', { class: 'chat', style: 'margin-top:8px' },
+      state.chat.length === 0 && h('div', { class: 'card' },
+        h('h2', null, 'What would you like to set up?'), h('p', { class: 'muted' }, 'Try one of these, or type your own.'),
+        h('div', { class: 'chips' }, IDEAS.map((idea) => h('button', { class: 'chip', onclick: () => sendChat(idea) }, idea)))),
+      state.chat.map((m) => [
+        h('div', { class: 'bubble ' + (m.role === 'user' ? 'user' : 'bot'), style: m.role === 'error' ? 'color:var(--danger)' : null }, m.content),
+        (m.actions || []).map(actionCard)]),
+      state.thinking && h('div', { class: 'bubble bot muted' }, 'Thinking…')),
+    h('div', { class: 'composer' }, input,
+      h('button', { class: 'btn primary', disabled: state.thinking, 'aria-label': 'Send', onclick: () => sendChat(input.value) }, icon('send'))),
   ];
 }
 
-const when = (ms) => ms ? new Date(ms).toLocaleString() : 'never';
+// ---------- Connections ----------
 
-function devicesTab() {
+function tokenDialog(title, help, field, isSet) {
+  modal(title, (close) => {
+    const input = h('input', { type: 'password', placeholder: isSet ? 'Paste a new token to replace the saved one' : 'Paste token', autocomplete: 'off' });
+    return h('div', null, h('p', { class: 'muted', style: 'margin:4px 0 4px' }, help), h('label', { class: 'field' }, 'Token', input),
+      h('div', { class: 'actions' },
+        h('button', { class: 'btn primary', onclick: async () => { if (!input.value.trim()) return toast('Paste a token first'); if (await save({ [field]: input.value }, `${title} connected`)) close(); } }, 'Save'),
+        h('button', { class: 'btn', onclick: close }, 'Cancel'),
+        isSet && h('button', { class: 'btn ghost danger', onclick: async () => { if (await save({ [field]: '' }, `${title} disconnected`)) close(); } }, 'Disconnect')));
+  });
+}
+
+function apiDialog(index) {
+  const apis = state.config.customApis;
+  const strip = (a) => ({ id: a.id, name: a.name, description: a.description, url: a.url, headerName: a.headerName });
+  const a = apis[index] || {};
+  modal(index < 0 ? 'Connect an API' : 'Edit API', (close) => {
+    const f = {
+      name: h('input', { type: 'text', value: a.name || '', required: true, placeholder: 'NBA scores' }),
+      description: h('input', { type: 'text', value: a.description || '', placeholder: 'Returns today\'s scores; use for basketball questions' }),
+      url: h('input', { type: 'url', value: a.url || '', required: true, placeholder: 'https://api.example.com/search?q={query}' }),
+      headerName: h('input', { type: 'text', value: a.headerName || '', placeholder: 'X-Api-Key' }),
+      headerValue: h('input', { type: 'password', placeholder: a.headerValueSet ? 'Saved. Leave empty to keep it' : '', autocomplete: 'off' }),
+    };
+    return h('form', { onsubmit: async (e) => {
+      e.preventDefault();
+      const item = { id: a.id, name: f.name.value, description: f.description.value, url: f.url.value, headerName: f.headerName.value };
+      if (f.headerValue.value || !a.headerValueSet) item.headerValue = f.headerValue.value;
+      const next = apis.map(strip);
+      if (index < 0) next.push(item); else next[index] = item;
+      if (await save({ customApis: next }, 'API saved')) close();
+    } },
+      h('label', { class: 'field' }, 'Name', f.name),
+      h('label', { class: 'field' }, 'What it returns and when to use it', f.description),
+      h('label', { class: 'field' }, 'Address (https). Put {query} where the search term goes', f.url),
+      h('div', { class: 'row', style: 'align-items:flex-end' },
+        h('label', { class: 'field grow' }, 'Header name (optional)', f.headerName), h('label', { class: 'field grow' }, 'Header value', f.headerValue)),
+      h('div', { class: 'actions' },
+        h('button', { class: 'btn primary', type: 'submit' }, 'Save'), h('button', { class: 'btn', type: 'button', onclick: close }, 'Cancel'),
+        index >= 0 && h('button', { class: 'btn ghost danger', type: 'button', onclick: async () => {
+          if (await save({ customApis: apis.filter((_, i) => i !== index).map(strip) }, 'API removed')) close();
+        } }, 'Remove')));
+  });
+}
+
+function connection(iconName, title, about, status, control) {
+  return h('div', { class: 'card tile', style: 'cursor:default' },
+    h('div', { class: 'top' }, h('div', { class: 'emoji' }, icon(iconName)), h('h3', null, title), status),
+    h('p', { class: 'muted' }, about),
+    h('div', { class: 'foot' }, control));
+}
+
+function connectionsTab() {
+  const c = state.config;
+  const pill = (on, yes = 'Connected', no = 'Not connected') => h('span', { class: 'pill' + (on ? ' ok' : ' off') }, on ? yes : no);
   return [
-    h('div', { class: 'head' },
-      h('div', null, h('h2', null, 'Keyboards'), h('p', { class: 'muted' }, 'Phones that sync their skills and connections from this account.')),
-      h('button', { class: 'btn primary', onclick: async () => {
-        try { state.code = await api('POST', '/api/devices/code'); render(); } catch (e) { toast(e.message); }
-      } }, 'Pair a keyboard')),
-    state.code && h('div', { class: 'card' },
-      h('h3', null, 'Pairing code'),
-      h('p', { class: 'muted' }, `In the Verbo app, open Dashboard, enter this site’s address and this code. It works once, for ${state.code.minutes} minutes.`),
+    h('div', { class: 'head' }, h('div', null, h('h1', null, 'Connections'),
+      h('p', { class: 'muted sub' }, 'Apps and services your skills can use. Gmail, WhatsApp, Calendar, Maps, YouTube and X need nothing here: skills open them with a draft.'))),
+    h('div', { class: 'grid' },
+      connection('video', 'Google Meet', 'One-tap meeting links from the keyboard.', c.googleAvailable ? pill(c.googleConnected) : h('span', { class: 'pill off' }, 'Not set up'),
+        !c.googleAvailable ? h('p', { class: 'muted small' }, 'This server has no Google client yet. See “Google Meet” in the dashboard README.')
+          : c.googleConnected ? h('button', { class: 'btn ghost danger', onclick: async () => {
+            try { state.config = await api('POST', '/api/google/disconnect'); toast('Google disconnected'); render(); } catch (e) { toast(e.message); }
+          } }, 'Disconnect')
+            : h('button', { class: 'btn primary', onclick: () => { location.href = '/api/google/start'; } }, 'Connect Google')),
+      connection('notebook_text', 'Notion', 'Search, read and create pages.', pill(c.notionSet),
+        h('button', { class: 'btn', onclick: () => tokenDialog('Notion', 'Create an internal integration at notion.so/my-integrations, paste its token here, and share the pages you want with that integration.', 'notionToken', c.notionSet) }, c.notionSet ? 'Manage' : 'Connect')),
+      connection('calendar', 'Calendly', 'Drop your booking links into a message.', pill(c.calendlySet),
+        h('button', { class: 'btn', onclick: () => tokenDialog('Calendly', 'In Calendly open Integrations → API & webhooks and create a personal access token.', 'calendlyToken', c.calendlySet) }, c.calendlySet ? 'Manage' : 'Connect')),
+      connection('globe', 'Web search', 'Lets skills look up fresh facts. Works with a Claude or OpenAI key, not through a gateway.', pill(c.webSearch, 'On', 'Off'),
+        toggle(c.webSearch, (v) => save({ webSearch: v }), 'Web search')),
+      connection('cloud_sun', 'Weather', 'Forecasts from Open-Meteo. No account needed.', pill(c.weather, 'On', 'Off'),
+        toggle(c.weather, (v) => save({ weather: v }), 'Weather')),
+      c.customApis.map((a, i) => connection('plug', a.name, a.description || a.url, h('span', { class: 'pill ok' }, 'API'),
+        h('button', { class: 'btn', onclick: () => apiDialog(i) }, 'Edit'))),
+      h('button', { class: 'card tile dashed', onclick: () => apiDialog(-1) }, icon('plus'), 'Connect an API')),
+  ];
+}
+
+// ---------- Settings ----------
+
+const MODELS = [
+  ['claude-haiku-5-5', 'Haiku 5.5 — cheapest, fast'],
+  ['claude-sonnet-5-5', 'Sonnet 5.5 — balanced'],
+  ['claude-opus-5-5', 'Opus 5.5 — most capable'],
+];
+const LANGUAGES = ['English', 'Hindi', 'Spanish', 'French', 'Chinese (Simplified)', 'Arabic', 'Bengali', 'Portuguese', 'Russian', 'Japanese', 'German', 'Korean',
+  'Italian', 'Turkish', 'Indonesian', 'Urdu', 'Marathi', 'Tamil', 'Telugu', 'Gujarati', 'Punjabi', 'Kannada', 'Malayalam', 'Vietnamese', 'Thai', 'Dutch', 'Polish', 'Swahili'];
+
+/** One key field: says clearly whether a key is saved (and which, by its last four characters). */
+function keyRow(label, field, isSet, hintText, placeholder) {
+  const input = h('input', { type: 'password', placeholder: isSet ? 'Paste a new key to replace it' : placeholder, autocomplete: 'off', 'aria-label': label });
+  return h('div', { style: 'margin-top:14px' },
+    h('div', { class: 'row' }, h('div', { class: 'grow', style: 'font-weight:600;font-size:.86rem' }, label),
+      h('span', { class: 'pill' + (isSet ? ' ok' : ' off') }, isSet ? (hintText ? `Saved · ends in ${hintText}` : 'Saved') : 'No key yet')),
+    h('div', { class: 'row', style: 'margin-top:6px' }, h('div', { class: 'grow' }, input),
+      h('button', { class: 'btn primary', onclick: () => (input.value.trim() ? save({ [field]: input.value }, 'Key saved') : toast('Paste a key first')) }, 'Save'),
+      isSet && h('button', { class: 'btn ghost danger', onclick: () => confirm('Remove this key? Your keyboard will stop running actions until you add one.') && save({ [field]: '' }, 'Key removed') }, 'Remove')));
+}
+
+function modelCard() {
+  const c = state.config;
+  const seg = h('div', { class: 'seg', role: 'group', 'aria-label': 'AI service' },
+    [['anthropic', 'Claude'], ['openai', 'OpenAI'], ['custom', 'Gateway']].map(([id, name]) =>
+      h('button', { class: id === c.provider ? 'on' : '', onclick: () => save({ provider: id }) }, name)));
+  let fields;
+  if (c.provider === 'openai') {
+    const model = h('input', { type: 'text', value: c.openaiModel, placeholder: 'gpt-5.5', 'aria-label': 'OpenAI model' });
+    fields = [
+      setting('Model', 'The model ID exactly as OpenAI lists it', h('div', { class: 'row' }, model, h('button', { class: 'btn', onclick: () => save({ openaiModel: model.value }) }, 'Save'))),
+      keyRow('OpenAI API key', 'openaiKey', c.openaiKeySet, c.openaiKeyHint, 'sk-…')];
+  } else if (c.provider === 'custom') {
+    const base = h('input', { type: 'url', value: c.customBase, placeholder: 'https://api.airouter.in/v1', 'aria-label': 'Gateway address' });
+    const model = h('input', { type: 'text', value: c.customModel, placeholder: 'anthropic/claude-haiku-5.5', 'aria-label': 'Gateway model' });
+    fields = [
+      h('label', { class: 'field' }, 'Gateway address', base), h('label', { class: 'field' }, 'Model name', model),
+      h('div', { class: 'actions', style: 'margin-top:10px' }, h('button', { class: 'btn', onclick: () => save({ customBase: base.value, customModel: model.value }) }, 'Save address and model')),
+      keyRow('Gateway API key', 'customKey', c.customKeySet, c.customKeyHint, 'sk-air-v1-…'),
+      h('p', { class: 'muted small', style: 'margin-top:10px' }, 'For AI Router, OpenRouter and other OpenAI-compatible services. Your text and key go to that address. Gateways have no web search.')];
+  } else {
+    fields = [
+      setting('Model', 'Haiku is the cheapest and is fine for a keyboard', select(c.model, MODELS, (v) => save({ model: v }), 'Claude model')),
+      keyRow('Claude API key', 'apiKey', c.apiKeySet, c.apiKeyHint, 'sk-ant-…')];
+  }
+  return h('div', { class: 'card' }, h('h2', null, 'AI service'),
+    h('p', { class: 'muted' }, 'Which service runs your keyboard\'s actions. Keys are stored encrypted here and sent only to your paired phones.'), seg, fields);
+}
+
+function keyboardCard() {
+  const k = state.config.keyboard;
+  const set = (name) => (value) => saveKeyboard({ [name]: value });
+  return h('div', { class: 'card' }, h('h2', null, 'Keyboard'), h('p', { class: 'muted' }, 'Changes reach your phone the next time it syncs (within about ten minutes of typing, or tap Sync now in the app).'),
+    setting('Assistant', 'Skill keys, the wheel and voice commands', toggle(k.assistantOn, set('assistantOn'), 'Assistant')),
+    setting('When a skill finishes', null, select(k.agentMode, [['auto', 'Apply the result straight away'], ['ask', 'Show it first, then I decide'], ['manual', 'Only run skill keys I tap']], set('agentMode'), 'Agent mode')),
+    setting('Look', null, select(k.theme, [['system', 'Follow the phone'], ['dark', 'Dark'], ['light', 'Light'], ['amoled', 'Amoled black'], ['ocean', 'Ocean blue'], ['forest', 'Forest green'], ['sunset', 'Sunset'], ['rose', 'Rose'], ['mint', 'Mint'], ['custom', 'Custom accent (set on the phone)']], set('theme'), 'Theme')),
+    setting('Key style', null, select(k.keyShape, [['raised', 'Raised'], ['rounded', 'Rounded'], ['square', 'Square'], ['bubble', 'Bubble'], ['glass', 'Glass'], ['outline', 'Outline'], ['flat', 'Flat']], set('keyShape'), 'Key style')),
+    setting('Key height', `${k.heightPercent}%`, h('input', { type: 'range', min: 80, max: 130, step: 5, value: k.heightPercent, 'aria-label': 'Key height', onchange: (e) => set('heightPercent')(Number(e.target.value)) })),
+    setting('Number row', 'Show 1–0 above the letters', toggle(k.numberRow, set('numberRow'), 'Number row')),
+    setting('Key sound', null, h('div', { class: 'row' },
+      select(k.soundPack, [['system', 'Phone default'], ['typewriter', 'Typewriter'], ['mechanical', 'Mechanical'], ['pop', 'Pop'], ['drop', 'Water drop'], ['soft', 'Soft tap']], set('soundPack'), 'Sound effect'),
+      toggle(k.sound, set('sound'), 'Key sound'))),
+    setting('Vibration', null, h('div', { class: 'row' },
+      select(k.hapticStrength, [['light', 'Light'], ['medium', 'Medium'], ['strong', 'Strong']], set('hapticStrength'), 'Vibration strength'),
+      toggle(k.haptic, set('haptic'), 'Vibration'))),
+    setting('Auto-correct', 'Fix typos as you type', toggle(k.autoCorrect, set('autoCorrect'), 'Auto-correct')),
+    setting('Word suggestions', null, toggle(k.suggestions, set('suggestions'), 'Word suggestions')));
+}
+
+function wheelCard() {
+  const { keyboard: k, skills } = state.config;
+  const label = (id) => WHEEL_TOOLS[id] || id.replace('skill:', '');
+  const wheel = k.wheel.filter((id) => WHEEL_TOOLS[id] || skills.some((s) => wheelId(s.name) === id));
+  const free = [...Object.keys(WHEEL_TOOLS), ...skills.map((s) => wheelId(s.name))].filter((id) => !wheel.includes(id));
+  return h('div', { class: 'card' }, h('h2', null, 'Wheel'),
+    h('p', { class: 'muted' }, `Hold the space bar and slide to one of these. Left to right, up to ${MAX_WHEEL}.`),
+    setting('Hold the space bar for the wheel', 'When off, holding it asks the assistant straight away', toggle(k.wheelOn, (v) => saveKeyboard({ wheelOn: v }), 'Wheel')),
+    h('div', { class: 'chips', style: 'margin-top:12px' },
+      wheel.map((id) => h('button', { class: 'chip on', title: 'Remove from the wheel', onclick: () => saveKeyboard({ wheel: wheel.filter((x) => x !== id) }, `${label(id)} removed`) }, label(id), icon('x'))),
+      wheel.length === 0 && h('span', { class: 'muted' }, 'Nothing on the wheel yet.')),
+    wheel.length < MAX_WHEEL && free.length > 0 && h('div', { style: 'margin-top:14px' },
+      h('div', { class: 'muted small', style: 'margin-bottom:8px' }, 'Add to the wheel'),
+      h('div', { class: 'chips' }, free.map((id) => h('button', { class: 'chip', onclick: () => saveKeyboard({ wheel: [...wheel, id] }, `${label(id)} added`) }, icon('plus'), label(id))))));
+}
+
+function languagesCard() {
+  const mine = state.config.keyboard.languages;
+  return h('div', { class: 'card' }, h('h2', null, 'Translate languages'), h('p', { class: 'muted' }, 'These are listed first when you translate, with one button for all of them at once.'),
+    h('div', { class: 'chips' }, LANGUAGES.map((name) => h('button', { class: 'chip' + (mine.includes(name) ? ' on' : ''), 'aria-pressed': mine.includes(name),
+      onclick: () => saveKeyboard({ languages: mine.includes(name) ? mine.filter((x) => x !== name) : [...mine, name] }) }, name))));
+}
+
+const when = (ms) => (ms ? new Date(ms).toLocaleString() : 'never');
+
+function phonesCard() {
+  return h('div', { class: 'card' }, h('div', { class: 'row' }, h('div', { class: 'grow' }, h('h2', null, 'Phones'), h('p', { class: 'muted' }, 'Keyboards that sync with this account, both ways.')),
+    h('button', { class: 'btn primary', onclick: async () => { try { state.code = await api('POST', '/api/devices/code'); render(); } catch (e) { toast(e.message); } } }, icon('smartphone'), 'Pair a phone')),
+    state.code && h('div', null, h('p', { class: 'muted', style: 'margin-top:12px' }, `In the Verbo app open Settings → Web dashboard, enter this site's address and this code. It works once, for ${state.code.minutes} minutes.`),
       h('div', { class: 'code' }, state.code.code)),
-    state.devices.map((d) => h('div', { class: 'card row' }, h('div', { class: 'emoji' }, '⌨️'),
-      h('div', { class: 'grow' }, h('h3', null, d.name), h('p', { class: 'muted' }, `Paired ${when(d.created)} · last synced ${when(d.lastSeen)}`)),
+    state.devices.map((d) => setting(d.name, `Paired ${when(d.created)} · last synced ${when(d.lastSeen)}`,
       h('button', { class: 'btn ghost danger', onclick: async () => {
         if (!confirm(`Unpair ${d.name}? It keeps its current settings but stops syncing.`)) return;
         try { await api('POST', '/api/devices/remove', { id: d.id }); await load(); } catch (e) { toast(e.message); }
       } }, 'Unpair'))),
-    state.devices.length === 0 && !state.code && h('div', { class: 'card muted' }, 'No keyboards paired yet.'),
+    state.devices.length === 0 && !state.code && h('p', { class: 'muted', style: 'margin-top:12px' }, 'No phone paired yet.'));
+}
+
+function settingsTab() {
+  return [
+    h('div', { class: 'head' }, h('div', null, h('h1', null, 'Settings'), h('p', { class: 'muted sub' }, 'Everything here syncs with your phone.'))),
+    h('div', { class: 'stack' }, modelCard(), phonesCard(), keyboardCard(), wheelCard(), languagesCard(),
+      h('div', { class: 'card row' }, h('div', { class: 'grow' }, h('h2', null, 'Account'), h('p', { class: 'muted' }, state.email)),
+        h('button', { class: 'btn', onclick: async () => {
+          await api('POST', '/api/logout').catch(() => {});
+          Object.assign(state, { email: null, config: null, code: null, chat: [] });
+          render();
+        } }, icon('log_out'), 'Sign out'))),
   ];
 }
 
-const TABS = [['skills', 'Skill keys', skillsTab], ['connections', 'Connections', connectionsTab], ['assistant', 'Assistant', assistantTab], ['devices', 'Keyboards', devicesTab]];
+// ---------- shell ----------
+
+const TABS = [
+  ['skills', 'My skills', 'layout_grid', skillsTab],
+  ['assistant', 'Assistant', 'message_circle', assistantTab],
+  ['connections', 'Connections', 'plug', connectionsTab],
+  ['settings', 'Settings', 'settings', settingsTab],
+];
+
+async function go(tab) {
+  state.tab = tab;
+  if (tab === 'settings') state.devices = await api('GET', '/api/devices').catch(() => state.devices);
+  render();
+  window.scrollTo(0, 0);
+}
 
 function render() {
   if (!state.email) return app.replaceChildren(authView());
-  const current = TABS.find((t) => t[0] === state.tab);
+  const current = TABS.find((t) => t[0] === state.tab) || TABS[0];
   app.replaceChildren(h('div', { class: 'shell' },
     h('aside', { class: 'side' },
       h('div', { class: 'brand' }, h('span', null, 'V'), 'Verbo'),
-      h('nav', null, TABS.map(([id, name]) => h('button', { 'aria-current': id === state.tab ? 'page' : null, onclick: async () => {
-        state.tab = id;
-        if (id === 'devices') state.devices = await api('GET', '/api/devices').catch(() => state.devices);
-        render();
-      } }, name))),
-      h('div', { class: 'who' }, state.email, h('br'),
-        h('button', { class: 'btn ghost', style: 'padding-left:0', onclick: async () => {
-          await api('POST', '/api/logout').catch(() => {});
-          state.email = null; state.config = null; state.code = null;
-          render();
-        } }, 'Sign out'))),
-    h('main', null, current[2]())));
+      h('nav', { 'aria-label': 'Sections' }, TABS.map(([id, name, ic]) =>
+        h('button', { 'aria-current': id === current[0] ? 'page' : null, onclick: () => go(id) }, icon(ic), name)))),
+    h('main', null, current[3]())));
 }
 
 async function load() {

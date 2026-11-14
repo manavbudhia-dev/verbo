@@ -1,5 +1,5 @@
-// Verbo dashboard: accounts, skills, connections and keyboard pairing.
-// No npm dependencies. Needs Node 22.13 or newer (built-in SQLite).
+// Verbo dashboard: accounts, skills, connections, keyboard pairing and a setup assistant.
+// One npm dependency (the Anthropic SDK, for the assistant). Needs Node 22.13 or newer (built-in SQLite).
 'use strict';
 
 const http = require('node:http');
@@ -64,6 +64,7 @@ const defaultConfig = () => ({
   apiKey: '', model: MODELS[0], provider: 'anthropic', openaiKey: '', openaiModel: 'gpt-5.5',
   customBase: 'https://api.airouter.in/v1', customKey: '', customModel: 'anthropic/claude-haiku-5.5', webSearch: true, weather: true,
   notionToken: '', calendlyToken: '', customApis: [], skills: DEFAULT_SKILLS, googleRefresh: '',
+  keyboard: {}, // the phone's own settings (look, sound, wheel...), kept here so they can be changed from the web
 });
 
 // ---------- helpers ----------
@@ -113,12 +114,51 @@ function saveConfig(userId, config) {
 }
 
 // What the browser gets: secrets are never sent back, only whether they are set.
+const hint = (secret) => (secret && secret.length >= 8 ? secret.slice(-4) : '');
+
+// Keyboard settings the dashboard may store: name -> allowed values (list), [min, max] for numbers, or a type.
+const THEMES = ['system', 'dark', 'light', 'amoled', 'custom', 'ocean', 'rose', 'forest', 'sunset', 'mint'];
+const KEYBOARD_FIELDS = {
+  assistantOn: 'boolean', numberRow: 'boolean', sound: 'boolean', haptic: 'boolean', autoCorrect: 'boolean',
+  suggestions: 'boolean', wheelOn: 'boolean', batterySaver: 'boolean',
+  agentMode: ['auto', 'ask', 'manual'], theme: THEMES,
+  keyShape: ['raised', 'rounded', 'square', 'bubble', 'glass', 'outline', 'flat'],
+  soundPack: ['system', 'typewriter', 'mechanical', 'pop', 'drop', 'soft'], hapticStrength: ['light', 'medium', 'strong'],
+  heightPercent: [80, 130], soundVolume: [5, 100], customAccent: [-2147483648, 2147483647],
+  wheel: 'list', languages: 'list',
+};
+const KEYBOARD_DEFAULTS = {
+  assistantOn: true, numberRow: false, sound: true, haptic: true, autoCorrect: true, suggestions: true, wheelOn: true,
+  batterySaver: true, agentMode: 'auto', theme: 'system', keyShape: 'raised', soundPack: 'system', hapticStrength: 'medium',
+  heightPercent: 100, soundVolume: 60, wheel: ['translate', 'rewrite', 'ai', 'meet', 'voice', 'clips'],
+  languages: ['English', 'Hindi', 'Spanish', 'French', 'Chinese (Simplified)'],
+};
+
+function cleanKeyboard(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Bad(400, 'Keyboard settings must be an object');
+  const out = {};
+  for (const [name, value] of Object.entries(input)) {
+    const rule = KEYBOARD_FIELDS[name];
+    if (!rule) continue; // settings this server doesn't know are ignored, so older and newer phones can both sync
+    if (rule === 'boolean') { if (typeof value === 'boolean') out[name] = value; }
+    else if (rule === 'list') {
+      if (Array.isArray(value) && value.length <= 40 && value.every((v) => typeof v === 'string' && v.length <= 80)) out[name] = value;
+    } else if (typeof rule[0] === 'number') {
+      if (Number.isInteger(value) && value >= rule[0] && value <= rule[1]) out[name] = value;
+    } else if (rule.includes(value)) out[name] = value;
+  }
+  return out;
+}
+
 function publicConfig(config) {
   return {
     model: config.model, provider: config.provider, openaiModel: config.openaiModel, openaiKeySet: !!config.openaiKey,
     customBase: config.customBase, customModel: config.customModel, customKeySet: !!config.customKey,
     webSearch: config.webSearch, weather: config.weather, skills: config.skills,
     googleAvailable: GOOGLE_ON, googleConnected: !!config.googleRefresh,
+    keyboard: { ...KEYBOARD_DEFAULTS, ...config.keyboard },
+    // The last four characters, so a saved key can be recognised without ever being shown.
+    apiKeyHint: hint(config.apiKey), openaiKeyHint: hint(config.openaiKey), customKeyHint: hint(config.customKey),
     apiKeySet: !!config.apiKey, notionSet: !!config.notionToken, calendlySet: !!config.calendlyToken,
     customApis: config.customApis.map(({ headerValue, ...rest }) => ({ ...rest, headerValueSet: !!headerValue })),
   };
@@ -153,13 +193,15 @@ function applyUpdate(config, body) {
   }
   if ('customBase' in body) {
     const base = typeof body.customBase === 'string' ? body.customBase.trim().replace(/\/+$/, '') : '';
-    if (!/^https:\/\/[^\s]{3,300}$/.test(base)) throw new Bad(400, 'The gateway address must start with https://');
+    // Plain http is accepted only in local test mode, where the tests stand in for a gateway.
+    if (!(INSECURE_COOKIES ? /^https?:\/\/[^\s]{3,300}$/ : /^https:\/\/[^\s]{3,300}$/).test(base)) throw new Bad(400, 'The gateway address must start with https://');
     next.customBase = base;
   }
   if ('customModel' in body) {
     if (typeof body.customModel !== 'string' || !/^[A-Za-z0-9._:\/-]{1,100}$/.test(body.customModel.trim())) throw new Bad(400, 'That does not look like a model name');
     next.customModel = body.customModel.trim();
   }
+  if ('keyboard' in body) next.keyboard = { ...config.keyboard, ...cleanKeyboard(body.keyboard) };
   for (const flag of ['webSearch', 'weather']) if (flag in body) next[flag] = body[flag] === true;
   for (const secret of ['apiKey', 'openaiKey', 'customKey', 'notionToken', 'calendlyToken']) {
     if (typeof body[secret] === 'string') next[secret] = str(body[secret], 500, 'Token');
@@ -360,6 +402,35 @@ const routes = {
     return { body: { ...rest, googleConnected: GOOGLE_ON && !!googleRefresh, updated } };
   },
 
+  // The phone sends its own changes (a key typed on the phone, a setting flipped there) so that the
+  // dashboard never overwrites them with an older copy. Only the fields it lists are touched.
+  'PUT /api/device/config': async (req) => {
+    const device = requireDevice(req);
+    const body = await readJson(req);
+    const { config } = loadConfig(device.user_id);
+    const next = applyUpdate(config, body);
+    const updated = saveConfig(device.user_id, next);
+    const { googleRefresh, ...rest } = next;
+    return { body: { ...rest, googleConnected: GOOGLE_ON && !!googleRefresh, updated } };
+  },
+
+  // --- the setup assistant ---
+
+  'POST /api/chat': async (req) => {
+    const userId = requireUser(req);
+    limit('chat:' + userId, 80, 60 * 60 * 1000);
+    const body = await readJson(req);
+    if (!Array.isArray(body.messages) || body.messages.length === 0) throw new Bad(400, 'Say something first');
+    const messages = body.messages.slice(-16).map((m) => ({
+      role: m.role === 'assistant' ? 'assistant' : 'user', content: str(String(m.content ?? ''), 4000, 'Message'),
+    })).filter((m) => m.content);
+    if (messages.length === 0 || messages[messages.length - 1].role !== 'user') throw new Bad(400, 'Say something first');
+    while (messages[0].role !== 'user') messages.shift(); // a conversation has to open with the user
+    const { config } = loadConfig(userId);
+    const text = await callModel(config, chatSystem(config), messages);
+    return { body: parseChat(text) };
+  },
+
   // --- Google Meet ---
 
   'GET /api/google/start': (req) => {
@@ -427,6 +498,121 @@ const routes = {
     return { body: { url: space.meetingUri } };
   },
 };
+
+// ---------- the setup assistant ----------
+
+/** What the assistant is told: what the product is, what this user has set up, and the reply format. */
+function chatSystem(config) {
+  const kb = { ...KEYBOARD_DEFAULTS, ...config.keyboard };
+  const skills = config.skills.map((s) => `- ${s.name}${s.key ? ` (hold ${s.key.toUpperCase()})` : ''}${kb.wheel.includes('skill:' + s.name) ? ' (on the wheel)' : ''}: ${s.instruction.slice(0, 160)}`).join('\n') || '(none)';
+  const usedKeys = config.skills.filter((s) => s.key).map((s) => s.key.toUpperCase()).join(', ') || 'none';
+  const hasKey = config.provider === 'openai' ? !!config.openaiKey : config.provider === 'custom' ? !!config.customKey : !!config.apiKey;
+  return `You are the setup assistant inside the Verbo dashboard. Verbo is an Android keyboard with an AI assistant built in. You help the user set it up: create skills, give skills a hold key, put skills on the wheel, and connect apps. You do not carry out keyboard actions yourself.
+
+How Verbo works:
+- A skill is one saved instruction applied to the text in the field (or to a copied message). It appears as a key above the keyboard, can be bound to a letter (hold that letter to run it), and can be put on the wheel (hold the space bar, slide, release). The wheel holds six shortcuts.
+- Skills can use connected tools during an action: web search, place search with maps, weather, Notion (token), Calendly (token), Google Meet links (Google sign-in), and the user's own HTTPS APIs. Gmail, WhatsApp, Calendar, Maps, YouTube and X need no connection: a skill opens them with a draft filled in.
+- Connections, the AI model and API key, and keyboard settings each have a page in this dashboard.
+
+This user right now:
+Skills:
+${skills}
+Hold keys in use: ${usedKeys}
+Wheel: ${kb.wheel.map((id) => id.replace('skill:', '')).join(', ')}
+Connected: Notion ${config.notionToken ? 'yes' : 'no'}, Calendly ${config.calendlyToken ? 'yes' : 'no'}, Google Meet ${config.googleRefresh ? 'yes' : 'no'}, custom APIs ${config.customApis.length}
+AI key saved: ${hasKey ? 'yes' : 'no'}
+
+Reply with one JSON object and nothing else: {"reply": "...", "actions": [...]}.
+"reply" is what you say to the user: plain text, short, friendly, no markdown. When you propose something, say in a sentence what it will do; the details go in the action.
+"actions" is a list (often empty) of things the user can approve with one click. Nothing happens until they click. Each is one of:
+- {"type": "create_skill", "name": "two or three words", "emoji": "one emoji", "does": "one sentence for the user", "instruction": "two to four sentences addressed to the assistant that runs the skill: what to do with the text, what to keep, what the result looks like; name the app link or tool to use if one is involved", "group": "write|edit|translate|summarize", "key": "a free letter or empty", "wheel": true or false}
+- {"type": "bind_key", "skill": "exact skill name", "key": "one letter"}
+- {"type": "add_to_wheel", "skill": "exact skill name"}
+- {"type": "open", "page": "connections|settings|phones", "label": "short button text", "why": "one sentence"} for anything the user must do themselves, such as pasting a token or signing in to Google.
+Suggest a hold key only if that letter is free. If the wish is vague, ask one short question instead of guessing. If a skill needs a connection the user doesn't have, propose the skill and add an "open" action for the connection.`;
+}
+
+/** Reads the assistant's JSON reply. Anything unexpected is dropped; if it isn't JSON at all, the text is shown as is. */
+function parseChat(text) {
+  let data = null;
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start >= 0 && end > start) { try { data = JSON.parse(text.slice(start, end + 1)); } catch { data = null; } }
+  if (!data || typeof data.reply !== 'string') return { reply: text.trim().slice(0, 4000) || 'I could not put an answer together. Try rephrasing.', actions: [] };
+  const short = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+  const letter = (v) => (typeof v === 'string' && /^[a-zA-Z]$/.test(v.trim()) ? v.trim().toLowerCase() : '');
+  const actions = [];
+  for (const a of Array.isArray(data.actions) ? data.actions.slice(0, 6) : []) {
+    if (!a || typeof a !== 'object') continue;
+    if (a.type === 'create_skill' && short(a.name, 40) && short(a.instruction, 2000)) {
+      actions.push({ type: 'create_skill', name: short(a.name, 40), emoji: short(a.emoji, 16), does: short(a.does, 300), instruction: short(a.instruction, 2000),
+        group: CATEGORIES.includes(a.group) ? a.group : 'edit', key: letter(a.key), wheel: a.wheel === true });
+    } else if (a.type === 'bind_key' && short(a.skill, 40) && letter(a.key)) {
+      actions.push({ type: 'bind_key', skill: short(a.skill, 40), key: letter(a.key) });
+    } else if (a.type === 'add_to_wheel' && short(a.skill, 40)) {
+      actions.push({ type: 'add_to_wheel', skill: short(a.skill, 40) });
+    } else if (a.type === 'open' && ['connections', 'settings', 'phones'].includes(a.page)) {
+      actions.push({ type: 'open', page: a.page, label: short(a.label, 40) || 'Open', why: short(a.why, 300) });
+    }
+  }
+  return { reply: data.reply.trim().slice(0, 4000), actions };
+}
+
+/** One model call on the user's own key and provider. Returns the reply text. */
+async function callModel(config, system, messages) {
+  const provider = config.provider;
+  const key = provider === 'openai' ? config.openaiKey : provider === 'custom' ? config.customKey : config.apiKey;
+  if (!key) throw new Bad(409, 'Add your AI key under Settings first, then I can help');
+
+  if (provider === 'anthropic') {
+    const sdk = require('@anthropic-ai/sdk');
+    const Anthropic = sdk.default || sdk;
+    const client = new Anthropic({ apiKey: key, maxRetries: 1, timeout: 60000 });
+    try {
+      const base = { model: config.model, max_tokens: 4000, system, messages };
+      // Opus and Sonnet 5.5 can decline a request; the fallback lets another model answer instead of failing.
+      const response = /opus-5-5|sonnet-5-5/.test(config.model)
+        ? await client.beta.messages.create({ ...base, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' })
+        : await client.messages.create(base);
+      if (response.stop_reason === 'refusal') throw new Bad(422, 'The assistant declined that request');
+      return response.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
+    } catch (e) {
+      if (e instanceof Bad) throw e;
+      if (e instanceof Anthropic.AuthenticationError) throw new Bad(409, 'Your Claude API key was rejected. Check it under Settings');
+      if (e instanceof Anthropic.PermissionDeniedError) throw new Bad(409, 'Your Claude API key cannot use that model');
+      if (e instanceof Anthropic.RateLimitError) throw new Bad(429, 'Claude rate limit reached. Try again in a moment');
+      if (e instanceof Anthropic.APIConnectionError) throw new Bad(502, 'Could not reach Claude. Try again');
+      if (e instanceof Anthropic.APIError) throw new Bad(502, 'Claude returned an error (' + e.status + '). Try again');
+      throw e;
+    }
+  }
+
+  const openai = provider === 'openai';
+  const url = openai ? 'https://api.openai.com/v1/responses' : config.customBase.replace(/\/+$/, '') + '/chat/completions';
+  const payload = openai
+    ? { model: config.openaiModel, instructions: system, input: messages }
+    : { model: config.customModel, messages: [{ role: 'system', content: system }, ...messages] };
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'POST', redirect: 'error', signal: AbortSignal.timeout(60000),
+      headers: { Authorization: 'Bearer ' + key, 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    });
+  } catch {
+    throw new Bad(502, 'Could not reach the AI service. Try again');
+  }
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401 || res.status === 403) throw new Bad(409, 'Your AI key was rejected. Check it under Settings');
+  if (res.status === 402) throw new Bad(409, 'The AI account is out of credit');
+  if (res.status === 404) throw new Bad(409, 'The AI service does not know that model. Check it under Settings');
+  if (res.status === 429) throw new Bad(429, 'AI rate limit reached. Try again in a moment');
+  if (!res.ok) throw new Bad(502, 'The AI service returned an error (' + res.status + '). Try again');
+  if (openai) {
+    return (data.output || []).filter((o) => o.type === 'message').flatMap((o) => o.content || [])
+      .filter((c) => c.type === 'output_text').map((c) => c.text).join('');
+  }
+  return String(data.choices?.[0]?.message?.content ?? '');
+}
 
 const PUBLIC = path.join(__dirname, 'public');
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
