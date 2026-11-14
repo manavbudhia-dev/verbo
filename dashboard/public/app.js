@@ -258,6 +258,45 @@ function memoryCard() {
         h('button', { class: 'btn ghost', onclick: () => factDialog(i) }, 'Edit'))));
 }
 
+// Text shortcuts (;addr) and pinned clips, both synced with the phone.
+function shortcutsCard() {
+  const list = state.config.shortcuts || [];
+  const clips = state.config.clips || [];
+  return h('div', { class: 'card', style: 'margin-top:16px' },
+    h('div', { class: 'row' }, h('div', { class: 'grow' }, h('h2', null, 'Text shortcuts'),
+      h('p', { class: 'muted' }, 'On the phone, type a semicolon, the key and a space: ;addr becomes your address. Memory items work too (;upi).')),
+      h('button', { class: 'btn', onclick: () => shortcutDialog(-1) }, icon('plus'), 'Add')),
+    list.length === 0 ? h('p', { class: 'muted small' }, 'None yet.')
+      : list.map((s, i) => h('div', { class: 'setting' },
+        h('div', { class: 'what' }, h('div', null, ';' + s.key), h('p', { class: 'muted small clamp' }, s.text)),
+        h('button', { class: 'btn ghost', onclick: () => shortcutDialog(i) }, 'Edit'))),
+    h('h2', { style: 'margin-top:18px' }, 'Pinned clips'),
+    clips.length === 0 ? h('p', { class: 'muted small' }, 'Pin a copied text from the Clips panel on the phone and it shows here.')
+      : clips.map((c, i) => h('div', { class: 'setting' }, h('div', { class: 'what' }, h('p', { class: 'clamp' }, c)),
+        h('button', { class: 'btn ghost danger', onclick: () => save({ clips: clips.filter((_, j) => j !== i) }, 'Clip removed') }, 'Remove'))));
+}
+
+function shortcutDialog(index) {
+  const list = state.config.shortcuts || [];
+  const s = list[index] || { key: '', text: '' };
+  modal(index < 0 ? 'New shortcut' : 'Edit shortcut', (close) => {
+    const key = h('input', { type: 'text', value: s.key, placeholder: 'addr' });
+    const text = h('textarea', { rows: 4, placeholder: 'Flat 4B, Green Park, Jalandhar 144001' }, s.text);
+    const saveList = async (next, msg) => { if (await save({ shortcuts: next }, msg)) close(); };
+    return h('div', null,
+      h('label', { class: 'field' }, 'Key (type ;key on the phone)', key), h('label', { class: 'field' }, 'Text it becomes', text),
+      h('div', { class: 'actions' },
+        h('button', { class: 'btn primary', onclick: () => {
+          const item = { key: key.value.trim().replace(/^;/, '').toLowerCase(), text: text.value };
+          if (!item.key || !item.text.trim()) return toast('It needs a key and the text');
+          const next = list.slice(); if (index < 0) next.push(item); else next[index] = item;
+          saveList(next, 'Shortcut saved');
+        } }, 'Save'),
+        h('button', { class: 'btn', onclick: close }, 'Cancel'),
+        index >= 0 && h('button', { class: 'btn ghost danger', onclick: () => saveList(list.filter((_, i) => i !== index), 'Shortcut removed') }, 'Delete')));
+  });
+}
+
 function factDialog(index) {
   const list = state.config.memory || [];
   const f = list[index] || { label: '', value: '' };
@@ -360,6 +399,7 @@ function skillsTab() {
           'aria-label': byKey[l] ? `${l.toUpperCase()}, runs ${byKey[l].name}` : `${l.toUpperCase()}, free`, onclick: () => keyDialog(l) }, l)))))),
     triggersCard(),
     memoryCard(),
+    shortcutsCard(),
     skills.length > 6 && h('input', { type: 'search', placeholder: 'Search my skills', value: state.search, 'aria-label': 'Search my skills',
       style: 'margin-top:16px', oninput: (e) => { state.search = e.target.value; renderKeepingFocus(e.target); } }),
     h('div', { class: 'grid', style: 'margin-top:16px' },

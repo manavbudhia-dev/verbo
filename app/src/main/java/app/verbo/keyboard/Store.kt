@@ -147,6 +147,8 @@ class Store(context: Context) {
         "skills" -> skillsJson(skills)
         "triggers" -> triggersJson(triggers)
         "memory" -> memoryJson(memory)
+        "shortcuts" -> shortcutsJson(shortcuts)
+        "clips" -> JSONArray(clips)
         "customApis" -> JSONArray().also { arr ->
             customApis.forEach { arr.put(JSONObject().put("name", it.name).put("description", it.description).put("url", it.url).put("headerName", it.headerName).put("headerValue", it.headerValue)) }
         }
@@ -203,6 +205,8 @@ class Store(context: Context) {
         o.optJSONArray("skills")?.let { s("skills", "skills", it.toString()) }
         o.optJSONArray("triggers")?.let { s("triggers", "triggers", it.toString()) }
         o.optJSONArray("memory")?.let { s("memory", "memory", it.toString()) }
+        o.optJSONArray("shortcuts")?.let { s("shortcuts", "shortcuts", it.toString()) }
+        o.optJSONArray("clips")?.let { s("clips", "clips", it.toString()) }
         o.optJSONObject("keyboard")?.let { applyKeyboard(e, it, keep) }
         e.putBoolean("google_connected", o.optBoolean("googleConnected", false))
         // Older dashboards don't list services; their Google sign-in covers Meet only.
@@ -294,6 +298,30 @@ class Store(context: Context) {
         val before = memory
         memory = before.filter { !it.label.equals(label, true) && !it.label.equals(label.removePrefix("my ").trim(), true) }
         return memory.size != before.size
+    }
+
+    /** Text shortcuts: typing ";addr" and a space puts in the saved text. Synced with the dashboard. */
+    var shortcuts: List<Pair<String, String>>
+        get() = try { parseShortcuts(JSONArray(str("shortcuts", "[]"))) } catch (e: Exception) { emptyList() }
+        set(v) = put("shortcuts", shortcutsJson(v).toString())
+
+    /** The text for ";key": a shortcut first, then a remembered fact whose name matches (";upi" for "UPI"). */
+    fun shortcutFor(key: String): String? {
+        val k = key.lowercase()
+        shortcuts.firstOrNull { it.first.equals(k, true) }?.let { return it.second }
+        return memory.firstOrNull { f -> f.label.lowercase().filter { it.isLetterOrDigit() } == k }?.value
+    }
+
+    /** Swipe typing, and Devanagari suggestions for Hinglish words. */
+    var swipeTyping: Boolean get() = bool("swipe_typing", true); set(v) = put("swipe_typing", v)
+    var hindiScript: Boolean get() = bool("hindi_script", false); set(v) = put("hindi_script", v)
+
+    /** Recently copied texts, newest first, kept on the phone only. */
+    val clipHistory: List<String> get() = str("clip_history").split("\u0001").filter { it.isNotBlank() }
+    fun addClipHistory(text: String) {
+        val t = text.trim().take(2000)
+        if (t.isEmpty()) return
+        prefs?.edit()?.putString("clip_history", (listOf(t) + clipHistory.filter { it != t }).take(20).joinToString("\u0001"))?.apply()
     }
 
     /** Learn how the user writes from messages they send. The messages stay on the phone; only a one-line summary is used. */
@@ -404,7 +432,7 @@ class Store(context: Context) {
             mapOf(
                 "api_key" to "apiKey", "openai_key" to "openaiKey", "custom_key" to "customKey", "notion_token" to "notionToken", "calendly_token" to "calendlyToken",
                 "model" to "model", "provider" to "provider", "openai_model" to "openaiModel", "custom_base" to "customBase", "custom_model" to "customModel",
-                "web_search" to "webSearch", "weather" to "weather", "skills" to "skills", "custom_apis" to "customApis", "triggers" to "triggers", "memory" to "memory",
+                "web_search" to "webSearch", "weather" to "weather", "skills" to "skills", "custom_apis" to "customApis", "triggers" to "triggers", "memory" to "memory", "shortcuts" to "shortcuts", "clips" to "clips",
             ) + APP_TOKENS.entries.associate { (field, pref) -> pref to field } + KEYBOARD_FIELDS.associate { it.pref to "keyboard." + it.name }
         }
 
@@ -449,6 +477,15 @@ class Store(context: Context) {
             val value = o.optString("value").trim().take(500)
             if (label.isEmpty() || value.isEmpty()) null else Memory.Fact(label, value)
         }.take(100)
+
+        fun parseShortcuts(arr: JSONArray) = (0 until arr.length()).mapNotNull {
+            val o = arr.optJSONObject(it) ?: return@mapNotNull null
+            val key = o.optString("key").trim().removePrefix(";").lowercase().filter { c -> c.isLetterOrDigit() || c == '_' }.take(20)
+            val text = o.optString("text").take(2000)
+            if (key.isEmpty() || text.isBlank()) null else key to text
+        }.take(100)
+
+        fun shortcutsJson(list: List<Pair<String, String>>) = JSONArray().also { arr -> list.forEach { arr.put(JSONObject().put("key", it.first).put("text", it.second)) } }
 
         fun memoryJson(list: List<Memory.Fact>) = JSONArray().also { arr -> list.forEach { arr.put(JSONObject().put("label", it.label).put("value", it.value)) } }
 

@@ -86,6 +86,9 @@ function request(method, url, body, headers = {}) {
     const mem = await request('PUT', '/api/config', { memory: [{ label: 'UPI', value: 'me@okicici' }] }, web);
     check('memory is saved and reaches the phone', mem.body.memory[0].value === 'me@okicici' && (await request('GET', '/api/device/config', null, phone)).body.memory[0].label === 'UPI');
     check('an empty memory is refused', (await request('PUT', '/api/config', { memory: [{ label: 'x', value: '' }] }, web)).status === 400);
+    const sc = await request('PUT', '/api/config', { shortcuts: [{ key: ';Addr', text: 'Green Park' }], clips: ['pinned one'] }, web);
+    check('shortcuts and pinned clips are saved', sc.body.shortcuts[0].key === 'addr' && sc.body.clips[0] === 'pinned one');
+    check('a bad shortcut key is refused', (await request('PUT', '/api/config', { shortcuts: [{ key: 'a b!', text: 'x' }] }, web)).status === 400);
     check('an app token can be removed', (await request('PUT', '/api/config', { slackToken: '' }, web)).body.appsSet.slackToken === false);
 
     // The assistant.

@@ -30,9 +30,28 @@ class Dictionary {
         shown = Array(unique.size) { unique[it].second }
         tier = ByteArray(unique.size) { unique[it].third }
         ready = true
+        for (c in 'a'..'z') startingWith(c) // ready the swipe lists now, on the loading thread
     }
 
     private fun indexOf(word: String): Int = lower.binarySearch(word)
+
+    /** Plain lowercase words starting with [c], with a commonness rank (0 = most common), for swipe typing. */
+    private val byLetter = java.util.concurrent.ConcurrentHashMap<Char, List<Pair<String, Int>>>()
+
+    fun startingWith(c: Char): List<Pair<String, Int>> {
+        if (!ready) return emptyList()
+        byLetter[c]?.let { return it }
+        val prefix = c.toString()
+        var i = lower.binarySearch(prefix).let { if (it < 0) -it - 1 else it }
+        val out = ArrayList<Pair<String, Int>>()
+        while (i < lower.size && lower[i].startsWith(prefix)) {
+            val w = lower[i]
+            if (w.all { it in 'a'..'z' }) out += w to (tier[i] / 10 - 1).coerceIn(0, 4)
+            i++
+        }
+        byLetter[c] = out
+        return out
+    }
 
     fun contains(word: String) = ready && indexOf(word.lowercase()) >= 0
 

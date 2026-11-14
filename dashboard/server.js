@@ -88,6 +88,8 @@ const defaultConfig = () => ({
   notionToken: '', calendlyToken: '', slackToken: '', githubToken: '', todoistToken: '', linearToken: '', discordWebhook: '', customApis: [], skills: DEFAULT_SKILLS, googleRefresh: '', googleScopes: '',
   triggers: DEFAULT_TRIGGERS,
   memory: [], // facts the user told the keyboard: { label, value }
+  shortcuts: [], // ;key -> text
+  clips: [], // pinned clips
   keyboard: {}, // the phone's own settings (look, sound, wheel...), kept here so they can be changed from the web
 });
 
@@ -193,6 +195,8 @@ function publicConfig(config) {
     customApis: config.customApis.map(({ headerValue, ...rest }) => ({ ...rest, headerValueSet: !!headerValue })),
     triggers: config.triggers,
     memory: config.memory,
+    shortcuts: config.shortcuts,
+    clips: config.clips,
   };
 }
 
@@ -252,6 +256,20 @@ function applyUpdate(config, body) {
       if (!skill.name || !skill.instruction) throw new Bad(400, 'A skill needs a name and an instruction');
       return skill;
     });
+  }
+  if ('shortcuts' in body) {
+    if (!Array.isArray(body.shortcuts) || body.shortcuts.length > 100) throw new Bad(400, 'Too many shortcuts');
+    next.shortcuts = body.shortcuts.map((s) => {
+      const key = str(s?.key ?? '', 21, 'Key').replace(/^;/, '').toLowerCase();
+      if (!/^[a-z0-9_]{1,20}$/.test(key)) throw new Bad(400, 'A shortcut key is letters and numbers, like addr');
+      const text = typeof s?.text === 'string' ? s.text.slice(0, 2000) : '';
+      if (!text.trim()) throw new Bad(400, 'A shortcut needs its text');
+      return { key, text };
+    });
+  }
+  if ('clips' in body) {
+    if (!Array.isArray(body.clips) || body.clips.length > 30 || !body.clips.every((c) => typeof c === 'string' && c.length <= 2000)) throw new Bad(400, 'Pinned clips must be up to 30 texts');
+    next.clips = body.clips.filter((c) => c.trim());
   }
   if ('memory' in body) {
     if (!Array.isArray(body.memory) || body.memory.length > 100) throw new Bad(400, 'Too many things to remember');

@@ -207,6 +207,8 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         assistantOn = store.assistantOn
         agentMode = store.agentMode
         skills = store.skills
+        keys?.swipeEnabled = store.swipeTyping
+        hindiOn = store.hindiScript
         val barActive = assistantOn && agentMode != "manual"
         wheelIds = if (barActive && store.wheelOn) store.wheel else emptyList()
         baseWheel = wheelIds
@@ -216,6 +218,54 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     }
 
     private var baseWheel: List<String> = emptyList()
+    private var hindiOn = false
+    /** The word a swipe just put in (with its trailing space), so a suggestion or backspace can replace it. */
+    private var swiped: String? = null
+
+    override fun onSwipe(path: List<Gesture.P>) {
+        val view = keys ?: return
+        val ic = currentInputConnection ?: return
+        clearResult()
+        val seen = Gesture.visited(path) { view.letterAt(it) }
+        val words = Gesture.decode(path, seen, view.letterCenters(), view.letterWidth, { dictionary.startingWith(it) })
+        if (words.isEmpty()) return
+        val before = ic.getTextBeforeCursor(1, 0)?.toString().orEmpty()
+        val space = if (before.isNotEmpty() && (before.last().isLetterOrDigit() || before.last() in ".,!?")) " " else ""
+        val caps = view.shift > 0 || (sentenceStart && before.isBlank())
+        val best = if (caps) words[0].replaceFirstChar { it.uppercase() } else words[0]
+        val put = "$best "
+        ic.commitText(space + put, 1)
+        expect(space.length + put.length)
+        word.setLength(0)
+        lastTyped = ' '
+        sentenceStart = false
+        if (view.shift == 1) view.shift = 0
+        swiped = put
+        suggestions = words.map { if (caps) it.replaceFirstChar { c -> c.uppercase() } else it }
+        slashMatches = emptyList()
+        highlighted = 0
+        applyCaps()
+        showTyping()
+        noteDraft()
+    }
+
+    /** ";addr" and a space: the saved text goes in instead. */
+    private fun expandShortcut(): Boolean {
+        val ic = currentInputConnection ?: return false
+        val before = ic.getTextBeforeCursor(24, 0)?.toString() ?: return false
+        val m = Regex("""(?:^|\s);([A-Za-z0-9_]{1,20})$""").find(before) ?: return false
+        val value = store.shortcutFor(m.groupValues[1]) ?: return false
+        val typed = m.groupValues[1].length + 1
+        ic.beginBatchEdit()
+        ic.deleteSurroundingText(typed, 0)
+        ic.commitText("$value ", 1)
+        ic.endBatchEdit()
+        expect(value.length + 1 - typed)
+        word.setLength(0)
+        lastTyped = ' '
+        updateSuggestions()
+        return true
+    }
 
     private fun wheelItem(id: String, suggested: Boolean): KeyboardView.WheelItem = when (id) {
         "ai" -> KeyboardView.WheelItem("Ask AI", R.drawable.ic_sparkles, suggested = suggested)
@@ -274,6 +324,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         }
         // Quick replies to the copied message, fetched once per copy, one tap to put in the field.
         val replyStamp = if (clip != null) clipStamp() else 0L
+        if (clip != null && replyStamp != 0L && replyStamp != lastHistoryClip) { lastHistoryClip = replyStamp; store.addClipHistory(clip) }
         if (clip != null && store.smartReplies && replyStamp != 0L) {
             if (repliesFor == replyStamp) for (r in replies) {
                 val chip = chipView("↩ $r", p.key, p.keyPressed, p.text)
@@ -353,6 +404,8 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
 
     override fun onChar(text: String) {
         lastWasBackspace = false
+        swiped = null
+        if (text == " " && expandShortcut()) return
         val ic = currentInputConnection ?: return
         if (text[0] == ' ' || text[0] in ".,!?") main.post { noteDraft() }
         clearResult()
@@ -431,6 +484,17 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     override fun onBackspace() {
         lastWasBackspace = true
         val ic = currentInputConnection ?: return
+        swiped?.let { w ->
+            // Backspace right after a swipe takes the whole word back out.
+            swiped = null
+            if (ic.getTextBeforeCursor(w.length, 0)?.toString() == w) {
+                ic.deleteSurroundingText(w.length, 0)
+                expect(-w.length)
+                suggestions = emptyList()
+                showTyping()
+                return
+            }
+        }
         clearResult()
         val corrected = lastCorrection
         when {
@@ -551,6 +615,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     private var replies: List<String> = emptyList()
     private var repliesFor = 0L
     private var repliesAsked = 0L
+    private var lastHistoryClip = 0L
 
     /** A chat message, not a link, a code or a whole article. */
     private fun looksLikeMessage(text: String) = text.length in 2..500 && text.count { it.isLetter() } >= 2 &&
@@ -890,6 +955,8 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             // Likely completions first; the word auto-correct would put in (if any) goes last and is highlighted.
             val completions = dictionary.completions(typed, 3)
             suggestions = if (fix == null || fix in completions) completions else completions.take(2) + fix
+            // Hinglish: the word in Devanagari goes first ("kaise" -> "कैसे").
+            if (hindiOn && Translit.applies(typed)) suggestions = (listOf(Translit.toDevanagari(typed)) + suggestions).distinct().take(3)
             highlighted = suggestions.indexOf(fix)
         }
         if (statusRow?.visibility != View.VISIBLE) showTyping()
@@ -943,6 +1010,20 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             return
         }
         val chosen = suggestions.getOrNull(index) ?: return
+        swiped?.let { w ->
+            // Another reading of the swipe: swap the word that went in.
+            swiped = null
+            if (ic.getTextBeforeCursor(w.length, 0)?.toString() == w) {
+                ic.beginBatchEdit()
+                ic.deleteSurroundingText(w.length, 0)
+                ic.commitText("$chosen ", 1)
+                ic.endBatchEdit()
+                expect(chosen.length + 1 - w.length)
+            }
+            suggestions = emptyList()
+            showTyping()
+            return
+        }
         ic.beginBatchEdit()
         ic.deleteSurroundingText(typed, 0)
         ic.commitText("$chosen ", 1)
@@ -1284,7 +1365,10 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             list.addView(row, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(6) })
         }
         if (current.isNotEmpty() && current !in saved) row(current.take(2000), "Save") { store.clips = listOf(current.take(2000)) + saved; showClips() }
-        saved.forEach { clip -> row(clip, "Remove") { store.clips = saved - clip; showClips() } }
+        saved.forEach { clip -> row("📌 $clip", "Remove") { store.clips = saved - clip; showClips() } }
+        val recent = store.clipHistory.filter { it != current && it !in saved }.take(10)
+        if (recent.isNotEmpty()) list.addView(TextView(this@VerboIme).apply { text = "Recent"; setTextColor(p.muted); setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f); setPadding(dp(6), dp(8), 0, dp(4)) })
+        recent.forEach { clip -> row(clip, "Pin") { store.clips = listOf(clip) + saved; showClips() } }
         if (current.isEmpty() && saved.isEmpty()) list.addView(TextView(this@VerboIme).apply {
             text = "Nothing copied yet. Copy some text, then save it here to paste it any time."
             setTextColor(p.muted)

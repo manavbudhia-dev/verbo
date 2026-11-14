@@ -63,6 +63,7 @@ class PageActivity : Activity() {
             page == "templates" -> templatesPage(column)
             page == "triggers" -> triggersPage(column)
             page == "memory" -> memoryPage(column)
+            page == "textshortcuts" -> textShortcutsPage(column)
             else -> tryPage(column)
         }
     }
@@ -144,6 +145,44 @@ class PageActivity : Activity() {
             store.skills = skills
             render()
         }
+        dialog.show()
+    }
+
+    // ---------- text shortcuts ----------
+
+    private fun textShortcutsPage(column: LinearLayout) {
+        column.addView(ui.topBar("Text shortcuts", "Type ;key and a space"))
+        note(column, "Type a semicolon, a short key and a space, and the saved text goes in: ;addr becomes your full address. " +
+            "Anything in Memory works too: ;upi puts in what you saved as UPI. These sync with your dashboard.")
+        val list = store.shortcuts
+        if (list.isNotEmpty()) column.addView(ui.rows(*list.mapIndexed { i, (k, t) -> ui.row(R.drawable.ic_keyboard, ";$k", t, ui.chevron()) { editShortcut(i) } }.toTypedArray()))
+        column.addView(ui.button("New shortcut", R.drawable.ic_plus, filled = true) { editShortcut(-1) })
+        val facts = store.memory
+        if (facts.isNotEmpty()) {
+            column.addView(ui.text("\nFrom Memory", 16f, bold = true).apply { setPadding(ui.dp(2), ui.dp(10), 0, ui.dp(6)) })
+            column.addView(ui.rows(*facts.map { f -> ui.row(R.drawable.ic_sparkles, ";" + f.label.lowercase().filter { it.isLetterOrDigit() }, f.value) }.toTypedArray()))
+        }
+    }
+
+    private fun editShortcut(index: Int) {
+        val list = store.shortcuts.toMutableList()
+        val existing = list.getOrNull(index)
+        val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(ui.dp(22), ui.dp(8), ui.dp(22), 0) }
+        val key = ui.field("Key, e.g. addr", existing?.first ?: "")
+        val text = ui.field("Text it becomes", existing?.second ?: "", lines = 4)
+        form.addView(key)
+        form.addView(text)
+        val dialog = AlertDialog.Builder(this).setTitle(if (existing == null) "New shortcut" else "Edit shortcut").setView(form)
+            .setPositiveButton("Save") { _, _ ->
+                val k = key.text.toString().trim().removePrefix(";").lowercase().filter { it.isLetterOrDigit() || it == '_' }.take(20)
+                val t = text.text.toString()
+                if (k.isEmpty() || t.isBlank()) { ui.toast("It needs a key and the text"); return@setPositiveButton }
+                if (existing == null) list.add(k to t) else list[index] = k to t
+                store.shortcuts = list
+                render()
+            }
+            .setNegativeButton("Cancel", null)
+        if (existing != null) dialog.setNeutralButton("Delete") { _, _ -> list.removeAt(index); store.shortcuts = list; render() }
         dialog.show()
     }
 
@@ -501,7 +540,10 @@ class PageActivity : Activity() {
         column.addView(ui.rows(
             ui.row(R.drawable.ic_spell_check, "Auto-correct", "Fix typos as you type; backspace puts your word back", ui.toggle(store.autoCorrect) { store.autoCorrect = it }),
             ui.row(R.drawable.ic_message_square_more, "Suggestions", "Word completions above the keys", ui.toggle(store.suggestions) { store.suggestions = it }),
+            ui.row(R.drawable.ic_keyboard, "Swipe typing", "Slide across the letters to write a word", ui.toggle(store.swipeTyping) { store.swipeTyping = it }),
+            ui.row(R.drawable.ic_languages, "Hindi script suggestions", "Type Hinglish, tap the word in Devanagari: kaise → कैसे", ui.toggle(store.hindiScript) { store.hindiScript = it }),
         ))
+        column.addView(ui.rows(ui.row(R.drawable.ic_keyboard, "Text shortcuts", if (store.shortcuts.isEmpty()) "Type ;addr to put in your address" else "${store.shortcuts.size} saved", ui.chevron()) { go("textshortcuts") }))
         column.addView(ui.rows(
             ui.row(R.drawable.ic_keyboard, "Shortcuts & slash commands", "Hold gestures and / commands", ui.chevron()) { go("shortcuts") },
             ui.row(R.drawable.ic_layers, "Templates", "Ready-made daily actions for your apps", ui.chevron()) { go("templates") },

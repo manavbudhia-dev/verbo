@@ -67,6 +67,8 @@ class KeyboardView(
         fun onPress(type: Type)
         /** The wheel is about to open: a chance to fit its shortcuts to what is being written. */
         fun onWheelOpening() {}
+        /** A finger drew a path across the letters (swipe typing). */
+        fun onSwipe(path: List<Gesture.P>) {}
     }
 
     private class Key(val type: Type, val label: String, val weight: Float, val target: Mode? = null) {
@@ -75,7 +77,24 @@ class KeyboardView(
         var inset = false
     }
 
-    private class Press(var key: Key) { var done = false }
+    private class Press(var key: Key) {
+        var done = false
+        /** Points the finger passed through, for swipe typing; null when this press can't become a swipe. */
+        var path: ArrayList<Gesture.P>? = null
+        var swiping = false
+    }
+
+    /** Swipe typing on or off. */
+    var swipeEnabled = true
+
+    /** The letter key under a point, for swipe typing. */
+    fun letterAt(p: Gesture.P): Char? = keyAt(p.x, p.y)?.takeIf { it.type == Type.CHAR && it.label.length == 1 && it.label[0].isLetter() }?.label?.get(0)?.lowercaseChar()
+
+    /** Centres of the letter keys. */
+    fun letterCenters(): Map<Char, Gesture.P> = rows.flatten().filter { it.type == Type.CHAR && it.label.length == 1 && it.label[0].isLetter() }
+        .associate { it.label[0].lowercaseChar() to Gesture.P(it.rect.centerX(), it.rect.centerY()) }
+
+    val letterWidth: Float get() = rows.flatten().firstOrNull { it.type == Type.CHAR }?.rect?.width() ?: (width / 10f)
 
     /** One shortcut on the wheel: an icon, or an emoji when [icon] is 0. */
     class WheelItem(val label: String, val icon: Int, val emoji: String = "", val suggested: Boolean = false)
@@ -280,6 +299,15 @@ class KeyboardView(
                 }
             }
         }
+        presses.values.firstOrNull { it.swiping }?.path?.let { path ->
+            // The swipe trail.
+            edge.color = theme.accent
+            edge.strokeWidth = 5f * d
+            edge.strokeCap = Paint.Cap.ROUND
+            for (k in 1 until path.size) canvas.drawLine(path[k - 1].x, path[k - 1].y, path[k].x, path[k].y, edge)
+            edge.strokeWidth = 1.2f * d
+            edge.strokeCap = Paint.Cap.BUTT
+        }
         if (wheelOpen) drawWheel(canvas)
     }
 
@@ -447,6 +475,7 @@ class KeyboardView(
             Type.CHAR -> {
                 handler.removeCallbacks(keyHold)
                 if (mode == Mode.LETTERS && key.label[0] in bound) handler.postDelayed(keyHold, 450)
+                if (swipeEnabled && mode == Mode.LETTERS && presses.size == 1 && key.label[0].isLetter()) press.path = arrayListOf(Gesture.P(x, y))
             }
             else -> {}
         }
@@ -462,6 +491,13 @@ class KeyboardView(
             return
         }
         val press = presses.remove(id) ?: return
+        if (press.swiping) {
+            press.done = true
+            val path = press.path.orEmpty()
+            invalidate()
+            if (path.size >= 2) listener?.onSwipe(path)
+            return
+        }
         if (press.key.type == Type.BAR) handler.removeCallbacks(barHold)
         if (press.key.type == Type.CHAR) handler.removeCallbacks(keyHold)
         if (press.key.type == Type.BACKSPACE) handler.removeCallbacks(repeatDelete)
@@ -486,6 +522,16 @@ class KeyboardView(
                 // Sliding off a letter onto its neighbour before lifting corrects a mis-hit.
                 val press = presses[e.getPointerId(i)] ?: continue
                 if (press.done || press.key.type != Type.CHAR) continue
+                val path = press.path
+                if (path != null) {
+                    path += Gesture.P(e.getX(i), e.getY(i))
+                    // Far enough from where it started: this is a swipe, not a tap or a slide to the next key.
+                    if (!press.swiping && kotlin.math.hypot((e.getX(i) - path[0].x).toDouble(), (e.getY(i) - path[0].y).toDouble()) > letterWidth * 1.4) {
+                        press.swiping = true
+                        handler.removeCallbacks(keyHold)
+                    }
+                    if (press.swiping) { invalidate(); continue }
+                }
                 val now = keyAt(e.getX(i), e.getY(i))
                 if (now != null && now !== press.key && now.type == Type.CHAR) { press.key = now; handler.removeCallbacks(keyHold) }
             }

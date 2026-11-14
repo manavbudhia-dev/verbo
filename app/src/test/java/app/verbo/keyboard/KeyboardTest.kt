@@ -100,6 +100,55 @@ class KeyboardTest {
 
     private fun type(s: String) = s.forEach { ime.onChar(it.toString()) }
 
+    /** A finger path through the centres of [letters], with points in between like a real swipe. */
+    private fun swipePath(letters: String): List<Gesture.P> {
+        layout(root)
+        val c = ime.keys!!.letterCenters()
+        val pts = letters.map { c[it]!! }
+        val out = ArrayList<Gesture.P>()
+        for (i in 1 until pts.size) for (k in 0 until 8) {
+            val t = k / 8f
+            out += Gesture.P(pts[i - 1].x + (pts[i].x - pts[i - 1].x) * t, pts[i - 1].y + (pts[i].y - pts[i - 1].y) * t)
+        }
+        out += pts.last()
+        return out
+    }
+
+    @Test
+    fun swipeTypingWritesTheWordAndBackspaceTakesItBack() {
+        ime.onSwipe(swipePath("helo"))
+        assertEquals("the first word of a sentence gets a capital", "Hello ", field.text.toString())
+        val started = System.currentTimeMillis()
+        ime.onSwipe(swipePath("world"))
+        assertEquals("Hello world ", field.text.toString())
+        assertTrue("a swipe is decoded quickly", System.currentTimeMillis() - started < 1500)
+        ime.onBackspace()
+        assertEquals("a backspace after a swipe removes the whole word", "Hello ", field.text.toString())
+    }
+
+    @Test
+    fun textShortcutsAndMemoryExpand() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        store.shortcuts = listOf("addr" to "Flat 4B, Green Park")
+        store.remember(Memory.Fact("UPI", "me@okicici"))
+        type("send to ;addr ")
+        assertEquals("send to Flat 4B, Green Park ", field.text.toString())
+        type("pay ;upi ")
+        assertEquals("send to Flat 4B, Green Park pay me@okicici ", field.text.toString())
+        type(";nothing ")
+        assertTrue(field.text.toString().endsWith(";nothing "))
+    }
+
+    @Test
+    fun hinglishGetsADevanagariSuggestion() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        store.hindiScript = true
+        ime.onStartInputView(field.info, false)
+        type("kaise")
+        ime.pick(0)
+        assertEquals("कैसे ", field.text.toString())
+    }
+
     @Test
     fun plainTyping() {
         type("hello world")

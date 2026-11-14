@@ -35,4 +35,31 @@ class MemoryTest {
         assertTrue(p.contains("wa.me"))
         assertTrue(p.contains("match this style"))
     }
+
+    @Test
+    fun hinglishToDevanagari() {
+        assertEquals("कैसे", Translit.toDevanagari("kaise"))
+        assertEquals("नहीं", Translit.toDevanagari("nahi"))
+        assertEquals("क्या", Translit.toDevanagari("kya"))
+        assertEquals("घर", Translit.toDevanagari("ghar"))
+        assertEquals("खाना", Translit.toDevanagari("khana"))
+        assertEquals("दिल्ली", Translit.toDevanagari("dilli"))
+        assertEquals("प्रेम", Translit.toDevanagari("prem"))
+        assertTrue(Translit.applies("kal"))
+        assertTrue(!Translit.applies("k") && !Translit.applies("ok!"))
+    }
+
+    @Test
+    fun gestureDecodesByShape() {
+        // A toy QWERTY row layout, 10 units per key.
+        val rows = listOf("qwertyuiop", "asdfghjkl", "zxcvbnm")
+        val centers = HashMap<Char, Gesture.P>()
+        rows.forEachIndexed { r, row -> row.forEachIndexed { i, c -> centers[c] = Gesture.P(i * 10f + 5 + r * 5, r * 10f + 5) } }
+        fun path(w: String) = w.map { centers[it]!! }.zipWithNext { a, b -> (0 until 6).map { k -> Gesture.P(a.x + (b.x - a.x) * k / 6, a.y + (b.y - a.y) * k / 6) } }.flatten() + centers[w.last()]!!
+        val keyAt = { p: Gesture.P -> centers.minByOrNull { (_, c) -> kotlin.math.hypot((c.x - p.x).toDouble(), (c.y - p.y).toDouble()) }!!.key }
+        val words = listOf("hello" to 0, "hero" to 1, "ho" to 0, "help" to 0)
+        val p = path("helo")
+        val got = Gesture.decode(p, Gesture.visited(p, keyAt), centers, 10f, { c -> words.filter { it.first[0] == c } })
+        assertEquals("hello", got.first())
+    }
 }
