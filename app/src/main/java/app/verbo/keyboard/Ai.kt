@@ -21,7 +21,8 @@ import java.time.Duration
 
 /** What the keyboard should do with a finished action. */
 /** [map] is a latitude/longitude to preview when the result is one specific place. */
-data class ActionResult(val text: String, val openUri: String?, val map: Pair<Double, Double>? = null)
+/** [autoOpen]: the link should open at once ("[[go:...]]"), with the text only describing what was opened. */
+data class ActionResult(val text: String, val openUri: String?, val map: Pair<Double, Double>? = null, val autoOpen: Boolean = false)
 
 class AiException(message: String) : Exception(message)
 
@@ -68,11 +69,13 @@ Sometimes the most helpful outcome is also opening something on the phone: a map
 - Telegram message: https://t.me/share/url?url=%20&text=...
 - Outlook email draft: https://outlook.office.com/mail/deeplink/compose?to=...&subject=...&body=...
 When the link carries the whole message (an email or WhatsApp draft), still return the message text itself as well.
+When the user's whole point is to open something (for example "open my notes about X"), use [[go:URI]] instead of [[open:URI]]: the keyboard opens it straight away and shows your text as a one-line status, so keep the text to a short description of what was opened.
 
 The user sees your result on a card above the keyboard and then inserts or copies it, so shape it to read well there and in a chat:
 - Several results (places to eat, matches, options): a short title on the first line, then one result per line with the key facts (name, rating or time, area). At most five.
 - One specific place: its name on the first line, its address on the second, and a Google Maps link on the third (https://www.google.com/maps/search/?api=1&query=NAME+ADDRESS, URL-encoded). If a place search tool gave you its coordinates, also add a final line [[map:LATITUDE,LONGITUDE]]; the keyboard removes that line and shows a small map.
-- A person or a thing looked up: the name on the first line, then one short fact per line.
+- A person looked up (including "LinkedIn NAME" or "who is NAME"): their full name on the first line, a one-line headline with role and organisation on the second, then labelled lines "Current: ...", "Previous: ...", "Education: ...", "Location: ..." (leave out any you cannot verify), and last a LinkedIn people search link https://www.linkedin.com/search/results/people/?keywords=NAME with spaces as %20. Search the web first. If the name is ambiguous, pick the most likely person from the context and say so on the headline line.
+- A company or a thing looked up: the name on the first line, then one short fact per line.
 
 The user's message may start with a "Context" block: a message they received and copied. Use it to understand what they are replying to or asking about. Never repeat the context block itself in your answer.
 
@@ -229,7 +232,7 @@ INSTRUCTION: the instruction the assistant will follow each time, in two to four
         return sb.toString()
     }
 
-    private val OPEN = Regex("""\[\[open:([^\]\s]+)]]""")
+    private val OPEN = Regex("""\[\[(open|go):([^\]\s]+)]]""")
     private val MAP = Regex("""\[\[map:(-?\d{1,3}(?:\.\d+)?),\s*(-?\d{1,3}(?:\.\d+)?)]]""")
 
     /** What is sent as the user's turn: their text, preceded by the copied message they chose as context. */
@@ -241,8 +244,8 @@ INSTRUCTION: the instruction the assistant will follow each time, in two to four
     private val ALLOWED = listOf("geo:", "tel:", "mailto:", "https://")
 
     fun parse(raw: String): ActionResult {
-        val uri = OPEN.findAll(raw).lastOrNull()?.groupValues?.get(1)
-            ?.takeIf { u -> ALLOWED.any { u.startsWith(it, ignoreCase = true) } }
+        val link = OPEN.findAll(raw).lastOrNull()
+        val uri = link?.groupValues?.get(2)?.takeIf { u -> ALLOWED.any { u.startsWith(it, ignoreCase = true) } }
         val map = MAP.findAll(raw).lastOrNull()?.let { m ->
             val lat = m.groupValues[1].toDoubleOrNull()
             val lon = m.groupValues[2].toDoubleOrNull()
@@ -250,7 +253,7 @@ INSTRUCTION: the instruction the assistant will follow each time, in two to four
         }
         val text = raw.replace(OPEN, "").replace(MAP, "").trim()
         if (text.isEmpty() && uri == null) throw AiException("Got an empty answer. Try again")
-        return ActionResult(text, uri, map)
+        return ActionResult(text, uri, map, autoOpen = uri != null && link.groupValues[1] == "go")
     }
 
     /** A person looked up by the "Who is" skill: name, headline, labelled facts and a LinkedIn link. */

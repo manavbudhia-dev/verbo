@@ -1047,7 +1047,16 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             main.post {
                 if (token != generation) return@post
                 busy = false
-                outcome.fold(onResult) { hidePanel(); showStatus(it.message ?: "Failed") }
+                outcome.fold({ result ->
+                    val uri = result.openUri
+                    // "Open my Notion page about X": open it now and leave the user's text alone.
+                    if (result.autoOpen && uri != null) {
+                        hidePanel()
+                        showTyping()
+                        openLink(uri)
+                        showStatus(result.text.lines().firstOrNull()?.take(80)?.ifBlank { null } ?: "Opened", "Insert link" to { insert(uri) })
+                    } else onResult(result)
+                }) { hidePanel(); showStatus(it.message ?: "Failed") }
             }
         }
     }
@@ -1294,17 +1303,47 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         uri.startsWith("tel:", true) -> "Call"
         uri.startsWith("mailto:", true) -> "Open in Gmail"
         uri.startsWith("https://wa.me", true) -> "WhatsApp"
+        PhoneCalendar.parseTemplate(uri) != null -> "Save to calendar"
         uri.startsWith("https://calendar.google.com", true) -> "Add to calendar"
+        uri.contains("linkedin.com/", true) -> "Open LinkedIn"
+        uri.contains("notion.so", true) || uri.contains("notion.site", true) -> "Open in Notion"
         uri.startsWith("https://www.youtube.com", true) -> "YouTube"
         uri.startsWith("https://x.com", true) -> "Post on X"
         else -> "Open " + (Uri.parse(uri).host?.removePrefix("www.")?.take(28) ?: "link")
     }
 
     private fun openLink(uri: String) {
+        PhoneCalendar.parseTemplate(uri)?.let { saveEvent(uri, it); return }
         try {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(uri)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         } catch (e: Exception) {
             showStatus("No app can open that")
+        }
+    }
+
+    /** One tap: the event goes straight into the phone's calendar. The first time, Android asks for calendar access. */
+    private fun saveEvent(link: String, event: PhoneCalendar.Event) {
+        if (!PhoneCalendar.allowed(this)) {
+            hidePanel()
+            showTyping()
+            startActivity(Intent(this, CalendarPermissionActivity::class.java).putExtra(CalendarPermissionActivity.EXTRA_LINK, link)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            return
+        }
+        worker.execute {
+            val outcome = runCatching { PhoneCalendar.save(this, event) }
+            main.post {
+                hidePanel()
+                showTyping()
+                outcome.fold({ id ->
+                    showStatus("Saved: ${event.title}, ${PhoneCalendar.describe(event)}",
+                        "Open" to {
+                            try { startActivity(Intent(Intent.ACTION_VIEW, PhoneCalendar.viewUri(id)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                            catch (e: Exception) { showStatus("No calendar app to open it") }
+                        },
+                        "Undo" to { worker.execute { runCatching { PhoneCalendar.remove(this, id) } }; showStatus("Event removed") })
+                }) { showStatus(it.message ?: "Couldn't save the event") }
+            }
         }
     }
 

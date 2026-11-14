@@ -284,7 +284,7 @@ class Store(context: Context) {
     var skills: List<Skill>
         get() {
             val raw = prefs?.getString("skills", null) ?: return DEFAULT_SKILLS
-            return try { parseSkills(JSONArray(raw)) } catch (e: Exception) { DEFAULT_SKILLS }
+            return try { parseSkills(JSONArray(raw)).map { if (it.instruction == OLD_NOTION) it.copy(instruction = NOTION_INSTRUCTION) else it } } catch (e: Exception) { DEFAULT_SKILLS }
         }
         set(v) = put("skills", skillsJson(v).toString())
 
@@ -397,6 +397,10 @@ class Store(context: Context) {
             }
         }
 
+        /** The Notion skill before it opened the page itself; saved copies of it are upgraded. */
+        private const val OLD_NOTION = "Search the user's Notion for the page the text describes and return its title and link. If Notion is not connected, say so in one line."
+        const val NOTION_INSTRUCTION = "Find the Notion page that best matches the text, or the copied message if there is one, with notion_search: try the key names and topics, and search again with fewer words if nothing matches. Reply with only the page title and end with [[go:PAGE_URL]] so it opens straight away. If Notion is not connected, reply: Connect Notion in Verbo to search your pages, and end with [[go:https://www.notion.so]]."
+
         val DEFAULT_SKILLS = listOf(
             Skill("✨", "Polish", "Fix spelling, grammar and punctuation and smooth out awkward phrasing. Keep the meaning, the tone and the length.", "edit", "p"),
             Skill("💬", "Reply", "The text is either a message the user received or rough notes for an answer. Write a natural reply the user can send as their own.", "write", "r"),
@@ -408,7 +412,7 @@ class Store(context: Context) {
             Skill("🔎", "Look up", "Treat the text as a question. Find the answer, searching the web if needed, and give it in one to three short sentences.", "write", "g"),
             Skill("📍", "Place", "The text names a place. Find it with the place search and return its name, address and a Google Maps link, with the map marker line.", "write", "l"),
             Skill("👤", "Who is", "The text or the context names a person. Look them up on the web and reply with one item per line: their full name; a one-line headline with their role and organisation; then Current: their current role, Previous: their previous role, Education: where they studied; and last a LinkedIn people search link, https://www.linkedin.com/search/results/people/?keywords= followed by the name with spaces written as %20. Leave out any line you cannot verify. If you cannot tell who they are, say so in one line instead of guessing.", "write", "w"),
-            Skill("🗒️", "Notion", "Search the user's Notion for the page the text describes and return its title and link. If Notion is not connected, say so in one line.", "write", "n"),
+            Skill("🗒️", "Notion", NOTION_INSTRUCTION, "write", "n"),
             Skill("📧", "Email", "Turn the text into a clear email with a short subject. Return the email text, then a final [[open:mailto:?subject=...&body=...]] line with both URL-encoded so it opens as a ready draft in Gmail.", "write"),
             Skill("💼", "LinkedIn post", "Turn the text into a LinkedIn post: a strong first line, short paragraphs, no more than three hashtags at the end. Return the post, then a final [[open:https://www.linkedin.com/feed/?shareActive=true&text=...]] line with the post URL-encoded.", "write"),
             Skill("📋", "List", "Turn the text into a tidy list, one item per line, each starting with a dash. Keep the user's wording where you can.", "edit"),

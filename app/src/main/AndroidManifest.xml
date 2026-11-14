@@ -3,6 +3,9 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Saving "add to calendar" results straight into the phone's calendar. -->
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <uses-permission android:name="android.permission.WRITE_CALENDAR" />
     <queries>
         <intent><action android:name="android.speech.RecognitionService" /></intent>
     </queries>
@@ -14,6 +17,9 @@
             </intent-filter>
         </activity>
         <activity android:name=".PageActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
+        <!-- Invisible: the keyboard can't show permission prompts itself, so it opens this to ask and then save. -->
+        <activity android:name=".CalendarPermissionActivity" android:exported="false" android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
         <!-- directBootAware lets the keyboard work on the lock screen right after a reboot. -->
         <service android:name=".VerboIme" android:label="Verbo Keyboard" android:directBootAware="true"
             android:permission="android.permission.BIND_INPUT_METHOD" android:exported="true">
