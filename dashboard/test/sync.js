@@ -78,6 +78,11 @@ function request(method, url, body, headers = {}) {
     check('the phone receives app tokens', phoneApps.slackToken === 'xoxp-1-secret' && phoneApps.todoistToken === 'todo-secret');
     check('a Discord webhook must be a Discord address', (await request('PUT', '/api/config', { discordWebhook: 'https://evil.example/hook' }, web)).status === 400
       && (await request('PUT', '/api/config', { discordWebhook: 'https://discord.com/api/webhooks/123/abc-DEF_9' }, web)).body.appsSet.discordWebhook === true);
+    const trig = await request('PUT', '/api/config', { triggers: [{ kind: 'keyword', keyword: 'invoice', skill: 'Summarize', auto: true }, { kind: 'person', skill: 'Who is' }] }, web);
+    check('auto actions are saved and reach the phone', trig.status === 200 && trig.body.triggers.length === 2 && trig.body.triggers[0].auto === true
+      && (await request('GET', '/api/device/config', null, phone)).body.triggers[1].skill === 'Who is');
+    check('a bad auto action is refused', (await request('PUT', '/api/config', { triggers: [{ kind: 'mind-reading', skill: 'x' }] }, web)).status === 400
+      && (await request('PUT', '/api/config', { triggers: [{ kind: 'keyword', keyword: '', skill: 'x' }] }, web)).status === 400);
     check('an app token can be removed', (await request('PUT', '/api/config', { slackToken: '' }, web)).body.appsSet.slackToken === false);
 
     // The assistant.

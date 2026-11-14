@@ -297,6 +297,7 @@ class MainActivity : Activity() {
             ui.row(R.drawable.ic_languages, "Languages", store.languages.joinToString(", ").ifEmpty { "None chosen" }, ui.chevron()) { open("languages") },
         ))
         column.addView(ui.rows(
+            ui.row(R.drawable.ic_zap, "Auto actions", if (!store.triggersOn) "Off" else "${store.triggers.size} for copied messages", ui.chevron()) { open("triggers") },
             ui.row(R.drawable.ic_plug, "Connections", if (connected == 0) "Web search, weather, places" else "$connected connected", ui.chevron()) { open("automate") },
             ui.row(R.drawable.ic_cloud, "Web dashboard", if (store.deviceToken.isEmpty()) "Not paired" else "Paired with " + store.serverUrl.removePrefix("https://"), ui.chevron()) { open("dashboard") },
         ))

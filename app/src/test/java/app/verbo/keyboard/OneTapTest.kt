@@ -55,7 +55,7 @@ class OneTapTest {
         val store = Store(RuntimeEnvironment.getApplication())
         store.skills = listOf(Skill("🗒️", "Notion", "Search the user's Notion for the page the text describes and return its title and link. If Notion is not connected, say so in one line.", "write", "n"))
         assertEquals(Store.NOTION_INSTRUCTION, store.skills.single().instruction)
-        assertTrue(Store.NOTION_INSTRUCTION.contains("[[go:"))
+        assertTrue(Store.NOTION_INSTRUCTION.contains("Last edited:"))
     }
 
     @Test

@@ -358,8 +358,8 @@ class KeyboardTest {
         val c = Ai.personCard(PERSON)!!
         assertEquals("Ada Lovelace", c.name)
         assertEquals("Mathematician and writer", c.headline)
-        assertEquals(listOf("Current", "Previous", "Education"), c.facts.map { it.first })
-        assertEquals("Analytical Engine notes with Charles Babbage", c.facts[1].second)
+        assertEquals(listOf("Location", "Current", "Previous", "Education"), c.facts.map { it.first })
+        assertEquals("Analytical Engine notes with Charles Babbage", c.facts[2].second)
         assertTrue(c.link!!.startsWith("https://www.linkedin.com/search/results/people/"))
         assertEquals("ordinary text is not a card", null, Ai.personCard("Polished text\nwith two lines"))
     }
@@ -456,12 +456,32 @@ class KeyboardTest {
         ime.showResult(ActionResult("Starbucks\n1585 Broadway, Times Square, New York, NY 10036\nhttps://www.google.com/maps/search/?api=1&query=Starbucks+1585+Broadway", "geo:0,0?q=Starbucks+1585+Broadway", 40.7596521 to -73.9852254), {}, {})
         layout(agentRoot)
         snap(agentRoot, "panel-place")
-        ime.showResult(ActionResult("Best Italian in SF\n1. Flour + Water · 4.8 · Mission District\n2. Acquerello · 4.7 · Nob Hill · Michelin-starred\n3. Itria · 4.6 · Mission District", null), {}, {})
+        ime.showResult(ActionResult("Best Italian in SF\n1. Flour + Water | 4.8 | Sardinian · $$$ | Mission District, SF | Authentic vibe; Spicy octopus pasta\n2. Acquerello | 4.7 | Fine dining · $$$$ | Nob Hill, SF | Michelin-starred; Hard to book\n3. Itria | 4.6 | Modern Italian · $$$ | Mission District, SF | Great cocktails; Neighborhood gem", null), {}, {})
         layout(agentRoot)
         snap(agentRoot, "panel-list")
         ime.showResult(ActionResult(PERSON, null), {}, {})
         layout(agentRoot)
         snap(agentRoot, "panel-person")
+        ime.showResult(ActionResult("V2 design specs\nLast edited: Today at 10:42 AM", "https://www.notion.so/V2-design-specs-1a2b3c"), {}, {})
+        layout(agentRoot)
+        snap(agentRoot, "panel-notion")
+        ime.showLoading("Who is…") {}
+        ime.addStep("Searching Notion “David Miller”")
+        layout(agentRoot)
+        snap(agentRoot, "panel-loading")
+        // A copied message that names a person and a time: the trigger chips.
+        ime.hidePanel()
+        val kept = field.text.toString()
+        field.text.clear()
+        val clipboard = RuntimeEnvironment.getApplication().getSystemService(android.content.ClipboardManager::class.java)
+        val copied = android.content.ClipData.newPlainText("m", "We're meeting with David Miller from Google Cloud tomorrow")
+        ime.clock = { org.robolectric.shadows.ShadowSystem.currentTimeMillis() } // the test clipboard stamps clips with its own clock
+        clipboard.setPrimaryClip(copied)
+        ime.onStartInputView(field.info, false)
+        layout(agentRoot)
+        snap(agentRoot, "keyboard-triggers")
+        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("m", ""))
+        field.text.append(kept)
         store.theme = "system"
         store.theme = "system"
 
@@ -506,7 +526,7 @@ class KeyboardTest {
             snap(frame, if (tab == "settings") "settings" else "home-$tab")
         }
         MainActivity.tab = "home"
-        for (page in listOf("ai", "look", "typing", "languages", "create", "wheel", "feedback", "battery", "templates", "prompts", "automate", "shortcuts", "privacy", "dashboard", "category:edit")) {
+        for (page in listOf("ai", "triggers", "look", "typing", "languages", "create", "wheel", "feedback", "battery", "templates", "prompts", "automate", "shortcuts", "privacy", "dashboard", "category:edit")) {
             val a = Robolectric.buildActivity(PageActivity::class.java, android.content.Intent().putExtra("page", page)).setup().get()
             val s = content(a)
             s.layout(0, 0, 1080, maxOf((s as ViewGroup).getChildAt(0).measuredHeight, 900))
@@ -515,4 +535,4 @@ class KeyboardTest {
     }
 }
 
-private const val PERSON = "Ada Lovelace\nMathematician and writer\nCurrent: Countess of Lovelace\nPrevious: Analytical Engine notes with Charles Babbage\nEducation: Private tutoring in mathematics and science\nhttps://www.linkedin.com/search/results/people/?keywords=Ada%20Lovelace"
+private const val PERSON = "Ada Lovelace\nMathematician and writer\nLocation: London, England\nCurrent: Countess of Lovelace\nPrevious: Analytical Engine notes with Charles Babbage\nEducation: Private tutoring in mathematics and science\nhttps://www.linkedin.com/search/results/people/?keywords=Ada%20Lovelace"

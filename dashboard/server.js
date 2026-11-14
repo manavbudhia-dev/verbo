@@ -55,7 +55,7 @@ const CATEGORIES = ['write', 'edit', 'translate', 'summarize'];
 const MODELS = ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5']; // first is the default: cheapest
 // The Notion skill used to only name the page; now it opens it. Saved copies of the old wording are upgraded on load.
 const OLD_NOTION = "Search the user's Notion for the page the text describes and return its title and link. If Notion is not connected, say so in one line.";
-const NOTION_INSTRUCTION = 'Find the Notion page that best matches the text, or the copied message if there is one, with notion_search: try the key names and topics, and search again with fewer words if nothing matches. Reply with only the page title and end with [[go:PAGE_URL]] so it opens straight away. If Notion is not connected, reply: Connect Notion in Verbo to search your pages, and end with [[go:https://www.notion.so]].';
+const NOTION_INSTRUCTION = 'Find the Notion page that best matches the text, or the copied message if there is one, with notion_search: try the key names and topics, and search again with fewer words if nothing matches. Reply with exactly two lines: the page title, then Last edited: and when it was last edited in plain words (like Today at 10:42 AM), and end with [[open:PAGE_URL]]. If Notion is not connected, reply: Connect Notion in Verbo to search your pages, and end with [[open:https://www.notion.so]].';
 const DEFAULT_SKILLS = [
   ['✨', 'Polish', 'Fix spelling, grammar and punctuation and smooth out awkward phrasing. Keep the meaning, the tone and the length.', 'edit', 'p'],
   ['💬', 'Reply', 'The text is either a message the user received or rough notes for an answer. Write a natural reply the user can send as their own.', 'write', 'r'],
@@ -73,10 +73,19 @@ const DEFAULT_SKILLS = [
   ['📋', 'List', "Turn the text into a tidy list, one item per line, each starting with a dash. Keep the user's wording where you can.", 'edit'],
 ].map(([emoji, name, instruction, category, key = '']) => ({ emoji, name, instruction, category, key }));
 
+// Auto actions: when a copied message has one of these, the keyboard offers (or runs) the skill.
+const TRIGGER_KINDS = ['person', 'time', 'place', 'link', 'email', 'phone', 'keyword', 'any'];
+const DEFAULT_TRIGGERS = [
+  { kind: 'person', keyword: '', skill: 'Who is', auto: false },
+  { kind: 'time', keyword: '', skill: 'Save event', auto: false },
+  { kind: 'place', keyword: '', skill: 'Place', auto: false },
+];
+
 const defaultConfig = () => ({
   apiKey: '', model: MODELS[0], provider: 'anthropic', openaiKey: '', openaiModel: 'gpt-5.5',
   customBase: 'https://api.airouter.in/v1', customKey: '', customModel: 'anthropic/claude-haiku-5.5', webSearch: true, weather: true,
   notionToken: '', calendlyToken: '', slackToken: '', githubToken: '', todoistToken: '', linearToken: '', discordWebhook: '', customApis: [], skills: DEFAULT_SKILLS, googleRefresh: '', googleScopes: '',
+  triggers: DEFAULT_TRIGGERS,
   keyboard: {}, // the phone's own settings (look, sound, wheel...), kept here so they can be changed from the web
 });
 
@@ -180,6 +189,7 @@ function publicConfig(config) {
     apiKeySet: !!config.apiKey, notionSet: !!config.notionToken, calendlySet: !!config.calendlyToken,
     appsSet: Object.fromEntries(APP_TOKENS.map((t) => [t, !!config[t]])),
     customApis: config.customApis.map(({ headerValue, ...rest }) => ({ ...rest, headerValueSet: !!headerValue })),
+    triggers: config.triggers,
   };
 }
 
@@ -238,6 +248,16 @@ function applyUpdate(config, body) {
       };
       if (!skill.name || !skill.instruction) throw new Bad(400, 'A skill needs a name and an instruction');
       return skill;
+    });
+  }
+  if ('triggers' in body) {
+    if (!Array.isArray(body.triggers) || body.triggers.length > 20) throw new Bad(400, 'Too many auto actions');
+    next.triggers = body.triggers.map((t) => {
+      if (!t || !TRIGGER_KINDS.includes(t.kind)) throw new Bad(400, 'Unknown kind of auto action');
+      const trigger = { kind: t.kind, keyword: str(t.keyword ?? '', 100, 'Words'), skill: str(t.skill ?? '', 40, 'Skill'), auto: t.auto === true };
+      if (!trigger.skill) throw new Bad(400, 'An auto action needs a skill');
+      if (trigger.kind === 'keyword' && !trigger.keyword) throw new Bad(400, 'Type the words to look for');
+      return trigger;
     });
   }
   if ('customApis' in body) {

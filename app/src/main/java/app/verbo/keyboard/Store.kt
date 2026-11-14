@@ -145,6 +145,7 @@ class Store(context: Context) {
         "customBase" -> customBase; "customModel" -> customModel
         "webSearch" -> webSearch; "weather" -> weather
         "skills" -> skillsJson(skills)
+        "triggers" -> triggersJson(triggers)
         "customApis" -> JSONArray().also { arr ->
             customApis.forEach { arr.put(JSONObject().put("name", it.name).put("description", it.description).put("url", it.url).put("headerName", it.headerName).put("headerValue", it.headerValue)) }
         }
@@ -199,6 +200,7 @@ class Store(context: Context) {
         for ((field, pref) in APP_TOKENS) s(field, pref, o.optString(field))
         o.optJSONArray("customApis")?.let { s("customApis", "custom_apis", it.toString()) }
         o.optJSONArray("skills")?.let { s("skills", "skills", it.toString()) }
+        o.optJSONArray("triggers")?.let { s("triggers", "triggers", it.toString()) }
         o.optJSONObject("keyboard")?.let { applyKeyboard(e, it, keep) }
         e.putBoolean("google_connected", o.optBoolean("googleConnected", false))
         // Older dashboards don't list services; their Google sign-in covers Meet only.
@@ -277,6 +279,16 @@ class Store(context: Context) {
         }
 
     var places: Boolean get() = bool("places", true); set(v) = put("places", v)
+
+    /** Suggest (or run) skills when a copied message matches a trigger. The matching happens on the phone; nothing is sent until a skill runs. */
+    var triggersOn: Boolean get() = bool("triggers_on", true); set(v) = put("triggers_on", v)
+    var triggers: List<Trigger>
+        get() = prefs?.getString("triggers", null)?.let { raw -> try { parseTriggers(JSONArray(raw)) } catch (e: Exception) { null } } ?: Trigger.DEFAULTS
+        set(v) = put("triggers", triggersJson(v).toString())
+
+    /** The instruction a trigger runs: the user's skill of that name, else a built-in one. */
+    fun triggerSkill(t: Trigger): Skill? = skills.firstOrNull { it.name.equals(t.skill, ignoreCase = true) }
+        ?: Trigger.BUILTIN[t.skill]?.let { Skill("⚡", t.skill, it, "write") }
 
     fun tools(): List<ToolSpec> = Connections.tools(weather, notionToken, calendlyToken, customApis, places, APP_TOKENS.keys.associateWith { token(it) },
         googleServices) { action, args -> Sync.google(this, action, args) }
@@ -360,7 +372,7 @@ class Store(context: Context) {
             mapOf(
                 "api_key" to "apiKey", "openai_key" to "openaiKey", "custom_key" to "customKey", "notion_token" to "notionToken", "calendly_token" to "calendlyToken",
                 "model" to "model", "provider" to "provider", "openai_model" to "openaiModel", "custom_base" to "customBase", "custom_model" to "customModel",
-                "web_search" to "webSearch", "weather" to "weather", "skills" to "skills", "custom_apis" to "customApis",
+                "web_search" to "webSearch", "weather" to "weather", "skills" to "skills", "custom_apis" to "customApis", "triggers" to "triggers",
             ) + APP_TOKENS.entries.associate { (field, pref) -> pref to field } + KEYBOARD_FIELDS.associate { it.pref to "keyboard." + it.name }
         }
 
@@ -391,6 +403,18 @@ class Store(context: Context) {
             Skill(o.optString("emoji"), o.getString("name"), o.getString("instruction"), category, key)
         }
 
+        private val TRIGGER_KINDS = Cards.KINDS.map { it.first }
+        fun parseTriggers(arr: JSONArray) = (0 until arr.length()).mapNotNull {
+            val o = arr.optJSONObject(it) ?: return@mapNotNull null
+            val kind = o.optString("kind").takeIf { k -> k in TRIGGER_KINDS } ?: return@mapNotNull null
+            val skill = o.optString("skill").trim().takeIf { s -> s.isNotEmpty() } ?: return@mapNotNull null
+            Trigger(kind, o.optString("keyword").trim().take(100), skill.take(40), o.optBoolean("auto", false))
+        }.take(20)
+
+        fun triggersJson(list: List<Trigger>) = JSONArray().also { arr ->
+            list.forEach { arr.put(JSONObject().put("kind", it.kind).put("keyword", it.keyword).put("skill", it.skill).put("auto", it.auto)) }
+        }
+
         private fun skillsJson(skills: List<Skill>) = JSONArray().also { arr ->
             skills.forEach {
                 arr.put(JSONObject().put("emoji", it.emoji).put("name", it.name).put("instruction", it.instruction).put("category", it.category).put("key", it.key))
@@ -399,7 +423,7 @@ class Store(context: Context) {
 
         /** The Notion skill before it opened the page itself; saved copies of it are upgraded. */
         private const val OLD_NOTION = "Search the user's Notion for the page the text describes and return its title and link. If Notion is not connected, say so in one line."
-        const val NOTION_INSTRUCTION = "Find the Notion page that best matches the text, or the copied message if there is one, with notion_search: try the key names and topics, and search again with fewer words if nothing matches. Reply with only the page title and end with [[go:PAGE_URL]] so it opens straight away. If Notion is not connected, reply: Connect Notion in Verbo to search your pages, and end with [[go:https://www.notion.so]]."
+        const val NOTION_INSTRUCTION = "Find the Notion page that best matches the text, or the copied message if there is one, with notion_search: try the key names and topics, and search again with fewer words if nothing matches. Reply with exactly two lines: the page title, then Last edited: and when it was last edited in plain words (like Today at 10:42 AM), and end with [[open:PAGE_URL]]. If Notion is not connected, reply: Connect Notion in Verbo to search your pages, and end with [[open:https://www.notion.so]]."
 
         val DEFAULT_SKILLS = listOf(
             Skill("✨", "Polish", "Fix spelling, grammar and punctuation and smooth out awkward phrasing. Keep the meaning, the tone and the length.", "edit", "p"),

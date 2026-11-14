@@ -224,6 +224,54 @@ function skillDialog(index, preset) {
   });
 }
 
+const TRIGGER_KINDS = [
+  ['person', "a person's name"], ['time', 'a date or time'], ['place', 'a place or address'], ['link', 'a link'],
+  ['email', 'an email address'], ['phone', 'a phone number'], ['keyword', 'words I choose'], ['any', 'anything'],
+];
+const BUILTIN_TRIGGER_SKILLS = ['Who is', 'Save event', 'Place'];
+
+// Auto actions: copy a message on the phone, and the matching skill is offered (or run) by itself.
+function triggersCard() {
+  const triggers = state.config.triggers || [];
+  const kindName = (k) => (TRIGGER_KINDS.find((x) => x[0] === k) || [k, k])[1];
+  return h('div', { class: 'card', style: 'margin-top:16px' },
+    h('div', { class: 'row' }, h('div', { class: 'grow' }, h('h2', null, 'Auto actions'),
+      h('p', { class: 'muted' }, 'When you copy a message on your phone, Verbo checks it there and offers the right skill as a ⚡ chip. Automatic ones run by themselves.')),
+      h('button', { class: 'btn', onclick: () => triggerDialog(-1) }, icon('plus'), 'New')),
+    triggers.length === 0 ? h('p', { class: 'muted small' }, 'None yet.')
+      : triggers.map((t, i) => h('div', { class: 'setting' },
+        h('div', { class: 'what' }, h('div', null, '⚡ ', t.skill, t.auto ? ' · automatic' : ''),
+          h('p', { class: 'muted small' }, 'When copied text has ', t.kind === 'keyword' ? `“${t.keyword}”` : kindName(t.kind))),
+        h('button', { class: 'btn ghost', onclick: () => triggerDialog(i) }, 'Edit'))));
+}
+
+function triggerDialog(index) {
+  const list = state.config.triggers || [];
+  const t = list[index] || { kind: 'person', keyword: '', skill: 'Who is', auto: false };
+  const names = [...new Set([...state.config.skills.map((s) => s.name), ...BUILTIN_TRIGGER_SKILLS])];
+  modal(index < 0 ? 'New auto action' : 'Edit auto action', (close) => {
+    const keyword = h('input', { type: 'text', value: t.keyword, placeholder: 'invoice, urgent' });
+    const keywordField = h('label', { class: 'field', style: t.kind === 'keyword' ? null : 'display:none' }, 'Words to look for, separated by commas', keyword);
+    const kind = select(t.kind, TRIGGER_KINDS, (v) => { keywordField.style.display = v === 'keyword' ? '' : 'none'; }, 'Kind');
+    const skill = select(t.skill, names.map((n) => [n, n]), () => {}, 'Skill');
+    const auto = h('input', { type: 'checkbox', checked: t.auto });
+    const saveList = async (next, msg) => { if (await save({ triggers: next }, msg)) close(); };
+    return h('div', null,
+      h('label', { class: 'field' }, 'When the copied text has', kind), keywordField,
+      h('label', { class: 'field' }, 'Run this skill', skill),
+      h('label', { class: 'row', style: 'margin:8px 0' }, auto, 'Automatic: run it without asking'),
+      h('div', { class: 'actions' },
+        h('button', { class: 'btn primary', onclick: () => {
+          const item = { kind: kind.value, keyword: keyword.value.trim(), skill: skill.value, auto: auto.checked };
+          const next = list.slice();
+          if (index < 0) next.push(item); else next[index] = item;
+          saveList(next, 'Auto action saved');
+        } }, 'Save'),
+        h('button', { class: 'btn', onclick: close }, 'Cancel'),
+        index >= 0 && h('button', { class: 'btn ghost danger', onclick: () => saveList(list.filter((_, i) => i !== index), 'Auto action removed') }, 'Delete')));
+  });
+}
+
 function skillsTab() {
   const { skills, keyboard } = state.config;
   const byKey = Object.fromEntries(skills.filter((s) => s.key).map((s) => [s.key, s]));
@@ -241,6 +289,7 @@ function skillsTab() {
       h('div', { class: 'keymap' }, ['qwertyuiop', 'asdfghjkl', 'zxcvbnm'].map((row) => h('div', null, row.split('').map((l) =>
         h('button', { class: byKey[l] ? 'on' : '', title: byKey[l] ? `Hold ${l.toUpperCase()}: ${byKey[l].name}` : `Hold ${l.toUpperCase()}: nothing yet`,
           'aria-label': byKey[l] ? `${l.toUpperCase()}, runs ${byKey[l].name}` : `${l.toUpperCase()}, free`, onclick: () => keyDialog(l) }, l)))))),
+    triggersCard(),
     skills.length > 6 && h('input', { type: 'search', placeholder: 'Search my skills', value: state.search, 'aria-label': 'Search my skills',
       style: 'margin-top:16px', oninput: (e) => { state.search = e.target.value; renderKeepingFocus(e.target); } }),
     h('div', { class: 'grid', style: 'margin-top:16px' },

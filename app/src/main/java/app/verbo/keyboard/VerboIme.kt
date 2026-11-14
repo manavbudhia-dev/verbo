@@ -1,5 +1,6 @@
 package app.verbo.keyboard
 
+import kotlin.math.roundToInt
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -231,10 +232,34 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         val row = chipsRow ?: return
         row.removeAllViews()
         if (!assistantOn) return
-        if (contextText == null && hasFreshClip()) {
+        val fresh = contextText == null && hasFreshClip()
+        // Triggers: the copied message is matched on the phone; a chip offers each matching skill.
+        val clip = if (store.triggersOn) contextText ?: (if (fresh) readClip() else null) else null
+        val matched = clip?.let { c -> store.triggers.filter { Cards.matches(it.kind, it.keyword, c) } }.orEmpty()
+        val stamp = if (fresh) clipStamp() else 0L
+        if (fresh && matched.isNotEmpty() && stamp != lastAttachedClip) {
+            // Show the copied message above the keys, once per copy (✕ removes it for good).
+            lastAttachedClip = stamp
+            contextText = clip
+            refreshContext()
+            suggestRow?.visibility = View.GONE
+            chipsScroll?.visibility = View.VISIBLE
+        }
+        for (t in matched) {
+            val chip = chipView("⚡ " + Cards.chipLabel(t, clip!!), p.accent, p.accentPressed, p.onAccent)
+            chip.setOnClickListener { feedback(KeyboardView.Type.MODE); runTrigger(t, clip) }
+            row.addView(chip, chipParams())
+        }
+        if (contextText == null && fresh) {
             val use = chipView("📋 Use copied text", p.accent, p.accentPressed, p.onAccent)
             use.setOnClickListener { feedback(KeyboardView.Type.MODE); useClipAsContext() }
             row.addView(use, chipParams())
+        }
+        // An automatic trigger runs once per copied message.
+        val auto = matched.firstOrNull { it.auto }
+        if (auto != null && clip != null && stamp != 0L && stamp != lastAutoClip && !busy && store.activeKey.isNotBlank()) {
+            lastAutoClip = stamp
+            main.post { runTrigger(auto, clip) }
         }
         for (skill in skills) {
             val chip = chipView((skill.emoji + " " + skill.name).trim(), p.key, p.keyPressed, p.text)
@@ -444,14 +469,45 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
 
     // ---------- context from a copied message ----------
 
+    /** Wall-clock time, as clips are stamped with it. A variable only so the tests can use their own clock. */
+    internal var clock: () -> Long = { System.currentTimeMillis() }
+
     /** True when text was copied in the last few minutes. Looks only at the clip's description, not its content. */
     private fun hasFreshClip(): Boolean = try {
         val clipboard = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
         val description = clipboard.primaryClipDescription
         description != null && (description.hasMimeType("text/plain") || description.hasMimeType("text/html")) &&
-            System.currentTimeMillis() - description.timestamp < 5 * 60 * 1000
+            clock() - description.timestamp < 5 * 60 * 1000
     } catch (e: Exception) {
         false
+    }
+
+    /** When the current clip was copied; an automatic trigger runs once per clip. */
+    private var lastAutoClip = 0L
+    private var lastAttachedClip = 0L
+
+    private fun clipStamp(): Long = try {
+        (getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager).primaryClipDescription?.timestamp ?: 0L
+    } catch (e: Exception) { 0L }
+
+    private fun readClip(): String? = try {
+        val clipboard = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        clipboard.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString()?.trim()?.take(4000)?.ifEmpty { null }
+    } catch (e: Exception) {
+        null
+    }
+
+    /** Runs a trigger's skill on the copied message and shows the answer as a card. */
+    private fun runTrigger(t: Trigger, clip: String) {
+        val skill = store.triggerSkill(t)
+        if (skill == null) {
+            showStatus("No skill called “${t.skill}”. Edit the trigger in the Verbo app", "Set up" to { openApp() })
+            return
+        }
+        contextText = clip
+        refreshContext()
+        buildChips()
+        runTask("${skill.name}…", Ai.skillTask(skill.instruction), card = true) { runTrigger(t, clip) }
     }
 
     private fun useClipAsContext() {
@@ -577,8 +633,8 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             busy = false
             undo = null
             loadSettings()
-            buildChips()
             contextText = null // context belongs to the conversation it was copied for
+            buildChips()
             main.removeCallbacks(autoRun)
             autoLang = if (assistantOn) store.autoTranslate(info?.packageName) else null
             lastAuto = ""
@@ -1027,13 +1083,21 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         undo = null
         val token = ++generation
         val engine = Engine(store)
-        val tools = if (connected) store.tools() else emptyList()
         val cancel = {
             generation++
             busy = false
             hidePanel()
             showTyping()
         }
+        steps = null
+        // Each tool call shows up as a step, so the user can see what is happening.
+        val tools = if (connected) store.tools().map { t ->
+            ToolSpec(t.name, t.description, t.params, t.required) { args ->
+                val step = toolStep(t.name, args)
+                main.post { if (token == generation) { if (steps != null) addStep(step) else showStatus("$step…", "Cancel" to cancel) } }
+                t.run(args)
+            }
+        } else emptyList()
         if (card) showLoading(label, cancel) else showStatus(label, "Cancel" to cancel)
         worker.execute {
             val outcome = try {
@@ -1076,7 +1140,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         refreshContext()
     }
 
-    private fun hidePanel() {
+    internal fun hidePanel() {
         val box = panel ?: return
         if (box.visibility != View.VISIBLE) return
         box.removeAllViews()
@@ -1094,9 +1158,12 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         setOnClickListener { feedback(KeyboardView.Type.MODE); onTap() }
     }
 
-    private fun showLoading(label: String, cancel: () -> Unit) = showPanel {
-        gravity = Gravity.CENTER
-        addView(ImageView(this@VerboIme).apply {
+    /** The steps of the action in progress, shown as a card while waiting. Null when the wait is shown as a status line. */
+    private var steps: LinearLayout? = null
+
+    internal fun showLoading(label: String, cancel: () -> Unit) = showPanel {
+        val header = LinearLayout(this@VerboIme).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(4), 0, 0, dp(8)) }
+        header.addView(ImageView(this@VerboIme).apply {
             setImageResource(R.drawable.ic_sparkles)
             setColorFilter(p.accent)
             // A slow pulse while waiting.
@@ -1106,27 +1173,96 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
                 repeatCount = android.animation.ValueAnimator.INFINITE
                 start()
             }
-        }, LinearLayout.LayoutParams(dp(40), dp(40)))
-        addView(TextView(this@VerboIme).apply {
-            text = label
-            gravity = Gravity.CENTER
-            setTextColor(p.muted)
+        }, LinearLayout.LayoutParams(dp(22), dp(22)))
+        header.addView(TextView(this@VerboIme).apply {
+            text = label.removeSuffix("…")
+            setTextColor(p.text)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-            setPadding(0, dp(12), 0, dp(18))
-        })
-        addView(iconButton(R.drawable.ic_x, "Cancel", p.muted, cancel).apply { background = pressable(p.key, p.keyPressed, 22) },
-            LinearLayout.LayoutParams(dp(44), dp(44)))
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(dp(10), 0, 0, 0)
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        header.addView(iconButton(R.drawable.ic_x, "Cancel", p.muted, cancel), LinearLayout.LayoutParams(dp(40), dp(40)))
+        addView(header)
+        val card = LinearLayout(this@VerboIme).apply {
+            orientation = LinearLayout.VERTICAL
+            background = rounded(p.key, 16)
+            setPadding(dp(14), dp(10), dp(14), dp(12))
+        }
+        addView(card, LinearLayout.LayoutParams(-1, -2))
+        steps = card
+        addStep(if (contextText != null) "Reading the copied message" else "Reading your text")
+        addStep("Thinking")
     }
+
+    /** Marks the current step done and shows the next one. */
+    internal fun addStep(text: String) {
+        val box = steps ?: return
+        (box.getChildAt(box.childCount - 1) as? TextView)?.let { last ->
+            last.text = "✓   ${last.tag}"
+            last.setTextColor(p.muted)
+        }
+        box.addView(TextView(this).apply {
+            tag = text
+            this.text = "●   $text…"
+            setTextColor(p.text)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
+            setPadding(0, dp(5), 0, dp(5))
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+        })
+    }
+
+    /** What the assistant is doing when it calls a tool, in words. */
+    private fun toolStep(name: String, args: Map<String, String>): String {
+        val q = (args["query"] ?: args["location"] ?: args["channel"] ?: args["title"] ?: args["content"] ?: "").take(40)
+        val about = if (q.isNotBlank()) " “$q”" else ""
+        return when {
+            name == "find_place" -> "Finding$about on the map"
+            name == "get_weather" -> "Checking the weather$about"
+            name == "notion_search" -> "Searching Notion$about"
+            name == "notion_read_page" -> "Reading the Notion page"
+            name == "notion_create_page" -> "Creating a Notion page"
+            name.startsWith("calendly") -> "Getting your booking links"
+            name == "slack_send_message" -> "Sending to Slack #${args["channel"].orEmpty().removePrefix("#")}"
+            name.startsWith("slack_") -> "Checking Slack$about"
+            name == "github_create_issue" -> "Opening a GitHub issue"
+            name.startsWith("github_") -> "Searching GitHub$about"
+            name == "todoist_add_task" -> "Adding to Todoist$about"
+            name.startsWith("todoist_") -> "Checking Todoist"
+            name == "linear_create_issue" -> "Creating a Linear issue"
+            name.startsWith("linear_") -> "Searching Linear$about"
+            name.startsWith("discord_") -> "Posting to Discord"
+            name == "google_meet_link" -> "Making a Meet link"
+            name == "google_calendar_create" -> "Saving to your calendar$about"
+            name.startsWith("google_calendar") -> "Checking your calendar"
+            name == "gmail_send" -> "Sending the email"
+            name == "gmail_create_draft" -> "Saving a Gmail draft"
+            name.startsWith("gmail_") -> "Searching Gmail$about"
+            name.startsWith("api_") -> "Calling ${name.removePrefix("api_").replace('_', ' ')}"
+            else -> name.replace('_', ' ')
+        }
+    }
+
+    /** The text that goes into the chat: cards are turned back into plain, readable text. */
+    private fun chatText(r: ActionResult): String =
+        Cards.notion(r.text, r.openUri)?.plain() ?: Cards.list(r.text)?.plain() ?: r.text
 
     /** The result as a card: back, try again, copy, and insert into the field (or send, where the app allows it). */
     internal fun showResult(result: ActionResult, onInsert: () -> Unit, onRetry: (() -> Unit)?) = showPanel {
+        steps = null
+        val person = Ai.personCard(result.text)
+        val notion = if (person == null) Cards.notion(result.text, result.openUri) else null
+        val list = if (person == null && notion == null) Cards.list(result.text) else null
         val header = LinearLayout(this@VerboIme).apply { gravity = Gravity.CENTER_VERTICAL }
         header.addView(iconButton(R.drawable.ic_chevron_right, "Back to keyboard") { hidePanel(); showTyping() }.apply { rotation = 180f },
             LinearLayout.LayoutParams(dp(40), dp(40)))
         header.addView(TextView(this@VerboIme).apply {
-            text = "Result"
-            setTextColor(p.muted)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+            text = when { person != null -> "in   LinkedIn HUD"; notion != null -> "N   Notion"; list != null -> list.title; else -> "Result" }
+            setTextColor(if (person != null || notion != null || list != null) p.text else p.muted)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, if (list != null) 15f else 13.5f)
+            if (person != null || notion != null || list != null) typeface = Typeface.DEFAULT_BOLD
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
             setPadding(dp(4), 0, 0, 0)
         }, LinearLayout.LayoutParams(0, -2, 1f))
         if (onRetry != null) header.addView(iconButton(R.drawable.ic_refresh_cw, "Try again", p.muted, onRetry), LinearLayout.LayoutParams(dp(40), dp(40)))
@@ -1151,10 +1287,24 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
                 main.post { if (bitmap != null && token == generation && map.isAttachedToWindow) map.setImageBitmap(bitmap) }
             }
         }
-        val person = Ai.personCard(result.text)
         if (person != null) {
             personCard(card, person)
             addView(android.widget.ScrollView(this@VerboIme).apply { addView(card) }, LinearLayout.LayoutParams(-1, 0, 1f))
+            resultButtons(this, result, onInsert)
+            return@showPanel
+        }
+        if (notion != null) {
+            notionCard(card, notion)
+            addView(android.widget.ScrollView(this@VerboIme).apply { addView(card) }, LinearLayout.LayoutParams(-1, 0, 1f))
+            resultButtons(this, result, onInsert)
+            return@showPanel
+        }
+        if (list != null) {
+            // Each pick is its own card; the panel background shows between them.
+            val column = LinearLayout(this@VerboIme).apply { orientation = LinearLayout.VERTICAL }
+            list.items.forEach { column.addView(itemCard(it), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) }) }
+            if (list.rest.isNotEmpty()) column.addView(TextView(this@VerboIme).apply { text = list.rest; setTextColor(p.muted); setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f); setPadding(dp(4), 0, dp(4), dp(4)) })
+            addView(android.widget.ScrollView(this@VerboIme).apply { addView(column) }, LinearLayout.LayoutParams(-1, 0, 1f))
             resultButtons(this, result, onInsert)
             return@showPanel
         }
@@ -1198,7 +1348,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         copy.setOnClickListener {
             feedback(KeyboardView.Type.MODE)
             (getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager)
-                .setPrimaryClip(android.content.ClipData.newPlainText("Verbo result", result.text))
+                .setPrimaryClip(android.content.ClipData.newPlainText("Verbo result", chatText(result)))
             copy.text = "Copied"
         }
         footer.addView(copy, LinearLayout.LayoutParams(0, dp(46), 1f).apply { rightMargin = dp(8) })
@@ -1227,22 +1377,25 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             text = initials
             gravity = Gravity.CENTER
             setTextColor(p.onAccent)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
             typeface = Typeface.DEFAULT_BOLD
             background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(p.accent) }
-        }, LinearLayout.LayoutParams(dp(44), dp(44)))
-        val names = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, 0, 0) }
-        names.addView(TextView(this).apply { text = person.name; setTextColor(p.text); setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f); typeface = Typeface.DEFAULT_BOLD })
-        if (person.headline.isNotEmpty()) names.addView(TextView(this).apply { text = person.headline; setTextColor(p.muted); setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f) })
+        }, LinearLayout.LayoutParams(dp(52), dp(52)))
+        val names = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), 0, 0, 0) }
+        names.addView(TextView(this).apply { text = person.name; setTextColor(p.text); setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f); typeface = Typeface.DEFAULT_BOLD })
+        if (person.headline.isNotEmpty()) names.addView(TextView(this).apply { text = person.headline; setTextColor(p.accent); setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f) })
+        val location = person.facts.firstOrNull { it.first.equals("Location", true) }?.second
+        if (location != null) names.addView(TextView(this).apply { text = location; setTextColor(p.muted); setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f) })
         head.addView(names, LinearLayout.LayoutParams(0, -2, 1f))
         card.addView(head, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
-        person.facts.forEach { (label, value) ->
+        val icons = mapOf("current" to "🏢", "previous" to "🕘", "education" to "🎓", "known for" to "⭐")
+        person.facts.filter { !it.first.equals("Location", true) }.forEach { (label, value) ->
             card.addView(LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
-                background = rounded(p.fnKey, 10)
-                setPadding(dp(12), dp(8), dp(12), dp(9))
-                addView(TextView(this@VerboIme).apply { text = label.uppercase(); setTextColor(p.muted); setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f); typeface = Typeface.DEFAULT_BOLD; letterSpacing = 0.08f })
-                addView(TextView(this@VerboIme).apply { text = value; setTextColor(p.text); setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f) })
+                background = rounded(p.fnKey, 12)
+                setPadding(dp(12), dp(9), dp(12), dp(10))
+                addView(TextView(this@VerboIme).apply { text = "${icons[label.lowercase()] ?: "•"}  $label:"; setTextColor(p.text); setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f); typeface = Typeface.DEFAULT_BOLD })
+                addView(TextView(this@VerboIme).apply { text = value; setTextColor(p.muted); setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f); setPadding(dp(26), dp(2), 0, 0) })
             }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
         }
         if (person.rest.isNotEmpty()) card.addView(TextView(this).apply { text = person.rest; setTextColor(p.text); setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f); setPadding(0, dp(8), 0, 0) })
@@ -1251,6 +1404,87 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             open.typeface = Typeface.DEFAULT_BOLD
             open.setOnClickListener { feedback(KeyboardView.Type.MODE); openLink(url) }
             card.addView(open, LinearLayout.LayoutParams(-2, dp(36)).apply { topMargin = dp(10) })
+        }
+    }
+
+    /** A Notion page: icon, title, when it was last edited, and Open. Insert puts "title: link" in the chat. */
+    private fun notionCard(card: LinearLayout, page: Cards.NotionCard) {
+        card.addView(TextView(this).apply { text = "Result"; setTextColor(p.muted); setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f) })
+        val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(8), 0, dp(8)) }
+        row.addView(TextView(this).apply {
+            text = "📄"
+            gravity = Gravity.CENTER
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            background = rounded(p.fnKey, 8)
+        }, LinearLayout.LayoutParams(dp(34), dp(34)))
+        row.addView(TextView(this).apply {
+            text = page.title
+            setTextColor(p.text)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(dp(12), 0, 0, 0)
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        row.setOnClickListener { feedback(KeyboardView.Type.MODE); openLink(page.url) }
+        card.addView(row)
+        card.addView(View(this).apply { setBackgroundColor(p.fnKey) }, LinearLayout.LayoutParams(-1, dp(1)))
+        card.addView(TextView(this).apply {
+            text = if (page.edited.isNotEmpty()) "Last edited: ${page.edited}" else Uri.parse(page.url).host.orEmpty()
+            setTextColor(p.muted)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+            setPadding(0, dp(8), 0, 0)
+        })
+        val open = chipView("Open in Notion", p.fnKey, p.keyPressed, p.accent)
+        open.typeface = Typeface.DEFAULT_BOLD
+        open.setOnClickListener { feedback(KeyboardView.Type.MODE); openLink(page.url) }
+        card.addView(open, LinearLayout.LayoutParams(-2, dp(36)).apply { topMargin = dp(10) })
+    }
+
+    /** One pick in a ranked list: rank badge, name, rating, kind, area and up to three tags. Tapping searches for it. */
+    private fun itemCard(item: Cards.Item) = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        background = pressable(p.key, p.keyPressed, 16)
+        setPadding(dp(14), dp(11), dp(14), dp(12))
+        val top = LinearLayout(this@VerboIme).apply { gravity = Gravity.CENTER_VERTICAL }
+        top.addView(TextView(this@VerboIme).apply {
+            text = "TOP ${item.rank}"
+            setTextColor(p.onAccent)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(dp(7), dp(2), dp(7), dp(2))
+            background = rounded(p.accent, 6)
+        })
+        top.addView(TextView(this@VerboIme).apply {
+            text = item.name
+            setTextColor(p.text)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            typeface = Typeface.DEFAULT_BOLD
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            setPadding(dp(10), 0, 0, 0)
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        addView(top)
+        val meta = listOfNotNull(
+            item.rating?.let { r -> "★".repeat(r.roundToInt().coerceIn(0, 5)) + "  " + (if (r % 1.0 == 0.0) r.toInt().toString() else r.toString()) },
+            item.kind.ifBlank { null },
+        ).joinToString("  ·  ")
+        if (meta.isNotEmpty()) addView(TextView(this@VerboIme).apply { text = meta; setTextColor(p.muted); setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f); setPadding(0, dp(5), 0, 0) })
+        if (item.area.isNotBlank()) addView(TextView(this@VerboIme).apply { text = "📍 ${item.area}"; setTextColor(p.muted); setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f); setPadding(0, dp(2), 0, 0) })
+        if (item.tags.isNotEmpty()) addView(LinearLayout(this@VerboIme).apply {
+            setPadding(0, dp(7), 0, 0)
+            item.tags.forEach { tag ->
+                addView(TextView(this@VerboIme).apply {
+                    text = tag
+                    setTextColor(p.accent)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                    maxLines = 1
+                    setPadding(dp(8), dp(3), dp(8), dp(3))
+                    background = rounded(p.fnKey, 6)
+                }, LinearLayout.LayoutParams(-2, -2).apply { rightMargin = dp(6) })
+            }
+        })
+        setOnClickListener {
+            feedback(KeyboardView.Type.MODE)
+            openLink("https://www.google.com/search?q=" + Uri.encode(listOf(item.name, item.area).filter { it.isNotBlank() }.joinToString(" ")))
         }
     }
 
@@ -1266,7 +1500,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             now.before == target.before && now.after == target.after
         if (!unchanged) {
             showStatus("Text changed while working", *listOfNotNull("Insert" to {
-                currentInputConnection?.commitText(result.text, 1)
+                currentInputConnection?.commitText(chatText(result), 1)
                 contextText = null
                 refreshContext()
                 showTyping()
@@ -1276,9 +1510,9 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         val ic = currentInputConnection ?: return
         ic.beginBatchEdit()
         if (target.selection == null) ic.deleteSurroundingText(target.before.length, target.after.length)
-        ic.commitText(result.text, 1)
+        ic.commitText(chatText(result), 1)
         ic.endBatchEdit()
-        undo = target.text to result.text
+        undo = target.text to chatText(result)
         contextText = null
         refreshContext()
         showStatus("Done", *listOfNotNull("Undo" to { undoLast() }, open).toTypedArray())

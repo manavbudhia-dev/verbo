@@ -61,6 +61,7 @@ class PageActivity : Activity() {
             page == "feedback" -> feedbackPage(column)
             page == "battery" -> batteryPage(column)
             page == "templates" -> templatesPage(column)
+            page == "triggers" -> triggersPage(column)
             else -> tryPage(column)
         }
     }
@@ -142,6 +143,67 @@ class PageActivity : Activity() {
             store.skills = skills
             render()
         }
+        dialog.show()
+    }
+
+    // ---------- triggers ----------
+
+    private fun triggersPage(column: LinearLayout) {
+        column.addView(ui.topBar("Auto actions", "Copy a message, and the right skill is one tap away"))
+        note(column, "When you copy a message, Verbo checks it on your phone for the things below and shows a ⚡ chip above the keys. " +
+            "Example: copy \"We're meeting David Miller tomorrow\" and get \"Who is · David Miller\" and \"Save event\". Nothing is sent until a skill runs. " +
+            "Turn on Automatic to run a skill as soon as you open the keyboard after copying.")
+        column.addView(ui.rows(ui.row(R.drawable.ic_zap, "Suggest actions for copied text", "Checked on the phone only", ui.toggle(store.triggersOn) { store.triggersOn = it; render() })))
+        val triggers = store.triggers
+        if (triggers.isNotEmpty()) column.addView(ui.rows(*triggers.mapIndexed { i, t ->
+            val what = Cards.KINDS.firstOrNull { it.first == t.kind }?.second ?: t.kind
+            val condition = if (t.kind == "keyword") "the words “${t.keyword}”" else what
+            val missing = store.triggerSkill(t) == null
+            ui.row(R.drawable.ic_zap, "${t.skill}${if (t.auto) " · automatic" else ""}",
+                "When copied text has $condition" + if (missing) " · skill not found" else "", ui.chevron()) { editTrigger(i) }
+        }.toTypedArray()))
+        column.addView(ui.button("New auto action", R.drawable.ic_plus, filled = true) { editTrigger(-1) })
+        column.addView(ui.button("Reset to the three defaults", null) { store.triggers = Trigger.DEFAULTS; render() })
+    }
+
+    private fun editTrigger(index: Int) {
+        val list = store.triggers.toMutableList()
+        val existing = list.getOrNull(index)
+        val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(ui.dp(22), ui.dp(8), ui.dp(22), 0) }
+        form.addView(ui.text("When the copied text has", 13.5f, ui.muted))
+        val kinds = android.widget.Spinner(this).apply {
+            adapter = android.widget.ArrayAdapter(this@PageActivity, android.R.layout.simple_spinner_dropdown_item, Cards.KINDS.map { it.second })
+            setSelection(Cards.KINDS.indexOfFirst { it.first == (existing?.kind ?: "person") }.coerceAtLeast(0))
+        }
+        form.addView(kinds)
+        val keyword = ui.field("Words to look for, separated by commas", existing?.keyword ?: "")
+        form.addView(keyword)
+        form.addView(ui.text("Run this skill", 13.5f, ui.muted).apply { setPadding(0, ui.dp(10), 0, 0) })
+        val names = (store.skills.map { it.name } + Trigger.BUILTIN.keys).distinct()
+        val skill = android.widget.Spinner(this).apply {
+            adapter = android.widget.ArrayAdapter(this@PageActivity, android.R.layout.simple_spinner_dropdown_item, names)
+            setSelection(names.indexOf(existing?.skill ?: "Who is").coerceAtLeast(0))
+        }
+        form.addView(skill)
+        val auto = android.widget.CheckBox(this).apply { text = "Automatic: run it without asking"; isChecked = existing?.auto ?: false }
+        form.addView(auto)
+        kinds.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, pos: Int, id: Long) {
+                keyword.visibility = if (Cards.KINDS[pos].first == "keyword") android.view.View.VISIBLE else android.view.View.GONE
+            }
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+        }
+        val dialog = AlertDialog.Builder(this).setTitle(if (existing == null) "New auto action" else "Edit auto action").setView(form)
+            .setPositiveButton("Save") { _, _ ->
+                val kind = Cards.KINDS[kinds.selectedItemPosition].first
+                if (kind == "keyword" && keyword.text.isBlank()) { ui.toast("Type the words to look for"); return@setPositiveButton }
+                val t = Trigger(kind, keyword.text.toString().trim(), names[skill.selectedItemPosition], auto.isChecked)
+                if (existing == null) list.add(t) else list[index] = t
+                store.triggers = list
+                render()
+            }
+            .setNegativeButton("Cancel", null)
+        if (existing != null) dialog.setNeutralButton("Delete") { _, _ -> list.removeAt(index); store.triggers = list; render() }
         dialog.show()
     }
 

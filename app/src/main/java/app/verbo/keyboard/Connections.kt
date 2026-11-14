@@ -215,7 +215,7 @@ object Connections {
         val lines = res.path("results").map { item ->
             val title = if (item.path("object").asText() == "database") plain(item.path("title"))
             else item.path("properties").firstOrNull { it.path("type").asText() == "title" }?.let { plain(it.path("title")) } ?: ""
-            "${item.path("object").asText()} | id ${item.path("id").asText()} | ${title.ifBlank { "(untitled)" }} | ${item.path("url").asText()}"
+            "${item.path("object").asText()} | id ${item.path("id").asText()} | ${title.ifBlank { "(untitled)" }} | last edited ${item.path("last_edited_time").asText()} | ${item.path("url").asText()}"
         }
         return if (lines.isEmpty()) "Nothing found. The page may not be shared with the integration." else lines.joinToString("\n")
     }
