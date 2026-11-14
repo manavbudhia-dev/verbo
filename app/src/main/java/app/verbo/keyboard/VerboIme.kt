@@ -206,6 +206,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
                 "rewrite" -> KeyboardView.WheelItem("Rewrite", R.drawable.ic_pencil_line)
                 "voice" -> KeyboardView.WheelItem("Voice", R.drawable.ic_mic)
                 "clips" -> KeyboardView.WheelItem("Clips", R.drawable.ic_clipboard)
+                "meet" -> KeyboardView.WheelItem("Meeting link", R.drawable.ic_video)
                 else -> {
                     val name = id.removePrefix("skill:")
                     val skill = skills.firstOrNull { it.name == name }
@@ -418,6 +419,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             "rewrite" -> showRewrite()
             "voice" -> startVoice(false)
             "clips" -> showClips()
+            "meet" -> makeMeetLink()
             else -> skills.firstOrNull { it.name == id.removePrefix("skill:") }?.let { runAction(it) } ?: showStatus("That skill no longer exists")
         }
     }
@@ -783,6 +785,59 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             grid.addView(row)
         }
         addView(android.widget.ScrollView(this@VerboIme).apply { addView(grid) }, LinearLayout.LayoutParams(-1, 0, 1f))
+    }
+
+    /**
+     * Drops a new meeting link into the field. A Google Meet link needs the owner's Google account, which lives on
+     * the dashboard; without it the user is offered an instant no-account link or the Meet app instead.
+     */
+    private fun makeMeetLink() {
+        if (busy) return
+        if (isPasswordField()) {
+            showStatus("Verbo doesn't type into password fields")
+            return
+        }
+        if (!store.googleConnected) {
+            showChoices(if (store.deviceToken.isEmpty()) "Google Meet needs your dashboard" else "Google isn't connected yet", listOf(
+                "Instant link, no account" to {
+                    hidePanel()
+                    // A Jitsi room exists as soon as someone opens its address; a long random name keeps it private.
+                    val room = (1..14).map { "abcdefghijkmnpqrstuvwxyz23456789".random() }.joinToString("")
+                    insert("https://meet.jit.si/verbo-$room")
+                },
+                "Open Google Meet" to { hidePanel(); showTyping(); openLink("https://meet.google.com/new") },
+                "How to connect Google" to {
+                    hidePanel()
+                    showTyping()
+                    startActivity(Intent(this, PageActivity::class.java).putExtra("page", "automate").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                },
+            ))
+            return
+        }
+        busy = true
+        undo = null
+        val token = ++generation
+        showLoading("Creating a Meet link…") {
+            generation++
+            busy = false
+            hidePanel()
+            showTyping()
+        }
+        worker.execute {
+            val outcome = try {
+                Result.success(Sync.meet(store))
+            } catch (e: SyncException) {
+                Result.failure(e)
+            } catch (e: Exception) {
+                Result.failure(SyncException("Couldn't create the link. Try again"))
+            }
+            main.post {
+                if (token != generation) return@post
+                busy = false
+                hidePanel()
+                outcome.fold({ insert(it) }) { showStatus(it.message ?: "Failed") }
+            }
+        }
     }
 
     private fun showLanguages() {

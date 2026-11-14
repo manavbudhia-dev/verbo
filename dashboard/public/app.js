@@ -166,6 +166,24 @@ function tokenCard(icon, title, help, isSet, field) {
       isSet && h('button', { class: 'btn ghost danger', onclick: () => save({ [field]: '' }, 'Disconnected') }, 'Disconnect')));
 }
 
+// Google is connected by signing in, not by pasting a token, and only when the server has been given a Google client.
+function googleCard(c) {
+  const status = !c.googleAvailable ? 'Not set up' : c.googleConnected ? 'Connected' : 'Not connected';
+  return h('div', { class: 'card' },
+    h('div', { class: 'row' }, h('div', { class: 'emoji' }, '🎥'),
+      h('div', { class: 'grow' }, h('h3', null, 'Google Meet'),
+        h('p', { class: 'muted' }, c.googleAvailable
+          ? 'One-tap meeting links from the keyboard. Sign in with the Google account the meetings should belong to.'
+          : 'One-tap meeting links from the keyboard. This server has no Google client yet: see “Google Meet” in the dashboard README.')),
+      h('span', { class: 'pill' + (c.googleConnected ? '' : ' off') }, status)),
+    c.googleAvailable && h('div', { class: 'actions' },
+      c.googleConnected
+        ? h('button', { class: 'btn ghost danger', onclick: async () => {
+            try { state.config = await api('POST', '/api/google/disconnect'); toast('Google disconnected'); render(); } catch (e) { toast(e.message); }
+          } }, 'Disconnect')
+        : h('button', { class: 'btn primary', onclick: () => { location.href = '/api/google/start'; } }, 'Connect Google')));
+}
+
 function connectionsTab() {
   const c = state.config;
   const apis = c.customApis;
@@ -193,6 +211,7 @@ function connectionsTab() {
     h('div', { class: 'card row' }, h('div', { class: 'emoji' }, '☀️'),
       h('div', { class: 'grow' }, h('h3', null, 'Weather'), h('p', { class: 'muted' }, 'Forecasts from Open-Meteo. No account needed.')),
       h('label', { class: 'switch' }, h('input', { type: 'checkbox', checked: c.weather, 'aria-label': 'Weather', onchange: (e) => save({ weather: e.target.checked }) }))),
+    googleCard(c),
     tokenCard('📝', 'Notion', 'Search, read and create pages. Use an internal integration token and share the pages you want with it.', c.notionSet, 'notionToken'),
     tokenCard('📅', 'Calendly', 'Drop your booking links into a message. Use a personal access token.', c.calendlySet, 'calendlyToken'),
     apis.map((a, i) => h('div', { class: 'card row' }, h('div', { class: 'emoji' }, '🔌'),
@@ -293,6 +312,13 @@ async function load() {
 
 (async () => {
   try {
+    // Back from Google's sign-in page: say how it went, open the right tab, and tidy the address bar.
+    const google = new URLSearchParams(location.search).get('google');
+    if (google) {
+      state.tab = 'connections';
+      history.replaceState(null, '', '/');
+      setTimeout(() => toast(google === 'connected' ? 'Google connected' : 'Google sign-in did not complete'), 300);
+    }
     const me = await api('GET', '/api/me');
     state.allowSignup = me.allowSignup;
     state.email = me.email;

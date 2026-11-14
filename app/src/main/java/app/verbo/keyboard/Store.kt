@@ -78,10 +78,10 @@ class Store(context: Context) {
     // the wheel, translate languages and saved clips
     /** Holding the bar opens the shortcut wheel; when off it runs the assistant straight away. */
     var wheelOn: Boolean get() = bool("wheel_on", true); set(v) = put("wheel_on", v)
-    /** Up to five shortcut ids: a built-in tool from WHEEL_TOOLS, or "skill:" followed by a skill's name. */
+    /** Up to MAX_WHEEL shortcut ids: a built-in tool from WHEEL_TOOLS, or "skill:" followed by a skill's name. */
     var wheel: List<String>
-        get() = str("wheel", DEFAULT_WHEEL.joinToString("\n")).split("\n").filter { it.isNotBlank() }.take(5)
-        set(v) = put("wheel", v.take(5).joinToString("\n"))
+        get() = str("wheel", DEFAULT_WHEEL.joinToString("\n")).split("\n").filter { it.isNotBlank() }.take(MAX_WHEEL)
+        set(v) = put("wheel", v.take(MAX_WHEEL).joinToString("\n"))
     var languages: List<String>
         get() = str("languages", DEFAULT_LANGUAGES.joinToString("\n")).split("\n").filter { it in ALL_LANGUAGES }
         set(v) = put("languages", v.joinToString("\n"))
@@ -113,11 +113,15 @@ class Store(context: Context) {
             ?.putString("calendly_token", o.optString("calendlyToken"))
             ?.putString("custom_apis", (o.optJSONArray("customApis") ?: JSONArray()).toString())
             ?.putString("skills", (o.optJSONArray("skills") ?: JSONArray()).toString())
+            ?.putBoolean("google_connected", o.optBoolean("googleConnected", false))
             ?.putLong("last_sync", System.currentTimeMillis())
             ?.apply()
     }
 
-    fun unpair() { prefs?.edit()?.remove("server_url")?.remove("device_token")?.remove("last_sync")?.apply() }
+    /** True when the paired dashboard has a Google account connected, so Meet links can be made. */
+    val googleConnected get() = deviceToken.isNotEmpty() && bool("google_connected", false)
+
+    fun unpair() { prefs?.edit()?.remove("server_url")?.remove("device_token")?.remove("last_sync")?.remove("google_connected")?.apply() }
 
     // connections
     var weather: Boolean get() = bool("weather", true); set(v) = put("weather", v)
@@ -200,8 +204,11 @@ class Store(context: Context) {
     companion object {
         const val MIN_HEIGHT = 80
         const val MAX_HEIGHT = 130
-        val WHEEL_TOOLS = listOf("ai" to "Ask AI", "translate" to "Translate", "rewrite" to "Rewrite", "voice" to "Voice", "clips" to "Clips")
-        val DEFAULT_WHEEL = listOf("translate", "rewrite", "ai", "voice", "clips")
+        const val MAX_WHEEL = 6
+        val WHEEL_TOOLS = listOf(
+            "ai" to "Ask AI", "translate" to "Translate", "rewrite" to "Rewrite", "meet" to "Meeting link", "voice" to "Voice", "clips" to "Clips",
+        )
+        val DEFAULT_WHEEL = listOf("translate", "rewrite", "ai", "meet", "voice", "clips")
         val DEFAULT_LANGUAGES = listOf("English", "Hindi", "Spanish", "French", "Chinese (Simplified)")
         val ALL_LANGUAGES = listOf(
             "English", "Hindi", "Spanish", "French", "Chinese (Simplified)", "Arabic", "Bengali", "Portuguese", "Russian", "Japanese",

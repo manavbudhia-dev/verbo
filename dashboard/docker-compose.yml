@@ -7,6 +7,10 @@ services:
       SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env}
       ALLOW_SIGNUP: ${ALLOW_SIGNUP:-true}
       TRUST_PROXY: "1"
+      # Optional, for one-tap Google Meet links (see README).
+      PUBLIC_URL: https://${DOMAIN}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
     volumes:
       - verbo-data:/data
 

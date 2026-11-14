@@ -42,6 +42,25 @@ Dashboard → **Keyboards** → **Pair a keyboard** shows a one-time code. In th
 under **Dashboard**, enter the site address and the code. The keyboard then pulls its
 settings from the dashboard (on pairing, on **Sync now**, and every 10 minutes while in use).
 
+## Google Meet (optional)
+
+With a Google account connected, the keyboard's **Meeting link** shortcut drops a real Google Meet link into
+the message. Google requires each server to bring its own client, so this takes a one-time setup:
+
+1. In [Google Cloud Console](https://console.cloud.google.com) create a project and enable the **Google Meet REST API**.
+2. **OAuth consent screen**: External, add your own Google account as a test user, and add the scope
+   `https://www.googleapis.com/auth/meetings.space.created`.
+3. **Credentials → Create credentials → OAuth client ID → Web application**, with the redirect URI
+   `https://your-domain/api/google/callback`.
+4. Put the client ID and secret in `.env` as `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`, then
+   `sudo docker compose up -d`.
+5. In the dashboard open **Connections → Google Meet → Connect Google** and sign in. On the phone, tap
+   **Sync now** under Web dashboard.
+
+The Google sign-in is stored encrypted on the server and never sent to the phone. While the consent screen
+is in "Testing", Google expires the sign-in after seven days; publish the app in the console to keep it.
+Without this setup the shortcut still works, offering an instant no-account (Jitsi) link instead.
+
 ## Run without Docker
 
 Needs Node 22.13 or newer.
@@ -49,7 +68,8 @@ Needs Node 22.13 or newer.
     SECRET_KEY=$(openssl rand -hex 32) PORT=8080 node server.js
 
 Put it behind a reverse proxy that terminates HTTPS and set `TRUST_PROXY=1`. For local
-testing over plain http, add `INSECURE_COOKIES=1`.
+testing over plain http, add `INSECURE_COOKIES=1`. For Google Meet also set `PUBLIC_URL` to the
+site's public address, plus the two `GOOGLE_` variables.
 
 ## Back up
 

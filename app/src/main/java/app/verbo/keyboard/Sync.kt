@@ -33,6 +33,14 @@ object Sync {
         store.applyRemote(res)
     }
 
+    /** Asks the dashboard to create a Google Meet room in the owner's Google account. Returns the meeting link. */
+    fun meet(store: Store): String {
+        if (store.deviceToken.isEmpty()) throw SyncException("Pair with your dashboard first")
+        val url = request("POST", store.serverUrl + "/api/device/meet", store.deviceToken, "{}").optString("url")
+        if (!url.startsWith("https://meet.google.com/")) throw SyncException("The dashboard didn't return a Meet link")
+        return url
+    }
+
     private fun request(method: String, url: String, token: String?, body: String?): JSONObject {
         val conn = try {
             URL(url).openConnection() as HttpURLConnection

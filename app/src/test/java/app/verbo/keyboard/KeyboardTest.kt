@@ -309,7 +309,7 @@ class KeyboardTest {
         type("hi")
         val keys = ime.keys!!
         layout(root)
-        assertEquals("default wheel has five shortcuts", 5, keys.wheelItems.size)
+        assertEquals("default wheel has six shortcuts", 6, keys.wheelItems.size)
         holdBar(keys)
         // Slide to the far right of the wheel (Clips is the last shortcut) and let go.
         val clips = Triple(0, keys.width * 0.86f, keys.height * 0.80f)
@@ -331,6 +331,26 @@ class KeyboardTest {
         touch(keys, MotionEvent.ACTION_DOWN, listOf(bar))
         touch(keys, MotionEvent.ACTION_UP, listOf(bar))
         assertEquals("hi ", field.text.toString())
+    }
+
+    @Test
+    fun meetingLinkWithoutGoogleOffersAnInstantLink() {
+        val keys = ime.keys!!
+        layout(root)
+        holdBar(keys)
+        // Meeting link is the fourth of six shortcuts: its slice is centred 75 degrees up from the right.
+        val r = minOf(keys.width * 0.47f, keys.height * 0.80f) * 0.68f
+        val meet = Triple(0, keys.width / 2f + r * 0.2588f, keys.height - r * 0.9659f)
+        touch(keys, MotionEvent.ACTION_MOVE, listOf(meet))
+        touch(keys, MotionEvent.ACTION_UP, listOf(meet))
+        assertEquals("with no dashboard paired, a panel of choices replaces the keys", View.GONE, keys.visibility)
+        layout(root)
+        val panel = (root as ViewGroup).let { g -> (0 until g.childCount).map { g.getChildAt(it) }.first { it.visibility == View.VISIBLE && it !== keys.parent && it is ViewGroup && (it as ViewGroup).childCount > 0 } }
+        fun find(v: View): View? = if (v is android.widget.TextView && v.text.toString().startsWith("Instant link")) v
+            else (v as? ViewGroup)?.let { g -> (0 until g.childCount).firstNotNullOfOrNull { find(g.getChildAt(it)) } }
+        find(panel)!!.performClick()
+        assertTrue(field.text.toString(), field.text.toString().matches(Regex("https://meet\\.jit\\.si/verbo-[a-z0-9]{14}")))
+        assertEquals("the keys come back", View.VISIBLE, keys.visibility)
     }
 
     @Test

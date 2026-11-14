@@ -141,7 +141,7 @@ class MainActivity : Activity() {
         }
         column.addView(ui.section(R.drawable.ic_circle_dashed, "Tools"))
         column.addView(ui.rows(
-            ui.row(R.drawable.ic_circle_dashed, "Shortcut wheel", "Choose the five shortcuts on the wheel", ui.chevron()) { open("wheel") },
+            ui.row(R.drawable.ic_circle_dashed, "Shortcut wheel", "Add tools and skills to the wheel", ui.chevron()) { open("wheel") },
             ui.row(R.drawable.ic_languages, "Translate languages", store.languages.joinToString(", ").ifEmpty { "None chosen" }, ui.chevron()) { open("translate") },
             ui.row(R.drawable.ic_zap, "Connected tools", "Notion, Calendly, weather, places, your APIs", ui.chevron()) { open("automate") },
         ))

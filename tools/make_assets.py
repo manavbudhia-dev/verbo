@@ -9,7 +9,7 @@ src, out = sys.argv[1], sys.argv[2]
 ICONS = """arrow-left ellipsis-vertical sparkles box layers zap message-square settings palette moon sun keyboard
 volume-2 vibrate globe languages spell-check message-square-more pencil-line sliders-horizontal list square-terminal
 shield upload download chevron-right chevron-down check arrow-big-up delete corner-down-left mic sparkle plug cloud
-plus trash-2 x refresh-cw clipboard wand-sparkles circle-dashed""".split()
+plus trash-2 x refresh-cw clipboard wand-sparkles circle-dashed video""".split()
 
 def num(el, k, d=0.0): return float(el.get(k, d))
 

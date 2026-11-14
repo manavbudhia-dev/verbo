@@ -5,8 +5,10 @@ An Android keyboard that acts on what you type.
 - **Fast typing** – one custom-drawn key view with per-finger tracking, word suggestions,
   auto-correct (backspace undoes a correction), double-space full stop, key sound and vibration.
 - **Shortcut wheel** – hold the wide ✦ bar and a wheel opens under your finger: slide to Ask AI, Translate,
-  Rewrite, Voice or Clips (or any skill you put there) and let go. Results open as a card in place of the keys
+  Rewrite, Meeting link, Voice or Clips (or any skill you put there; up to six) and let go. Results open as a card in place of the keys
   with Copy / Insert (Send in chat apps whose enter key sends), and a small map for a place.
+- **Meeting link** – a wheel shortcut that inserts a Google Meet link (with Google connected on the dashboard)
+  or an instant no-account link.
 - **Translate** – pick a language, or translate into all of your languages at once.
 - **Voice panel** – a listening panel with a level meter; Transcribe tidies speech, Command treats it as a request.
 - **Clips** – save copied text and paste it any time.

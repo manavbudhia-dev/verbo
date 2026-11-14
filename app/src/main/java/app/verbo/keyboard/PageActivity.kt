@@ -145,6 +145,13 @@ class PageActivity : Activity() {
             ui.row(R.drawable.ic_globe, "Places and maps", "Finds addresses and shows a map, from OpenStreetMap", ui.toggle(store.places) { store.places = it }),
         ))
         column.addView(ui.rows(ui.row(R.drawable.ic_pencil_line, "Gmail", "Writes the email and opens it as a ready draft in Gmail. No sign-in needed. Reading your inbox is not available yet", ui.icon(R.drawable.ic_check, 20, Color.parseColor("#4ADE80")))))
+        val meetState = when {
+            store.googleConnected -> "Connected through your dashboard. The Meeting link shortcut makes a real Google Meet link"
+            store.deviceToken.isEmpty() -> "Needs the web dashboard: pair this keyboard, then connect Google there. Until then the shortcut offers an instant no-account link"
+            else -> "Open your dashboard → Connections → Connect Google, then Sync now. Until then the shortcut offers an instant no-account link"
+        }
+        column.addView(ui.rows(ui.row(R.drawable.ic_video, "Google Meet", meetState,
+            if (store.googleConnected) ui.icon(R.drawable.ic_check, 20, Color.parseColor("#4ADE80")) else ui.chevron()) { if (!store.googleConnected) startActivity(android.content.Intent(this, PageActivity::class.java).putExtra("page", "dashboard")) }))
         column.addView(ui.rows(
             ui.row(R.drawable.ic_square_terminal, "Notion", if (store.notionToken.isEmpty()) "Not connected" else "Connected", ui.chevron()) {
                 editToken("Notion", "Paste an internal integration token from notion.so/my-integrations, then share the pages you want with that integration.", store.notionToken) { store.notionToken = it }
@@ -294,29 +301,72 @@ class PageActivity : Activity() {
 
     private fun wheelLabel(id: String) = Store.WHEEL_TOOLS.firstOrNull { it.first == id }?.second ?: id.removePrefix("skill:")
 
+    private fun wheelIcon(id: String) = when (id) {
+        "ai" -> R.drawable.ic_sparkles
+        "translate" -> R.drawable.ic_languages
+        "rewrite" -> R.drawable.ic_pencil_line
+        "meet" -> R.drawable.ic_video
+        "voice" -> R.drawable.ic_mic
+        "clips" -> R.drawable.ic_clipboard
+        else -> R.drawable.ic_zap
+    }
+
+    private fun smallButton(icon: Int, description: String, enabled: Boolean = true, onTap: () -> Unit) =
+        ui.icon(icon, 20, if (enabled) ui.ink else Color.parseColor("#4A4866")).apply {
+            setPadding(ui.dp(8), ui.dp(8), ui.dp(8), ui.dp(8))
+            layoutParams = LinearLayout.LayoutParams(ui.dp(38), ui.dp(38))
+            contentDescription = description
+            if (enabled) { background = ui.ripple(null, 19); setOnClickListener { onTap() } }
+        }
+
     private fun wheelPage(column: LinearLayout) {
         column.addView(ui.topBar("Shortcut wheel", "Your favourite tools, one slide away"))
         note(column, "Hold the wide bar and the wheel opens under your finger. Slide to a shortcut and let go to run it; let go in the middle to cancel.")
         column.addView(ui.rows(ui.row(R.drawable.ic_circle_dashed, "Hold the bar for the wheel", "When off, holding the bar asks the assistant straight away", ui.toggle(store.wheelOn) { store.wheelOn = it })))
-        column.addView(ui.section(R.drawable.ic_layers, "Shortcuts, left to right"))
-        val items = store.wheel
-        val options = Store.WHEEL_TOOLS.map { it.first } + store.skills.map { "skill:" + it.name }
-        fun choose(slot: Int) {
-            val free = options.filter { it !in items || items.getOrNull(slot) == it }
-            val labels = free.map { wheelLabel(it) } + if (slot < items.size) listOf("Remove this shortcut") else emptyList()
-            AlertDialog.Builder(this).setTitle("Shortcut ${slot + 1}").setItems(labels.toTypedArray()) { _, which ->
-                val next = items.toMutableList()
-                if (which >= free.size) next.removeAt(slot) else if (slot < next.size) next[slot] = free[which] else next.add(free[which])
-                store.wheel = next
-                render()
-            }.show()
+
+        val skills = store.skills
+        // Skills that were renamed or deleted drop off the wheel.
+        val items = store.wheel.filter { id -> Store.WHEEL_TOOLS.any { it.first == id } || skills.any { "skill:" + it.name == id } }
+        fun title(id: String) = skills.firstOrNull { "skill:" + it.name == id }?.let { (it.emoji + "  " + it.name).trim() } ?: wheelLabel(id)
+        fun set(next: List<String>) { store.wheel = next; render() }
+
+        column.addView(ui.section(R.drawable.ic_layers, "On the wheel (${items.size} of ${Store.MAX_WHEEL})"))
+        if (items.isEmpty()) note(column, "Nothing yet. Add shortcuts from the lists below.")
+        else column.addView(ui.rows(*items.mapIndexed { i, id ->
+            val controls = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+            controls.addView(smallButton(R.drawable.ic_arrow_big_up, "Move left on the wheel", i > 0) {
+                set(items.toMutableList().apply { add(i - 1, removeAt(i)) })
+            })
+            controls.addView(smallButton(R.drawable.ic_x, "Remove from the wheel") { set(items - id) })
+            ui.row(wheelIcon(id), title(id), if (i == 0) "Leftmost" else if (i == items.size - 1) "Rightmost" else null, controls)
+        }.toTypedArray()))
+
+        fun addRows(ids: List<String>, subtitle: (String) -> String?) = ids.filter { it !in items }.map { id ->
+            ui.row(wheelIcon(id), title(id), subtitle(id), smallButton(R.drawable.ic_plus, "Add to the wheel") {
+                if (items.size >= Store.MAX_WHEEL) ui.toast("The wheel holds ${Store.MAX_WHEEL}. Remove one first") else set(items + id)
+            })
         }
-        val rows = items.mapIndexed { i, id ->
-            ui.row(if (id.startsWith("skill:")) R.drawable.ic_zap else R.drawable.ic_sparkles, wheelLabel(id), "Shortcut ${i + 1}", ui.chevron()) { choose(i) }
-        }.toMutableList()
-        if (items.size < 5) rows += ui.row(R.drawable.ic_plus, "Add a shortcut", "Up to five") { choose(items.size) }
-        column.addView(ui.rows(*rows.toTypedArray()))
-        note(column, "Ask AI treats what you typed as a request. Translate and Rewrite open a short list to pick from. Voice starts listening. Clips pastes saved snippets.")
+        val tools = addRows(Store.WHEEL_TOOLS.map { it.first }) { id ->
+            when (id) {
+                "ai" -> "Treats what you typed as a request"
+                "translate" -> "Pick a language, or all of yours at once"
+                "rewrite" -> "Pick a style from your Edit skills"
+                "meet" -> "Drops a new meeting link into the message"
+                "voice" -> "Dictate or speak a request"
+                else -> "Paste saved snippets"
+            }
+        }
+        val mine = addRows(skills.map { "skill:" + it.name }) { id -> skills.firstOrNull { "skill:" + it.name == id }?.instruction }
+        mine.forEach { row -> ((row.getChildAt(1) as LinearLayout).getChildAt(1) as? android.widget.TextView)?.apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END } }
+        if (tools.isNotEmpty()) {
+            column.addView(ui.section(R.drawable.ic_circle_dashed, "Add a tool"))
+            column.addView(ui.rows(*tools.toTypedArray()))
+        }
+        if (mine.isNotEmpty()) {
+            column.addView(ui.section(R.drawable.ic_sparkles, "Add one of my skills"))
+            column.addView(ui.rows(*mine.toTypedArray()))
+        }
+        column.addView(ui.button("New skill", R.drawable.ic_plus) { editSkill(-1, null) }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(8) })
     }
 
     // ---------- translate languages ----------

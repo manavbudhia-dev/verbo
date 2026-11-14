@@ -14,6 +14,17 @@ const ALLOW_SIGNUP = process.env.ALLOW_SIGNUP !== 'false';
 const INSECURE_COOKIES = process.env.INSECURE_COOKIES === '1'; // local testing over http only
 const TRUST_PROXY = process.env.TRUST_PROXY === '1';
 
+// Google sign-in, used only to create Google Meet links. Optional: without these the feature is simply off.
+const GOOGLE_ID = process.env.GOOGLE_CLIENT_ID || '';
+const GOOGLE_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
+const PUBLIC_URL = (process.env.PUBLIC_URL || '').replace(/\/+$/, ''); // e.g. https://verbo.example.com
+const GOOGLE_ON = !!(GOOGLE_ID && GOOGLE_SECRET && PUBLIC_URL);
+const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
+// Overridable so the tests can stand in for Google.
+const GOOGLE_TOKEN_URL = process.env.GOOGLE_TOKEN_URL || 'https://oauth2.googleapis.com/token';
+const GOOGLE_MEET_URL = process.env.GOOGLE_MEET_URL || 'https://meet.googleapis.com/v2/spaces';
+const GOOGLE_SCOPE = 'https://www.googleapis.com/auth/meetings.space.created';
+
 if (!process.env.SECRET_KEY || process.env.SECRET_KEY.length < 32) {
   console.error('Set SECRET_KEY to a random string of at least 32 characters (e.g. `openssl rand -hex 32`).');
   process.exit(1);
@@ -52,7 +63,7 @@ const DEFAULT_SKILLS = [
 const defaultConfig = () => ({
   apiKey: '', model: MODELS[0], provider: 'anthropic', openaiKey: '', openaiModel: 'gpt-5.5',
   customBase: 'https://api.airouter.in/v1', customKey: '', customModel: 'anthropic/claude-haiku-5.5', webSearch: true, weather: true,
-  notionToken: '', calendlyToken: '', customApis: [], skills: DEFAULT_SKILLS,
+  notionToken: '', calendlyToken: '', customApis: [], skills: DEFAULT_SKILLS, googleRefresh: '',
 });
 
 // ---------- helpers ----------
@@ -107,6 +118,7 @@ function publicConfig(config) {
     model: config.model, provider: config.provider, openaiModel: config.openaiModel, openaiKeySet: !!config.openaiKey,
     customBase: config.customBase, customModel: config.customModel, customKeySet: !!config.customKey,
     webSearch: config.webSearch, weather: config.weather, skills: config.skills,
+    googleAvailable: GOOGLE_ON, googleConnected: !!config.googleRefresh,
     apiKeySet: !!config.apiKey, notionSet: !!config.notionToken, calendlySet: !!config.calendlyToken,
     customApis: config.customApis.map(({ headerValue, ...rest }) => ({ ...rest, headerValueSet: !!headerValue })),
   };
@@ -182,6 +194,7 @@ function applyUpdate(config, body) {
 }
 
 // Small fixed-window limiter for login, signup and pairing attempts.
+const oauthStates = new Map(); // one-time values for Google sign-in in progress
 const attempts = new Map();
 function limit(key, max, windowMs) {
   const t = now();
@@ -192,6 +205,7 @@ function limit(key, max, windowMs) {
 setInterval(() => {
   const t = now();
   for (const [k, v] of attempts) if (v.reset < t) attempts.delete(k);
+  for (const [k, v] of oauthStates) if (v.expires < t) oauthStates.delete(k);
   db.prepare('DELETE FROM sessions WHERE expires < ?').run(t);
   db.prepare('DELETE FROM pair_codes WHERE expires < ?').run(t);
 }, 10 * 60 * 1000).unref();
@@ -341,7 +355,76 @@ const routes = {
 
   'GET /api/device/config': (req) => {
     const { config, updated } = loadConfig(requireDevice(req).user_id);
-    return { body: { ...config, updated } };
+    // The Google sign-in stays on the server; the phone only learns whether it exists.
+    const { googleRefresh, ...rest } = config;
+    return { body: { ...rest, googleConnected: GOOGLE_ON && !!googleRefresh, updated } };
+  },
+
+  // --- Google Meet ---
+
+  'GET /api/google/start': (req) => {
+    if (!GOOGLE_ON) throw new Bad(400, 'Google sign-in is not set up on this server');
+    const userId = requireUser(req);
+    const state = randomToken();
+    oauthStates.set(state, { userId, expires: now() + 10 * 60 * 1000 });
+    const query = new URLSearchParams({
+      client_id: GOOGLE_ID, redirect_uri: PUBLIC_URL + '/api/google/callback', response_type: 'code',
+      scope: GOOGLE_SCOPE, access_type: 'offline', prompt: 'consent', state,
+    });
+    return { status: 302, body: {}, headers: { Location: GOOGLE_AUTH_URL + '?' + query } };
+  },
+
+  // Google sends the browser back here. The session cookie is not sent on this hop (it comes from another
+  // site), so the one-time state value made in /start is what ties the answer to the signed-in user.
+  'GET /api/google/callback': async (req) => {
+    const params = new URL(req.url, 'http://x').searchParams;
+    const pending = oauthStates.get(params.get('state') || '');
+    oauthStates.delete(params.get('state') || '');
+    const back = (result) => ({ status: 302, body: {}, headers: { Location: '/?google=' + result } });
+    if (!pending || pending.expires < now() || !params.get('code')) return back('failed');
+    const res = await fetch(GOOGLE_TOKEN_URL, {
+      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code: params.get('code'), client_id: GOOGLE_ID, client_secret: GOOGLE_SECRET,
+        redirect_uri: PUBLIC_URL + '/api/google/callback', grant_type: 'authorization_code',
+      }),
+    });
+    const tokens = await res.json().catch(() => ({}));
+    if (!res.ok || !tokens.refresh_token) return back('failed');
+    const { config } = loadConfig(pending.userId);
+    saveConfig(pending.userId, { ...config, googleRefresh: tokens.refresh_token });
+    return back('connected');
+  },
+
+  'POST /api/google/disconnect': (req) => {
+    const userId = requireUser(req);
+    const { config } = loadConfig(userId);
+    saveConfig(userId, { ...config, googleRefresh: '' });
+    return { body: publicConfig({ ...config, googleRefresh: '' }) };
+  },
+
+  /** Called by a paired keyboard: makes a new Google Meet room in the owner's account and returns its link. */
+  'POST /api/device/meet': async (req) => {
+    const device = requireDevice(req);
+    limit('meet:' + device.user_id, 30, 60 * 60 * 1000);
+    const { config } = loadConfig(device.user_id);
+    if (!GOOGLE_ON || !config.googleRefresh) throw new Bad(409, 'Connect Google on the dashboard first');
+    const tokenRes = await fetch(GOOGLE_TOKEN_URL, {
+      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ client_id: GOOGLE_ID, client_secret: GOOGLE_SECRET, refresh_token: config.googleRefresh, grant_type: 'refresh_token' }),
+    });
+    const tokens = await tokenRes.json().catch(() => ({}));
+    if (!tokenRes.ok || !tokens.access_token) {
+      // The sign-in was revoked or has expired: forget it so the dashboard shows "Connect" again.
+      if (tokens.error === 'invalid_grant') saveConfig(device.user_id, { ...config, googleRefresh: '' });
+      throw new Bad(409, 'Google sign-in has expired. Connect Google again on the dashboard');
+    }
+    const meetRes = await fetch(GOOGLE_MEET_URL, {
+      method: 'POST', headers: { Authorization: 'Bearer ' + tokens.access_token, 'Content-Type': 'application/json' }, body: '{}',
+    });
+    const space = await meetRes.json().catch(() => ({}));
+    if (!meetRes.ok || typeof space.meetingUri !== 'string') throw new Bad(502, 'Google could not create the meeting. Try again');
+    return { body: { url: space.meetingUri } };
   },
 };
 
@@ -371,8 +454,8 @@ http.createServer(async (req, res) => {
   try {
     const handler = routes[`${req.method} ${pathname}`];
     if (!handler) throw new Bad(404, 'Not found');
-    const { body, headers } = await handler(req, res);
-    send(res, 200, body, headers);
+    const { status = 200, body, headers } = await handler(req, res);
+    send(res, status, body, headers);
   } catch (e) {
     if (!(e instanceof Bad)) console.error(e);
     send(res, e instanceof Bad ? e.status : 500, { error: e instanceof Bad ? e.message : 'Server error' });
