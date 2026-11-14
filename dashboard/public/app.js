@@ -426,7 +426,7 @@ function connection(iconName, title, about, status, ...controls) {
 
 // Apps a skill opens with the text already filled in. Nothing to connect; the user presses send in the app.
 const LINK_APPS = [
-  ['mail', 'Gmail', 'Writes the email and opens it as a ready draft in Gmail.',
+  ['mail', 'Gmail', 'Writes the email and opens it as a ready draft. With Google connected below, it sends by itself.',
     ['📧', 'Email', 'Turn the text into a clear email with a short subject. Return the email text, then a final [[open:mailto:?subject=...&body=...]] line with both URL-encoded so it opens as a ready draft in Gmail.', 'write']],
   ['briefcase', 'LinkedIn', 'Writes a post and opens LinkedIn with it filled in. The “Who is” skill finds people.',
     ['💼', 'LinkedIn post', 'Turn the text into a LinkedIn post: a strong first line, short paragraphs, no more than three hashtags at the end. Return the post, then a final [[open:https://www.linkedin.com/feed/?shareActive=true&text=...]] line with the post URL-encoded.', 'write']],
@@ -436,7 +436,7 @@ const LINK_APPS = [
     ['✈️', 'Telegram', 'Write the message the user wants to send. Return it, then a final [[open:https://t.me/share/url?url=%20&text=...]] line with the message URL-encoded.', 'write']],
   ['inbox', 'Outlook', 'Writes the email and opens an Outlook draft.',
     ['📨', 'Outlook email', 'Turn the text into a clear work email with a subject. Return it, then a final [[open:https://outlook.office.com/mail/deeplink/compose?subject=...&body=...]] line with both URL-encoded.', 'write']],
-  ['calendar', 'Google Calendar', 'Turns “lunch with Sam Friday 1pm” into an event ready to save.',
+  ['calendar', 'Google Calendar', 'Turns “lunch with Sam Friday 1pm” into an event. With Google connected below, it is saved by itself.',
     ['📅', 'Calendar event', 'The text describes an event. Work out the title, date, time and place, and return one line describing it, then a final [[open:https://calendar.google.com/calendar/render?action=TEMPLATE&text=...&dates=YYYYMMDDTHHMMSS/YYYYMMDDTHHMMSS&location=...]] line. Assume one hour if no end time is given.', 'write']],
   ['map_pin', 'Google Maps', 'Finds places and adds a Maps link and a small map. Try the “Place” skill.', null],
   ['play', 'YouTube', 'Opens a YouTube search for what you describe.',
@@ -478,6 +478,34 @@ function skillButton(template) {
     has ? icon('check') : icon('plus'), has ? `${name} skill added` : `Add ${name} skill`);
 }
 
+const GOOGLE_SKILLS = [
+  ['📅', 'Schedule', 'The text describes a meeting or event. Save it in Google Calendar with google_calendar_create, inviting anyone whose email is given and adding a Meet link if it is a call or online meeting. Reply with one line saying what was saved and when, with the Meet link if there is one.', 'write'],
+  ['📤', 'Send email', 'Write the email the text asks for and send it with gmail_send if the recipient address is known; otherwise save it with gmail_create_draft. Reply with one line saying what was sent or saved.', 'write'],
+  ['📥', 'Inbox', 'Answer the question about the user\'s email using gmail_search and gmail_read, in one to three short lines with sender names and dates.', 'write'],
+];
+
+// One Google sign-in covers Meet, Calendar and Gmail. The server's own Google client has to exist first (README).
+function googleCard() {
+  const c = state.config;
+  const services = c.googleServices || [];
+  const all = ['meet', 'calendar', 'gmail'].every((s) => services.includes(s));
+  const status = !c.googleAvailable ? h('span', { class: 'pill off' }, 'Not set up')
+    : all ? h('span', { class: 'pill ok' }, 'Connected') : c.googleConnected ? h('span', { class: 'pill' }, 'Partly') : h('span', { class: 'pill off' }, 'Not connected');
+  const connect = (label) => h('button', { class: 'btn primary', onclick: () => { location.href = '/api/google/start'; } }, label);
+  return connection('video', 'Google: Meet, Calendar, Gmail',
+    'Sign in once. The keyboard then makes Meet links, saves events with invites, and sends or drafts email for you.', status,
+    !c.googleAvailable ? h('p', { class: 'muted small' }, 'This server has no Google client yet. See “Google” in the dashboard README: a one-time setup by whoever runs this server.')
+      : !c.googleConnected ? connect('Connect Google')
+        : [
+          !all && h('p', { class: 'muted small', style: 'width:100%' }, `On: ${services.join(', ') || 'Meet'}. Reconnect and tick every box to add the rest.`),
+          !all && connect('Reconnect'),
+          all && GOOGLE_SKILLS.map(skillButton),
+          h('button', { class: 'btn ghost danger', onclick: async () => {
+            try { state.config = await api('POST', '/api/google/disconnect'); toast('Google disconnected'); render(); } catch (e) { toast(e.message); }
+          } }, 'Disconnect'),
+        ]);
+}
+
 function connectionsTab() {
   const c = state.config;
   const set = c.appsSet || {};
@@ -492,15 +520,11 @@ function connectionsTab() {
     h('h2', { class: 'section' }, 'Connect your accounts'),
     h('p', { class: 'muted small section-sub' }, 'Paste a token once. Paired phones pick it up on the next sync, and skills can then read and act in the app for you.'),
     h('div', { class: 'grid' },
+      googleCard(),
       TOKEN_APPS.map(([ic, title, field, about, help, template]) => connection(ic, title, about, pill(set[field]),
         h('button', { class: 'btn' + (set[field] ? '' : ' primary'), onclick: () => tokenDialog(title, help, field, set[field]) }, set[field] ? 'Manage' : 'Connect'),
         set[field] && skillButton(template))),
-      connection('video', 'Google Meet', 'One-tap meeting links from the keyboard.', c.googleAvailable ? pill(c.googleConnected) : h('span', { class: 'pill off' }, 'Not set up'),
-        !c.googleAvailable ? h('p', { class: 'muted small' }, 'This server has no Google client yet. See “Google Meet” in the dashboard README.')
-          : c.googleConnected ? h('button', { class: 'btn ghost danger', onclick: async () => {
-            try { state.config = await api('POST', '/api/google/disconnect'); toast('Google disconnected'); render(); } catch (e) { toast(e.message); }
-          } }, 'Disconnect')
-            : h('button', { class: 'btn primary', onclick: () => { location.href = '/api/google/start'; } }, 'Connect Google'))),
+    ),
     h('h2', { class: 'section' }, 'Built in, and your own APIs'),
     h('div', { class: 'grid' },
       connection('globe', 'Web search', 'Lets skills look up fresh facts. Works with a Claude or OpenAI key, not through a gateway.', pill(c.webSearch, 'On', 'Off'),

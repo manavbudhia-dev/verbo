@@ -81,6 +81,14 @@ object Sync {
         return url
     }
 
+    /** One Calendar or Gmail action done by the dashboard on the owner's Google sign-in. Returns text for the assistant. */
+    fun google(store: Store, action: String, args: Map<String, String>): String {
+        if (store.deviceToken.isEmpty()) throw SyncException("Pair with your dashboard first")
+        val body = JSONObject().put("action", action).put("timeZone", java.util.TimeZone.getDefault().id)
+        args.forEach { (k, v) -> body.put(k, v) }
+        return request("POST", store.serverUrl + "/api/device/google", store.deviceToken, body.toString()).optString("result")
+    }
+
     private fun request(method: String, url: String, token: String?, body: String?): JSONObject {
         val conn = try {
             URL(url).openConnection() as HttpURLConnection

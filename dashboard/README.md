@@ -42,24 +42,30 @@ Dashboard → **Keyboards** → **Pair a keyboard** shows a one-time code. In th
 under **Dashboard**, enter the site address and the code. The keyboard then pulls its
 settings from the dashboard (on pairing, on **Sync now**, and every 10 minutes while in use).
 
-## Google Meet (optional)
+## Google: Meet, Calendar and Gmail (optional)
 
-With a Google account connected, the keyboard's **Meeting link** shortcut drops a real Google Meet link into
-the message. Google requires each server to bring its own client, so this takes a one-time setup:
+With a Google account connected, the keyboard works in it by itself: the **Meeting link** shortcut drops a
+real Google Meet link into the message, and skills can save Calendar events (with invites and a Meet link)
+and search, read, draft and send Gmail. Users only press **Connect Google** once. Google requires each
+server to bring its own client, so whoever runs the server does this one-time setup:
 
-1. In [Google Cloud Console](https://console.cloud.google.com) create a project and enable the **Google Meet REST API**.
-2. **OAuth consent screen**: External, add your own Google account as a test user, and add the scope
-   `https://www.googleapis.com/auth/meetings.space.created`.
+1. In [Google Cloud Console](https://console.cloud.google.com) create a project and enable the
+   **Google Meet REST API**, **Google Calendar API** and **Gmail API**.
+2. **OAuth consent screen**: External, add your own Google account as a test user, and add the scopes
+   `https://www.googleapis.com/auth/meetings.space.created`, `https://www.googleapis.com/auth/calendar.events`,
+   `https://www.googleapis.com/auth/gmail.compose` and `https://www.googleapis.com/auth/gmail.readonly`.
 3. **Credentials → Create credentials → OAuth client ID → Web application**, with the redirect URI
    `https://your-domain/api/google/callback`.
-4. Put the client ID and secret in `.env` as `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`, then
-   `sudo docker compose up -d`.
-5. In the dashboard open **Connections → Google Meet → Connect Google** and sign in. On the phone, tap
-   **Sync now** under Web dashboard.
+4. Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `PUBLIC_URL` (`https://your-domain`) on the server
+   (in `.env` with Docker), then restart it.
+5. In the dashboard open **Connections → Google → Connect Google**, sign in and tick every box. On the phone,
+   tap **Sync now** under Web dashboard.
 
-The Google sign-in is stored encrypted on the server and never sent to the phone. While the consent screen
-is in "Testing", Google expires the sign-in after seven days; publish the app in the console to keep it.
-Without this setup the shortcut still works, offering an instant no-account (Jitsi) link instead.
+The Google sign-in is stored encrypted on the server and never sent to the phone; the phone asks the server
+to do each action. If someone unticks Gmail or Calendar on Google's page, only what they allowed is turned on
+and the card offers **Reconnect**. While the consent screen is in "Testing", Google expires the sign-in after
+seven days and allows up to 100 test users; publishing an app that uses the Gmail scopes needs Google's
+verification. Without this setup the Meeting link shortcut still offers an instant no-account (Jitsi) link.
 
 ## Run without Docker
 

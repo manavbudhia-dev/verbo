@@ -157,4 +157,16 @@ class ConnectionsTest {
         assertEquals("Game night at 9", JSONObject(req.body).getString("content"))
         assertEquals("Posted to Discord", result)
     }
+
+    @Test
+    fun googleToolsFollowWhatTheSignInAllows() {
+        val calls = ArrayList<Pair<String, Map<String, String>>>()
+        val google: (String, Map<String, String>) -> String = { a, args -> calls += a to args; "ok:$a" }
+        val meetOnly = Connections.tools(false, "", "", emptyList(), false, googleServices = setOf("meet"), google = google).map { it.name }
+        assertEquals(listOf("google_meet_link"), meetOnly)
+        val all = Connections.tools(false, "", "", emptyList(), false, googleServices = setOf("meet", "calendar", "gmail"), google = google).associateBy { it.name }
+        assertTrue(all.keys.containsAll(listOf("google_calendar_create", "gmail_send", "gmail_create_draft", "gmail_search")))
+        assertEquals("ok:gmail_draft", all["gmail_create_draft"]!!.run(mapOf("subject" to "Hi", "body" to "x")))
+        assertEquals("calendar_create" to mapOf("title" to "Lunch"), all["google_calendar_create"]!!.run(mapOf("title" to "Lunch")).let { calls.last() })
+    }
 }

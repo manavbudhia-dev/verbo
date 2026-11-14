@@ -201,6 +201,10 @@ class Store(context: Context) {
         o.optJSONArray("skills")?.let { s("skills", "skills", it.toString()) }
         o.optJSONObject("keyboard")?.let { applyKeyboard(e, it, keep) }
         e.putBoolean("google_connected", o.optBoolean("googleConnected", false))
+        // Older dashboards don't list services; their Google sign-in covers Meet only.
+        val services = o.optJSONArray("googleServices")?.let { a -> (0 until a.length()).map { a.optString(it) } }
+            ?: if (o.optBoolean("googleConnected", false)) listOf("meet") else emptyList()
+        e.putString("google_services", services.joinToString(","))
         e.putLong("last_sync", System.currentTimeMillis())
         e.apply()
     }
@@ -240,7 +244,10 @@ class Store(context: Context) {
     /** True when the paired dashboard has a Google account connected, so Meet links can be made. */
     val googleConnected get() = deviceToken.isNotEmpty() && bool("google_connected", false)
 
-    fun unpair() { prefs?.edit()?.remove("server_url")?.remove("device_token")?.remove("last_sync")?.remove("google_connected")?.remove("pending")?.apply() }
+    /** What the dashboard's Google sign-in allows: some of meet, calendar, gmail. */
+    val googleServices: Set<String> get() = if (googleConnected) str("google_services").split(",").filter { it.isNotBlank() }.toSet() else emptySet()
+
+    fun unpair() { prefs?.edit()?.remove("server_url")?.remove("device_token")?.remove("last_sync")?.remove("google_connected")?.remove("google_services")?.remove("pending")?.apply() }
 
     // connections
     var weather: Boolean get() = bool("weather", true); set(v) = put("weather", v)
@@ -271,7 +278,8 @@ class Store(context: Context) {
 
     var places: Boolean get() = bool("places", true); set(v) = put("places", v)
 
-    fun tools(): List<ToolSpec> = Connections.tools(weather, notionToken, calendlyToken, customApis, places, APP_TOKENS.keys.associateWith { token(it) })
+    fun tools(): List<ToolSpec> = Connections.tools(weather, notionToken, calendlyToken, customApis, places, APP_TOKENS.keys.associateWith { token(it) },
+        googleServices) { action, args -> Sync.google(this, action, args) }
 
     var skills: List<Skill>
         get() {

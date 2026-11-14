@@ -23,7 +23,15 @@ const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 // Overridable so the tests can stand in for Google.
 const GOOGLE_TOKEN_URL = process.env.GOOGLE_TOKEN_URL || 'https://oauth2.googleapis.com/token';
 const GOOGLE_MEET_URL = process.env.GOOGLE_MEET_URL || 'https://meet.googleapis.com/v2/spaces';
-const GOOGLE_SCOPE = 'https://www.googleapis.com/auth/meetings.space.created';
+const GOOGLE_API = (process.env.GOOGLE_API_URL || 'https://www.googleapis.com').replace(/\/+$/, '');
+const GMAIL_API = (process.env.GOOGLE_GMAIL_URL || 'https://gmail.googleapis.com').replace(/\/+$/, '');
+// One sign-in covers all three. Each service is on only if the user allowed every scope it needs.
+const GOOGLE_SCOPES = {
+  meet: ['https://www.googleapis.com/auth/meetings.space.created'],
+  calendar: ['https://www.googleapis.com/auth/calendar.events'],
+  gmail: ['https://www.googleapis.com/auth/gmail.compose', 'https://www.googleapis.com/auth/gmail.readonly'],
+};
+const GOOGLE_SCOPE = Object.values(GOOGLE_SCOPES).flat().join(' ');
 
 if (!process.env.SECRET_KEY || process.env.SECRET_KEY.length < 32) {
   console.error('Set SECRET_KEY to a random string of at least 32 characters (e.g. `openssl rand -hex 32`).');
@@ -65,7 +73,7 @@ const DEFAULT_SKILLS = [
 const defaultConfig = () => ({
   apiKey: '', model: MODELS[0], provider: 'anthropic', openaiKey: '', openaiModel: 'gpt-5.5',
   customBase: 'https://api.airouter.in/v1', customKey: '', customModel: 'anthropic/claude-haiku-5.5', webSearch: true, weather: true,
-  notionToken: '', calendlyToken: '', slackToken: '', githubToken: '', todoistToken: '', linearToken: '', discordWebhook: '', customApis: [], skills: DEFAULT_SKILLS, googleRefresh: '',
+  notionToken: '', calendlyToken: '', slackToken: '', githubToken: '', todoistToken: '', linearToken: '', discordWebhook: '', customApis: [], skills: DEFAULT_SKILLS, googleRefresh: '', googleScopes: '',
   keyboard: {}, // the phone's own settings (look, sound, wheel...), kept here so they can be changed from the web
 });
 
@@ -160,7 +168,7 @@ function publicConfig(config) {
     model: config.model, provider: config.provider, openaiModel: config.openaiModel, openaiKeySet: !!config.openaiKey,
     customBase: config.customBase, customModel: config.customModel, customKeySet: !!config.customKey,
     webSearch: config.webSearch, weather: config.weather, skills: config.skills,
-    googleAvailable: GOOGLE_ON, googleConnected: !!config.googleRefresh,
+    googleAvailable: GOOGLE_ON, googleConnected: !!config.googleRefresh, googleServices: googleServices(config),
     keyboard: { ...KEYBOARD_DEFAULTS, ...config.keyboard },
     // The last four characters, so a saved key can be recognised without ever being shown.
     apiKeyHint: hint(config.apiKey), openaiKeyHint: hint(config.openaiKey), customKeyHint: hint(config.customKey),
@@ -407,8 +415,8 @@ const routes = {
   'GET /api/device/config': (req) => {
     const { config, updated } = loadConfig(requireDevice(req).user_id);
     // The Google sign-in stays on the server; the phone only learns whether it exists.
-    const { googleRefresh, ...rest } = config;
-    return { body: { ...rest, googleConnected: GOOGLE_ON && !!googleRefresh, updated } };
+    const { googleRefresh, googleScopes, ...rest } = config;
+    return { body: { ...rest, googleConnected: GOOGLE_ON && !!googleRefresh, googleServices: googleServices(config), updated } };
   },
 
   // The phone sends its own changes (a key typed on the phone, a setting flipped there) so that the
@@ -419,8 +427,8 @@ const routes = {
     const { config } = loadConfig(device.user_id);
     const next = applyUpdate(config, body);
     const updated = saveConfig(device.user_id, next);
-    const { googleRefresh, ...rest } = next;
-    return { body: { ...rest, googleConnected: GOOGLE_ON && !!googleRefresh, updated } };
+    const { googleRefresh, googleScopes, ...rest } = next;
+    return { body: { ...rest, googleConnected: GOOGLE_ON && !!googleRefresh, googleServices: googleServices(next), updated } };
   },
 
   // --- the setup assistant ---
@@ -449,7 +457,7 @@ const routes = {
     oauthStates.set(state, { userId, expires: now() + 10 * 60 * 1000 });
     const query = new URLSearchParams({
       client_id: GOOGLE_ID, redirect_uri: PUBLIC_URL + '/api/google/callback', response_type: 'code',
-      scope: GOOGLE_SCOPE, access_type: 'offline', prompt: 'consent', state,
+      scope: GOOGLE_SCOPE, access_type: 'offline', prompt: 'consent', include_granted_scopes: 'true', state,
     });
     return { status: 302, body: {}, headers: { Location: GOOGLE_AUTH_URL + '?' + query } };
   },
@@ -472,41 +480,177 @@ const routes = {
     const tokens = await res.json().catch(() => ({}));
     if (!res.ok || !tokens.refresh_token) return back('failed');
     const { config } = loadConfig(pending.userId);
-    saveConfig(pending.userId, { ...config, googleRefresh: tokens.refresh_token });
+    // Google lists what the user actually allowed; they can untick Gmail or Calendar on the consent page.
+    saveConfig(pending.userId, { ...config, googleRefresh: tokens.refresh_token, googleScopes: typeof tokens.scope === 'string' ? tokens.scope : GOOGLE_SCOPE });
     return back('connected');
   },
 
   'POST /api/google/disconnect': (req) => {
     const userId = requireUser(req);
     const { config } = loadConfig(userId);
-    saveConfig(userId, { ...config, googleRefresh: '' });
-    return { body: publicConfig({ ...config, googleRefresh: '' }) };
+    saveConfig(userId, { ...config, googleRefresh: '', googleScopes: '' });
+    return { body: publicConfig({ ...config, googleRefresh: '', googleScopes: '' }) };
   },
 
   /** Called by a paired keyboard: makes a new Google Meet room in the owner's account and returns its link. */
   'POST /api/device/meet': async (req) => {
     const device = requireDevice(req);
     limit('meet:' + device.user_id, 30, 60 * 60 * 1000);
-    const { config } = loadConfig(device.user_id);
-    if (!GOOGLE_ON || !config.googleRefresh) throw new Bad(409, 'Connect Google on the dashboard first');
-    const tokenRes = await fetch(GOOGLE_TOKEN_URL, {
-      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ client_id: GOOGLE_ID, client_secret: GOOGLE_SECRET, refresh_token: config.googleRefresh, grant_type: 'refresh_token' }),
-    });
-    const tokens = await tokenRes.json().catch(() => ({}));
-    if (!tokenRes.ok || !tokens.access_token) {
-      // The sign-in was revoked or has expired: forget it so the dashboard shows "Connect" again.
-      if (tokens.error === 'invalid_grant') saveConfig(device.user_id, { ...config, googleRefresh: '' });
-      throw new Bad(409, 'Google sign-in has expired. Connect Google again on the dashboard');
-    }
-    const meetRes = await fetch(GOOGLE_MEET_URL, {
-      method: 'POST', headers: { Authorization: 'Bearer ' + tokens.access_token, 'Content-Type': 'application/json' }, body: '{}',
-    });
-    const space = await meetRes.json().catch(() => ({}));
-    if (!meetRes.ok || typeof space.meetingUri !== 'string') throw new Bad(502, 'Google could not create the meeting. Try again');
-    return { body: { url: space.meetingUri } };
+    return { body: { url: await meetLink(device.user_id) } };
+  },
+
+  /** Called by a paired keyboard while the assistant works: one Calendar or Gmail action in the owner's account. */
+  'POST /api/device/google': async (req) => {
+    const device = requireDevice(req);
+    limit('google:' + device.user_id, 120, 60 * 60 * 1000);
+    const body = await readJson(req);
+    return { body: { result: await googleAction(device.user_id, body) } };
   },
 };
+
+// ---------- Google: Meet, Calendar and Gmail on the owner's sign-in ----------
+
+/** The services the stored sign-in allows. Sign-ins made before Calendar and Gmail were added cover Meet only. */
+function googleServices(config) {
+  if (!GOOGLE_ON || !config.googleRefresh) return [];
+  const granted = (config.googleScopes || GOOGLE_SCOPES.meet[0]).split(/\s+/);
+  return Object.entries(GOOGLE_SCOPES).filter(([, scopes]) => scopes.every((s) => granted.includes(s))).map(([name]) => name);
+}
+
+/** A fresh access token from the stored refresh token. A revoked sign-in is forgotten so the dashboard offers Connect again. */
+async function googleAccess(userId) {
+  const { config } = loadConfig(userId);
+  if (!GOOGLE_ON || !config.googleRefresh) throw new Bad(409, 'Connect Google on the dashboard first');
+  const tokenRes = await fetch(GOOGLE_TOKEN_URL, {
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ client_id: GOOGLE_ID, client_secret: GOOGLE_SECRET, refresh_token: config.googleRefresh, grant_type: 'refresh_token' }),
+  });
+  const tokens = await tokenRes.json().catch(() => ({}));
+  if (!tokenRes.ok || !tokens.access_token) {
+    if (tokens.error === 'invalid_grant') saveConfig(userId, { ...config, googleRefresh: '', googleScopes: '' });
+    throw new Bad(409, 'Google sign-in has expired. Connect Google again on the dashboard');
+  }
+  return { token: tokens.access_token, services: googleServices(config) };
+}
+
+async function googleFetch(token, method, url, body) {
+  const res = await fetch(url, {
+    method, headers: { Authorization: 'Bearer ' + token, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+    body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(20000),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401 || res.status === 403) {
+    throw new Bad(409, 'Google refused: ' + (data.error?.message || 'no permission') + '. Reconnect Google on the dashboard and allow everything it asks for');
+  }
+  if (!res.ok) throw new Bad(502, 'Google returned an error: ' + (data.error?.message || res.status));
+  return data;
+}
+
+async function meetLink(userId) {
+  const { token } = await googleAccess(userId);
+  const meetRes = await fetch(GOOGLE_MEET_URL, { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: '{}' });
+  const space = await meetRes.json().catch(() => ({}));
+  if (!meetRes.ok || typeof space.meetingUri !== 'string') throw new Bad(502, 'Google could not create the meeting. Try again');
+  return space.meetingUri;
+}
+
+const oneLine = (v, max) => String(v ?? '').replace(/[\r\n]+/g, ' ').trim().slice(0, max);
+const EMAIL = /^[^\s@,<>]+@[^\s@,<>]+\.[^\s@,<>]+$/;
+const emailList = (v, what) => {
+  const list = oneLine(v, 1000).split(/[,;]\s*/).map((s) => s.trim()).filter(Boolean);
+  for (const e of list) if (!EMAIL.test(e)) throw new Bad(400, `${what}: "${e}" is not an email address`);
+  return list;
+};
+const when = (v, what) => {
+  const s = oneLine(v, 40);
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(Z|[+-]\d{2}:\d{2})?$/.test(s)) throw new Bad(400, `${what} must look like 2026-11-15T13:00:00`);
+  return s.length === 16 ? s + ':00' : s;
+};
+
+/** A plain-text email in the form Gmail's API takes (base64url of the whole message). */
+function mime({ to, cc, subject, body }) {
+  const lines = [];
+  if (to.length) lines.push('To: ' + to.join(', '));
+  if (cc.length) lines.push('Cc: ' + cc.join(', '));
+  lines.push('Subject: =?UTF-8?B?' + Buffer.from(subject).toString('base64') + '?=', 'MIME-Version: 1.0',
+    'Content-Type: text/plain; charset=UTF-8', 'Content-Transfer-Encoding: base64', '', Buffer.from(body).toString('base64'));
+  return Buffer.from(lines.join('\r\n')).toString('base64url');
+}
+
+function header(message, name) {
+  return (message.payload?.headers || []).find((h) => h.name.toLowerCase() === name.toLowerCase())?.value || '';
+}
+
+function plainText(part) {
+  if (!part) return '';
+  if (part.mimeType === 'text/plain' && part.body?.data) return Buffer.from(part.body.data, 'base64url').toString('utf8');
+  for (const p of part.parts || []) { const t = plainText(p); if (t) return t; }
+  if (part.mimeType === 'text/html' && part.body?.data) return Buffer.from(part.body.data, 'base64url').toString('utf8').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  return '';
+}
+
+async function googleAction(userId, b) {
+  const action = String(b.action || '');
+  const need = { meet: 'meet', calendar_events: 'calendar', calendar_create: 'calendar', gmail_search: 'gmail', gmail_read: 'gmail', gmail_send: 'gmail', gmail_draft: 'gmail' }[action];
+  if (!need) throw new Bad(400, 'Unknown Google action');
+  const { token, services } = await googleAccess(userId);
+  if (!services.includes(need)) throw new Bad(409, `Google ${need === 'gmail' ? 'Gmail' : need === 'calendar' ? 'Calendar' : 'Meet'} is not allowed yet. Open the dashboard → Connections → Google → Reconnect, and tick every box`);
+  const cal = GOOGLE_API + '/calendar/v3/calendars/primary/events';
+  const gmail = GMAIL_API + '/gmail/v1/users/me';
+
+  if (action === 'meet') return 'Meet link: ' + await meetLink(userId);
+
+  if (action === 'calendar_events') {
+    const days = Math.min(Math.max(parseInt(b.days, 10) || 7, 1), 60);
+    const q = new URLSearchParams({ timeMin: new Date().toISOString(), timeMax: new Date(now() + days * 864e5).toISOString(), singleEvents: 'true', orderBy: 'startTime', maxResults: '20' });
+    if (oneLine(b.query, 200)) q.set('q', oneLine(b.query, 200));
+    const data = await googleFetch(token, 'GET', `${cal}?${q}`);
+    const lines = (data.items || []).map((e) => `${e.start?.dateTime || e.start?.date} | ${e.summary || '(no title)'}${e.location ? ' | ' + e.location : ''}${e.hangoutLink ? ' | ' + e.hangoutLink : ''}`);
+    return lines.length ? lines.join('\n') : `Nothing on the calendar in the next ${days} days.`;
+  }
+
+  if (action === 'calendar_create') {
+    const title = oneLine(b.title, 200);
+    if (!title) throw new Bad(400, 'The event needs a title');
+    const timeZone = /^[A-Za-z_]+(\/[A-Za-z0-9_+-]+)*$/.test(String(b.timeZone || '')) ? b.timeZone : 'UTC';
+    const event = {
+      summary: title, location: oneLine(b.location, 300) || undefined, description: String(b.description ?? '').slice(0, 4000) || undefined,
+      start: { dateTime: when(b.start, 'start'), timeZone }, end: { dateTime: when(b.end, 'end'), timeZone },
+      attendees: emailList(b.attendees, 'attendees').map((email) => ({ email })),
+    };
+    const withMeet = b.meet === true || b.meet === 'true';
+    if (withMeet) event.conferenceData = { createRequest: { requestId: crypto.randomUUID(), conferenceSolutionKey: { type: 'hangoutsMeet' } } };
+    const q = new URLSearchParams({ conferenceDataVersion: '1', sendUpdates: event.attendees.length ? 'all' : 'none' });
+    const e = await googleFetch(token, 'POST', `${cal}?${q}`, event);
+    return `Saved "${e.summary}" for ${e.start?.dateTime || event.start.dateTime}${event.attendees.length ? `, invited ${event.attendees.length}` : ''} | ${e.htmlLink}${e.hangoutLink ? ' | Meet: ' + e.hangoutLink : ''}`;
+  }
+
+  if (action === 'gmail_search') {
+    const list = await googleFetch(token, 'GET', `${gmail}/messages?${new URLSearchParams({ maxResults: '8', q: oneLine(b.query, 300) })}`);
+    const ids = (list.messages || []).map((m) => m.id);
+    if (!ids.length) return 'No emails match.';
+    const meta = await Promise.all(ids.map((id) => googleFetch(token, 'GET', `${gmail}/messages/${encodeURIComponent(id)}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`)));
+    return meta.map((m) => `id ${m.id} | ${header(m, 'Date')} | ${header(m, 'From')} | ${header(m, 'Subject')} | ${(m.snippet || '').slice(0, 160)}`).join('\n');
+  }
+
+  if (action === 'gmail_read') {
+    const id = oneLine(b.id, 100);
+    if (!/^[A-Za-z0-9]+$/.test(id)) throw new Bad(400, 'Use an id from gmail_search');
+    const m = await googleFetch(token, 'GET', `${gmail}/messages/${id}?format=full`);
+    const text = plainText(m.payload).trim() || m.snippet || '(no text)';
+    return `From: ${header(m, 'From')}\nTo: ${header(m, 'To')}\nDate: ${header(m, 'Date')}\nSubject: ${header(m, 'Subject')}\n\n${text.slice(0, 6000)}`;
+  }
+
+  // gmail_send and gmail_draft
+  const msg = { to: emailList(b.to, 'to'), cc: emailList(b.cc, 'cc'), subject: oneLine(b.subject, 300), body: String(b.body ?? '').slice(0, 20000) };
+  if (action === 'gmail_send') {
+    if (!msg.to.length) throw new Bad(400, 'Who should it go to? Give an email address, or save a draft instead');
+    await googleFetch(token, 'POST', `${gmail}/messages/send`, { raw: mime(msg) });
+    return `Sent "${msg.subject}" to ${msg.to.join(', ')}`;
+  }
+  await googleFetch(token, 'POST', `${gmail}/drafts`, { message: { raw: mime(msg) } });
+  return `Draft "${msg.subject}" saved in Gmail | https://mail.google.com/mail/u/0/#drafts`;
+}
 
 // ---------- the setup assistant ----------
 
@@ -520,8 +664,8 @@ function chatSystem(config) {
 
 How Verbo works:
 - A skill is one saved instruction applied to the text in the field (or to a copied message). It appears as a key above the keyboard, can be bound to a letter (hold that letter to run it), and can be put on the wheel (hold the space bar, slide, release). The wheel holds six shortcuts.
-- Skills can use connected tools during an action: web search, place search with maps, weather, Google Meet links (Google sign-in), the user's own HTTPS APIs, and these apps once a token is pasted under Connections: Notion (search, read, create pages), Calendly (booking links), Slack (list channels, read, send, search messages), GitHub (repos, search and create issues), Todoist (list and add tasks), Linear (search and create issues), Discord (send to a channel through a webhook).
-- Gmail, LinkedIn, WhatsApp, Telegram, Outlook, Google Calendar, Maps, YouTube and X need no connection: a skill writes the text and opens the app with a draft or post filled in, and the user presses send there. Reading the Gmail inbox or LinkedIn profiles is not available.
+- Skills can use connected tools during an action: web search, place search with maps, weather, Google with one sign-in (Meet links, reading and saving Calendar events with invites, searching, reading, drafting and sending Gmail), the user's own HTTPS APIs, and these apps once a token is pasted under Connections: Notion (search, read, create pages), Calendly (booking links), Slack (list channels, read, send, search messages), GitHub (repos, search and create issues), Todoist (list and add tasks), Linear (search and create issues), Discord (send to a channel through a webhook).
+- Gmail, LinkedIn, WhatsApp, Telegram, Outlook, Google Calendar, Maps, YouTube and X need no connection: a skill writes the text and opens the app with a draft or post filled in, and the user presses send there. With Google connected, Gmail and Calendar skills act directly instead. Reading LinkedIn profiles is not available.
 - Connections, the AI model and API key, and keyboard settings each have a page in this dashboard.
 
 This user right now:
@@ -529,7 +673,7 @@ Skills:
 ${skills}
 Hold keys in use: ${usedKeys}
 Wheel: ${kb.wheel.map((id) => id.replace('skill:', '')).join(', ')}
-Connected: ${APP_TOKENS.map((t) => `${t.replace(/Token$|Webhook$/, '')} ${config[t] ? 'yes' : 'no'}`).join(', ')}, Google Meet ${config.googleRefresh ? 'yes' : 'no'}, custom APIs ${config.customApis.length}
+Connected: ${APP_TOKENS.map((t) => `${t.replace(/Token$|Webhook$/, '')} ${config[t] ? 'yes' : 'no'}`).join(', ')}, Google ${googleServices(config).join(' + ') || 'no'}, custom APIs ${config.customApis.length}
 AI key saved: ${hasKey ? 'yes' : 'no'}
 
 Reply with one JSON object and nothing else: {"reply": "...", "actions": [...]}.

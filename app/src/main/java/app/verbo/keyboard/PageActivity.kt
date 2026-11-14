@@ -157,18 +157,21 @@ class PageActivity : Activity() {
         ))
         val ready = { ui.icon(R.drawable.ic_check, 20, Color.parseColor("#4ADE80")) }
         column.addView(ui.rows(
-            ui.row(R.drawable.ic_pencil_line, "Gmail and Outlook", "Writes the email and opens it as a ready draft. No sign-in needed", ready()),
+            ui.row(R.drawable.ic_pencil_line, "Gmail and Outlook", if ("gmail" in store.googleServices) "Gmail is connected: emails are sent or drafted for you" else "Writes the email and opens it as a ready draft. Connect Google to send by itself", ready()),
             ui.row(R.drawable.ic_pencil_line, "LinkedIn", "Writes a post and opens LinkedIn with it filled in. \"Who is\" finds people", ready()),
             ui.row(R.drawable.ic_pencil_line, "WhatsApp and Telegram", "Writes the message and opens the app to pick a chat", ready()),
             ui.row(R.drawable.ic_list, "Calendar, YouTube and X", "Opens an event, a search or a post with your text filled in", ready()),
         ))
+        val services = store.googleServices
+        val all = services.containsAll(listOf("meet", "calendar", "gmail"))
         val meetState = when {
-            store.googleConnected -> "Connected through your dashboard. The Meeting link shortcut makes a real Google Meet link"
-            store.deviceToken.isEmpty() -> "Needs the web dashboard: pair this keyboard, then connect Google there. Until then the shortcut offers an instant no-account link"
-            else -> "Open your dashboard → Connections → Connect Google, then Sync now. Until then the shortcut offers an instant no-account link"
+            all -> "Connected: makes Meet links, saves Calendar events and sends or drafts Gmail by itself"
+            store.googleConnected -> "Connected for ${services.joinToString(", ").ifEmpty { "Meet" }} only. Reconnect Google on the dashboard to add Calendar and Gmail"
+            store.deviceToken.isEmpty() -> "Needs the web dashboard: pair this keyboard, then connect Google there once. Until then the shortcut offers an instant no-account link"
+            else -> "Open your dashboard → Connections → Connect Google, then Sync now"
         }
-        column.addView(ui.rows(ui.row(R.drawable.ic_video, "Google Meet", meetState,
-            if (store.googleConnected) ui.icon(R.drawable.ic_check, 20, Color.parseColor("#4ADE80")) else ui.chevron()) { if (!store.googleConnected) startActivity(android.content.Intent(this, PageActivity::class.java).putExtra("page", "dashboard")) }))
+        column.addView(ui.rows(ui.row(R.drawable.ic_video, "Google: Meet, Calendar, Gmail", meetState,
+            if (all) ready() else ui.chevron()) { if (!all) startActivity(android.content.Intent(this, PageActivity::class.java).putExtra("page", "dashboard")) }))
         column.addView(ui.rows(
             ui.row(R.drawable.ic_square_terminal, "Notion", if (store.notionToken.isEmpty()) "Not connected" else "Connected", ui.chevron()) {
                 editToken("Notion", "Paste an internal integration token from notion.so/my-integrations, then share the pages you want with that integration.", store.notionToken) { store.notionToken = it }

@@ -23,7 +23,8 @@ object Connections {
 
     /** [tokens] holds the other app tokens by dashboard field name: slackToken, githubToken, todoistToken, linearToken, discordWebhook. */
     fun tools(weather: Boolean, notionToken: String, calendlyToken: String, apis: List<CustomApi>, places: Boolean = true,
-              tokens: Map<String, String> = emptyMap()): List<ToolSpec> {
+              tokens: Map<String, String> = emptyMap(), googleServices: Set<String> = emptySet(),
+              google: ((String, Map<String, String>) -> String)? = null): List<ToolSpec> {
         val out = ArrayList<ToolSpec>()
         if (places) out += ToolSpec(
             "find_place",
@@ -56,6 +57,47 @@ object Connections {
             "calendly_scheduling_links", "List the user's Calendly event types with their booking links and durations.",
             emptyList(), emptyList(),
         ) { calendly(calendlyToken) }
+
+        if (google != null) {
+            if ("meet" in googleServices) out += ToolSpec(
+                "google_meet_link", "Create a new Google Meet room in the user's account and return its link. Use it when a message should include a meeting link.",
+                emptyList(), emptyList(),
+            ) { google("meet", emptyMap()) }
+            if ("calendar" in googleServices) {
+                out += ToolSpec(
+                    "google_calendar_events", "List upcoming events in the user's Google Calendar.",
+                    listOf("days" to "How many days ahead, 1 to 60; default 7", "query" to "Optional words to match"), emptyList(),
+                ) { google("calendar_events", it) }
+                out += ToolSpec(
+                    "google_calendar_create",
+                    "Save an event in the user's Google Calendar, optionally inviting people (they get an email) and adding a Google Meet link. Times are the user's local time.",
+                    listOf("title" to "Event title", "start" to "Start, like 2026-11-20T13:00", "end" to "End, like 2026-11-20T14:00; one hour after start if not said",
+                        "location" to "Place, optional", "description" to "Notes, optional", "attendees" to "Comma-separated email addresses to invite, optional",
+                        "meet" to "true to add a Google Meet link"),
+                    listOf("title", "start", "end"),
+                ) { google("calendar_create", it) }
+            }
+            if ("gmail" in googleServices) {
+                out += ToolSpec(
+                    "gmail_search", "Search the user's Gmail. Uses Gmail search syntax, e.g. \"from:asha invoice newer_than:7d\". Returns ids, senders, subjects and snippets.",
+                    listOf("query" to "Gmail search"), listOf("query"),
+                ) { google("gmail_search", it) }
+                out += ToolSpec(
+                    "gmail_read", "Read one email in full.",
+                    listOf("id" to "Id from gmail_search"), listOf("id"),
+                ) { google("gmail_read", it) }
+                out += ToolSpec(
+                    "gmail_send", "Send an email from the user's Gmail right away. Only when the user clearly asked to send it and gave or implied the recipient's address; otherwise save a draft.",
+                    listOf("to" to "Email addresses, comma-separated", "subject" to "Subject", "body" to "Plain-text body", "cc" to "Optional cc addresses"),
+                    listOf("to", "subject", "body"),
+                ) { google("gmail_send", it) }
+                out += ToolSpec(
+                    "gmail_create_draft", "Save an email as a draft in the user's Gmail without sending it.",
+                    listOf("to" to "Email addresses, optional", "subject" to "Subject", "body" to "Plain-text body"),
+                    listOf("subject", "body"),
+                ) { google("gmail_draft", it) }
+            }
+        }
 
         tokens["slackToken"]?.takeIf { it.isNotBlank() }?.let { t ->
             out += ToolSpec(

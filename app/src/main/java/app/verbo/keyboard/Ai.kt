@@ -76,7 +76,7 @@ The user sees your result on a card above the keyboard and then inserts or copie
 
 The user's message may start with a "Context" block: a message they received and copied. Use it to understand what they are replying to or asking about. Never repeat the context block itself in your answer.
 
-You may also have tools for apps and APIs the user connected. Use them when the request is about that app or needs its data. When a tool changes something for the user (for example creating a page), say in the returned text what was done, in one short line."""
+You may also have tools for apps and APIs the user connected. Use them when the request is about that app or needs its data. When a tool changes something for the user (for example creating a page), say in the returned text what was done, in one short line. When Gmail or Google Calendar tools are available, do the job with them (send or draft the email, save the event) instead of returning an open link, unless the user asked only for the text."""
 
     private const val BAR_TASK = "Task: treat the user's text as an instruction or a statement of what they want, and carry it out. For example, \"tell mom I'll be 20 min late, sound sorry\" becomes the message to send to mom."
 
