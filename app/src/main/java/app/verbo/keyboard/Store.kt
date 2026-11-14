@@ -282,6 +282,8 @@ class Store(context: Context) {
 
     /** Suggest (or run) skills when a copied message matches a trigger. The matching happens on the phone; nothing is sent until a skill runs. */
     var triggersOn: Boolean get() = bool("triggers_on", true); set(v) = put("triggers_on", v)
+    /** Open the acts in place of the keys when something new was copied and the field is empty. */
+    var actsOnCopy: Boolean get() = bool("acts_on_copy", true); set(v) = put("acts_on_copy", v)
     var triggers: List<Trigger>
         get() = prefs?.getString("triggers", null)?.let { raw -> try { parseTriggers(JSONArray(raw)) } catch (e: Exception) { null } } ?: Trigger.DEFAULTS
         set(v) = put("triggers", triggersJson(v).toString())
@@ -289,6 +291,7 @@ class Store(context: Context) {
     /** The instruction a trigger runs: the user's skill of that name, else a built-in one. */
     fun triggerSkill(t: Trigger): Skill? = skills.firstOrNull { it.name.equals(t.skill, ignoreCase = true) }
         ?: Trigger.BUILTIN[t.skill]?.let { Skill("⚡", t.skill, it, "write") }
+        ?: Acts.BUILTIN.firstOrNull { it.name.equals(t.skill, ignoreCase = true) }?.let { Skill(it.emoji, it.name, it.instruction, "write") }
 
     fun tools(): List<ToolSpec> = Connections.tools(weather, notionToken, calendlyToken, customApis, places, APP_TOKENS.keys.associateWith { token(it) },
         googleServices) { action, args -> Sync.google(this, action, args) }

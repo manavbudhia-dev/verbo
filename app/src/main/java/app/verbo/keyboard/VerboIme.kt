@@ -209,29 +209,56 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         skills = store.skills
         val barActive = assistantOn && agentMode != "manual"
         wheelIds = if (barActive && store.wheelOn) store.wheel else emptyList()
-        keys?.wheelItems = wheelIds.map { id ->
-            when (id) {
-                "ai" -> KeyboardView.WheelItem("Ask AI", R.drawable.ic_sparkles)
-                "translate" -> KeyboardView.WheelItem("Translate", R.drawable.ic_languages)
-                "rewrite" -> KeyboardView.WheelItem("Rewrite", R.drawable.ic_pencil_line)
-                "voice" -> KeyboardView.WheelItem("Voice", R.drawable.ic_mic)
-                "clips" -> KeyboardView.WheelItem("Clips", R.drawable.ic_clipboard)
-                "meet" -> KeyboardView.WheelItem("Meeting link", R.drawable.ic_video)
-                else -> {
-                    val name = id.removePrefix("skill:")
-                    val skill = skills.firstOrNull { it.name == name }
-                    if (skill != null && skill.emoji.isNotEmpty()) KeyboardView.WheelItem(name, 0, skill.emoji) else KeyboardView.WheelItem(name, R.drawable.ic_zap)
-                }
-            }
-        }
+        baseWheel = wheelIds
+        keys?.wheelItems = wheelIds.map { wheelItem(it, false) }
         keys?.barLabel = if (!barActive) "" else if (wheelIds.isEmpty()) "hold to act" else "hold for wheel"
         keys?.bound = if (assistantOn) skills.mapNotNull { it.key.firstOrNull() }.toSet() else emptySet()
+    }
+
+    private var baseWheel: List<String> = emptyList()
+
+    private fun wheelItem(id: String, suggested: Boolean): KeyboardView.WheelItem = when (id) {
+        "ai" -> KeyboardView.WheelItem("Ask AI", R.drawable.ic_sparkles, suggested = suggested)
+        "translate" -> KeyboardView.WheelItem("Translate", R.drawable.ic_languages, suggested = suggested)
+        "rewrite" -> KeyboardView.WheelItem("Rewrite", R.drawable.ic_pencil_line, suggested = suggested)
+        "voice" -> KeyboardView.WheelItem("Voice", R.drawable.ic_mic, suggested = suggested)
+        "clips" -> KeyboardView.WheelItem("Clips", R.drawable.ic_clipboard, suggested = suggested)
+        "meet" -> KeyboardView.WheelItem("Meeting link", R.drawable.ic_video, suggested = suggested)
+        else -> {
+            val name = id.substringAfter(":")
+            val emoji = skills.firstOrNull { it.name == name }?.emoji?.ifEmpty { null } ?: Acts.BUILTIN.firstOrNull { it.name == name }?.emoji
+            if (emoji != null) KeyboardView.WheelItem(name, 0, emoji, suggested) else KeyboardView.WheelItem(name, R.drawable.ic_zap, suggested = suggested)
+        }
+    }
+
+    /** Text the wheel and the acts look at: what is in the field plus the copied message. */
+    private fun contextForActs(): String {
+        val typed = try { readTarget()?.text.orEmpty() } catch (e: Exception) { "" }
+        val copied = contextText ?: if (hasFreshClip()) readClip().orEmpty() else ""
+        return (typed + "\n" + copied).trim()
+    }
+
+    /** Before the wheel opens: acts that fit the text (a date: Schedule it) take the middle places, ringed. */
+    override fun onWheelOpening() {
+        if (baseWheel.isEmpty()) return
+        val fits = Acts.forContext(contextForActs()).take(2).map { name ->
+            if (skills.any { it.name.equals(name, true) }) "skill:" + skills.first { it.name.equals(name, true) }.name else "act:$name"
+        }
+        val rest = baseWheel.filter { it !in fits }
+        val keep = rest.take(Store.MAX_WHEEL - fits.size)
+        val mid = keep.size / 2
+        wheelIds = keep.take(mid) + fits + keep.drop(mid)
+        keys?.wheelItems = wheelIds.map { wheelItem(it, it in fits) }
     }
 
     private fun buildChips() {
         val row = chipsRow ?: return
         row.removeAllViews()
         if (!assistantOn) return
+        val acts = chipView("⚡ Acts", p.fnKey, p.keyPressed, p.accent)
+        acts.typeface = Typeface.DEFAULT_BOLD
+        acts.setOnClickListener { feedback(KeyboardView.Type.MODE); showActs() }
+        row.addView(acts, chipParams())
         val fresh = contextText == null && hasFreshClip()
         // Triggers: the copied message is matched on the phone; a chip offers each matching skill.
         val clip = if (store.triggersOn) contextText ?: (if (fresh) readClip() else null) else null
@@ -254,6 +281,12 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             val use = chipView("📋 Use copied text", p.accent, p.accentPressed, p.onAccent)
             use.setOnClickListener { feedback(KeyboardView.Type.MODE); useClipAsContext() }
             row.addView(use, chipParams())
+        }
+        // Something new was copied and the field is empty: offer the acts in place of the keys, once per copy.
+        if (fresh && stamp != 0L && stamp != lastActsClip && store.actsOnCopy && store.activeKey.isNotBlank() && matched.none { it.auto }) {
+            lastActsClip = stamp
+            val empty = try { readTarget()?.text.isNullOrBlank() } catch (e: Exception) { false }
+            if (empty) main.post { if (!busy) showActs() }
         }
         // An automatic trigger runs once per copied message.
         val auto = matched.firstOrNull { it.auto }
@@ -456,7 +489,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             "voice" -> startVoice(false)
             "clips" -> showClips()
             "meet" -> makeMeetLink()
-            else -> skills.firstOrNull { it.name == id.removePrefix("skill:") }?.let { runAction(it) } ?: showStatus("That skill no longer exists")
+            else -> if (id.startsWith("act:")) runAct(id.removePrefix("act:")) else skills.firstOrNull { it.name == id.removePrefix("skill:") }?.let { runAction(it) } ?: showStatus("That skill no longer exists")
         }
     }
 
@@ -485,6 +518,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     /** When the current clip was copied; an automatic trigger runs once per clip. */
     private var lastAutoClip = 0L
     private var lastAttachedClip = 0L
+    private var lastActsClip = 0L
 
     private fun clipStamp(): Long = try {
         (getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager).primaryClipDescription?.timestamp ?: 0L
@@ -495,6 +529,95 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         clipboard.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString()?.trim()?.take(4000)?.ifEmpty { null }
     } catch (e: Exception) {
         null
+    }
+
+    /** The instruction for an act: the user's skill of that name first, then the ready-made acts and trigger skills. */
+    private fun actSkill(name: String): Skill? = skills.firstOrNull { it.name.equals(name, true) }
+        ?: Acts.BUILTIN.firstOrNull { it.name.equals(name, true) }?.let { Skill(it.emoji, it.name, it.instruction, "write") }
+        ?: Trigger.BUILTIN[name]?.let { Skill("⚡", name, it, "write") }
+
+    /** Runs an act on the copied message (if there is one) and the field's text, as a card. */
+    internal fun runAct(name: String) {
+        val skill = actSkill(name) ?: run { showStatus("No act called “$name”"); return }
+        if (contextText == null && hasFreshClip()) readClip()?.let { contextText = it }
+        refreshContext()
+        val schedule = name.equals("Schedule it", true)
+        runTask("${skill.name}…", Ai.skillTask(skill.instruction), card = true, retry = { runAct(name) }, then = { r ->
+            val event = r.openUri?.let { PhoneCalendar.parseTemplate(it) }
+            if (schedule && event != null) {
+                // One tap: the event is saved now, and the message carries the link so friends can add it too.
+                if (PhoneCalendar.allowed(this)) worker.execute {
+                    val saved = runCatching { PhoneCalendar.save(this, event) }.isSuccess
+                    main.post { android.widget.Toast.makeText(this, if (saved) "Saved to your calendar: ${event.title}, ${PhoneCalendar.describe(event)}" else "Couldn't save it to the calendar", android.widget.Toast.LENGTH_SHORT).show() }
+                }
+                r.copy(text = r.text + "\nAdd it to your calendar: " + r.openUri)
+            } else r
+        })
+    }
+
+    /** The acts, in place of the keys: the copied text on top, then every act as a card. "Type" goes back to the keys. */
+    internal fun showActs() = showPanel {
+        steps = null
+        val head = LinearLayout(this@VerboIme).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(2), 0, 0, dp(6)) }
+        val type = chipView("⌨  Type", p.key, p.keyPressed, p.text)
+        type.setOnClickListener { feedback(KeyboardView.Type.MODE); hidePanel(); showTyping() }
+        head.addView(type, LinearLayout.LayoutParams(-2, dp(34)))
+        val act = chipView("⚡ Act", p.accent, p.accentPressed, p.onAccent)
+        act.typeface = Typeface.DEFAULT_BOLD
+        head.addView(act, LinearLayout.LayoutParams(-2, dp(34)).apply { leftMargin = dp(6) })
+        head.addView(View(this@VerboIme), LinearLayout.LayoutParams(0, 1, 1f))
+        head.addView(iconButton(R.drawable.ic_x, "Back to keyboard", p.muted) { hidePanel(); showTyping() }, LinearLayout.LayoutParams(dp(38), dp(38)))
+        addView(head)
+        val copied = contextText ?: if (hasFreshClip()) readClip() else null
+        if (copied != null) addView(TextView(this@VerboIme).apply {
+            text = "📋  “${copied.replace('\n', ' ')}”"
+            setTextColor(p.muted)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            setPadding(dp(12), dp(7), dp(12), dp(7))
+            background = rounded(p.key, 12)
+        }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
+        addView(TextView(this@VerboIme).apply { text = "My acts"; setTextColor(p.text); setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f); typeface = Typeface.DEFAULT_BOLD; setPadding(dp(4), 0, 0, dp(6)) })
+        val fits = Acts.forContext(contextForActs())
+        val all = (listOf(Triple("✨", "Ask AI", false)) +
+            skills.map { Triple(it.emoji.ifEmpty { "⚡" }, it.name, Acts.needsCopied(it.instruction)) } +
+            Acts.BUILTIN.filter { b -> skills.none { it.name.equals(b.name, true) } }.map { Triple(it.emoji, it.name, it.needsCopied) })
+            .sortedByDescending { it.second in fits }
+        val grid = LinearLayout(this@VerboIme).apply { orientation = LinearLayout.VERTICAL }
+        all.chunked(2).forEach { pair ->
+            val row = LinearLayout(this@VerboIme)
+            pair.forEach { (emoji, name, copiedNeeded) ->
+                val cell = LinearLayout(this@VerboIme).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dp(12), dp(10), dp(10), dp(10))
+                    background = if (name in fits) GradientDrawable().apply { setColor(p.key); cornerRadius = dp(14).toFloat(); setStroke(dp(2), p.accent) } else pressable(p.key, p.keyPressed, 14)
+                    addView(TextView(this@VerboIme).apply {
+                        text = "$emoji  $name"
+                        setTextColor(p.text)
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
+                        typeface = Typeface.DEFAULT_BOLD
+                        maxLines = 1
+                        ellipsize = TextUtils.TruncateAt.END
+                    })
+                    addView(TextView(this@VerboIme).apply {
+                        text = when { name in fits -> "Fits this text"; name == "Ask AI" -> "Needs text input"; copiedNeeded -> "Needs copied text"; else -> "Needs text input" }
+                        setTextColor(if (name in fits || copiedNeeded) p.accent else p.muted)
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+                        setPadding(0, dp(3), 0, 0)
+                    })
+                    setOnClickListener {
+                        feedback(KeyboardView.Type.MODE)
+                        hidePanel()
+                        if (name == "Ask AI") runAction(null) else runAct(name)
+                    }
+                }
+                row.addView(cell, LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(dp(3), dp(3), dp(3), dp(3)) })
+            }
+            if (pair.size == 1) row.addView(View(this@VerboIme), LinearLayout.LayoutParams(0, 1, 1f).apply { setMargins(dp(3), dp(3), dp(3), dp(3)) })
+            grid.addView(row)
+        }
+        addView(android.widget.ScrollView(this@VerboIme).apply { addView(grid) }, LinearLayout.LayoutParams(-1, 0, 1f))
     }
 
     /** Runs a trigger's skill on the copied message and shows the answer as a card. */
@@ -804,7 +927,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     }
 
     /** Runs [task] (null = "do what the text says") on the field's text, with the copied context if one is attached. */
-    private fun runTask(label: String, task: String?, card: Boolean, retry: () -> Unit) {
+    private fun runTask(label: String, task: String?, card: Boolean, then: (ActionResult) -> ActionResult = { it }, retry: () -> Unit) {
         if (busy) return
         if (isPasswordField()) {
             showStatus("Verbo doesn't read password fields")
@@ -824,8 +947,9 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             showStatus("That's too much text for one action. Select a part of it")
             return
         }
-        launch(label, task, Ai.userMessage(target.text, context), connected = true, card = card) { result ->
-            if (card) showResult(result, { deliver(target, result) }) { hidePanel(); retry() }
+        launch(label, task, Ai.userMessage(target.text, context), connected = true, card = card) { raw ->
+            val result = then(raw)
+            if (card) showResult(result, { chosen -> deliver(target, chosen) }) { hidePanel(); retry() }
             else deliver(target, result)
         }
     }
@@ -1248,16 +1372,17 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         Cards.notion(r.text, r.openUri)?.plain() ?: Cards.list(r.text)?.plain() ?: r.text
 
     /** The result as a card: back, try again, copy, and insert into the field (or send, where the app allows it). */
-    internal fun showResult(result: ActionResult, onInsert: () -> Unit, onRetry: (() -> Unit)?) = showPanel {
+    internal fun showResult(result: ActionResult, onInsert: (ActionResult) -> Unit, onRetry: (() -> Unit)?) = showPanel {
         steps = null
         val person = Ai.personCard(result.text)
         val notion = if (person == null) Cards.notion(result.text, result.openUri) else null
-        val list = if (person == null && notion == null) Cards.list(result.text) else null
+        val options = if (person == null) Cards.options(result.text) else null
+        val list = if (person == null && notion == null && options == null) Cards.list(result.text) else null
         val header = LinearLayout(this@VerboIme).apply { gravity = Gravity.CENTER_VERTICAL }
         header.addView(iconButton(R.drawable.ic_chevron_right, "Back to keyboard") { hidePanel(); showTyping() }.apply { rotation = 180f },
             LinearLayout.LayoutParams(dp(40), dp(40)))
         header.addView(TextView(this@VerboIme).apply {
-            text = when { person != null -> "in   LinkedIn HUD"; notion != null -> "N   Notion"; list != null -> list.title; else -> "Result" }
+            text = when { person != null -> "in   LinkedIn HUD"; notion != null -> "N   Notion"; options != null -> "Pick one"; list != null -> list.title; else -> "Result" }
             setTextColor(if (person != null || notion != null || list != null) p.text else p.muted)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, if (list != null) 15f else 13.5f)
             if (person != null || notion != null || list != null) typeface = Typeface.DEFAULT_BOLD
@@ -1286,6 +1411,52 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
                 val bitmap = MapPreview.load(lat, lon)
                 main.post { if (bitmap != null && token == generation && map.isAttachedToWindow) map.setImageBitmap(bitmap) }
             }
+        }
+        if (options != null) {
+            // Suggestions: tap one to choose it, then Edit (into the field) or Apply (insert, or send in chat apps).
+            var chosen = 0
+            val column = LinearLayout(this@VerboIme).apply { orientation = LinearLayout.VERTICAL }
+            val views = options.mapIndexed { i, text ->
+                TextView(this@VerboIme).apply {
+                    this.text = "“$text”"
+                    setTextColor(p.text)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+                    setLineSpacing(dp(2).toFloat(), 1f)
+                    setPadding(dp(14), dp(12), dp(14), dp(12))
+                }
+            }
+            fun paint() = views.forEachIndexed { i, v ->
+                v.background = GradientDrawable().apply {
+                    setColor(p.key)
+                    cornerRadius = dp(16).toFloat()
+                    if (i == chosen) setStroke(dp(2), p.accent)
+                }
+            }
+            views.forEachIndexed { i, v ->
+                v.setOnClickListener { feedback(KeyboardView.Type.MODE); chosen = i; paint() }
+                column.addView(v, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
+            }
+            paint()
+            addView(android.widget.ScrollView(this@VerboIme).apply { addView(column) }, LinearLayout.LayoutParams(-1, 0, 1f))
+            val pick = { result.copy(text = options[chosen], openUri = null) }
+            val footer = LinearLayout(this@VerboIme).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(8), 0, dp(2)) }
+            val edit = chipView("Edit", p.key, p.keyPressed, p.text)
+            edit.typeface = Typeface.DEFAULT_BOLD
+            edit.setOnClickListener { feedback(KeyboardView.Type.MODE); hidePanel(); onInsert(pick()) }
+            footer.addView(edit, LinearLayout.LayoutParams(0, dp(46), 1f).apply { rightMargin = dp(8) })
+            val options2 = currentInputEditorInfo?.imeOptions ?: 0
+            val sends = options2 and EditorInfo.IME_MASK_ACTION == EditorInfo.IME_ACTION_SEND && options2 and EditorInfo.IME_FLAG_NO_ENTER_ACTION == 0
+            val apply = chipView(if (sends) "↑  Send" else "Apply", p.accent, p.accentPressed, p.onAccent)
+            apply.typeface = Typeface.DEFAULT_BOLD
+            apply.setOnClickListener {
+                feedback(KeyboardView.Type.ENTER)
+                hidePanel()
+                onInsert(pick())
+                if (sends) currentInputConnection?.performEditorAction(EditorInfo.IME_ACTION_SEND)
+            }
+            footer.addView(apply, LinearLayout.LayoutParams(0, dp(46), 1.7f))
+            addView(footer)
+            return@showPanel
         }
         if (person != null) {
             personCard(card, person)
@@ -1341,7 +1512,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     }
 
     /** Copy and Insert (or Send) under a result card. */
-    private fun resultButtons(panel: LinearLayout, result: ActionResult, onInsert: () -> Unit) {
+    private fun resultButtons(panel: LinearLayout, result: ActionResult, onInsert: (ActionResult) -> Unit) {
         val footer = LinearLayout(this@VerboIme).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(8), 0, dp(2)) }
         val copy = chipView("Copy", p.key, p.keyPressed, p.text)
         copy.typeface = Typeface.DEFAULT_BOLD
@@ -1361,7 +1532,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             insert.setOnClickListener {
                 feedback(KeyboardView.Type.ENTER)
                 hidePanel()
-                onInsert()
+                onInsert(result)
                 if (sends) currentInputConnection?.performEditorAction(EditorInfo.IME_ACTION_SEND)
             }
             footer.addView(insert, LinearLayout.LayoutParams(0, dp(46), 1.7f))
@@ -1695,7 +1866,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         ) { result ->
             val open = result.openUri?.let { uri -> openLabel(uri) to { openLink(uri) } }
             if (result.text.isEmpty()) showStatus("Ready", *listOfNotNull(open).toTypedArray())
-            else if (agentMode == "ask") showResult(result, { insert(result.text, open) }, null)
+            else if (agentMode == "ask") showResult(result, { chosen -> insert(chatText(chosen), open) }, null)
             else insert(result.text, open)
         }
     }

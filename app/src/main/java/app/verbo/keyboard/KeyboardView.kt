@@ -65,6 +65,8 @@ class KeyboardView(
         fun onKeyHeld(letter: Char)
         fun onWheel(index: Int)
         fun onPress(type: Type)
+        /** The wheel is about to open: a chance to fit its shortcuts to what is being written. */
+        fun onWheelOpening() {}
     }
 
     private class Key(val type: Type, val label: String, val weight: Float, val target: Mode? = null) {
@@ -76,7 +78,7 @@ class KeyboardView(
     private class Press(var key: Key) { var done = false }
 
     /** One shortcut on the wheel: an icon, or an emoji when [icon] is 0. */
-    class WheelItem(val label: String, val icon: Int, val emoji: String = "")
+    class WheelItem(val label: String, val icon: Int, val emoji: String = "", val suggested: Boolean = false)
 
     var listener: Listener? = null
     var mode = Mode.LETTERS
@@ -320,6 +322,7 @@ class KeyboardView(
     private val barHold = Runnable {
         val entry = presses.entries.firstOrNull { it.value.key.type == Type.BAR && !it.value.done } ?: return@Runnable
         entry.value.done = true
+        listener?.onWheelOpening()
         if (wheelItems.isEmpty()) {
             listener?.onBarHeld()
         } else {
@@ -376,6 +379,13 @@ class KeyboardView(
             val size = (if (i == wheelPick) 25 else 21) * d
             face.color = if (i == wheelPick) theme.accent else theme.fnKey
             canvas.drawCircle(x, y, size, face)
+            if (item.suggested && i != wheelPick) {
+                // Fits what is being written: ringed in the accent colour.
+                edge.color = theme.accent
+                edge.strokeWidth = 3f * d
+                canvas.drawCircle(x, y, size + 4 * d, edge)
+                edge.strokeWidth = 1.2f * d
+            }
             val tint = if (i == wheelPick) theme.onAccent else theme.text
             if (item.icon != 0) {
                 val half = 11 * d
@@ -397,14 +407,15 @@ class KeyboardView(
         letters.textSize = 13 * d
         canvas.drawText("Cancel", cx, cy - r * 0.12f, letters)
         // What lifting the finger will do, in a pill above the wheel.
-        val label = if (wheelPick >= 0) wheelItems[wheelPick].label else "Slide to choose · release to cancel"
+        val hint = wheelItems.firstOrNull { it.suggested }?.let { "Try: ${it.label}" }
+        val label = if (wheelPick >= 0) wheelItems[wheelPick].label else hint ?: "Slide to choose · release to cancel"
         letters.textSize = 14.5f * d
         letters.typeface = Typeface.DEFAULT_BOLD
         val w = letters.measureText(label) + 26 * d
         val top = (cy - r - 34 * d).coerceAtLeast(3 * d)
         face.color = if (wheelPick >= 0) theme.accent else theme.fnKey
         canvas.drawRoundRect(cx - w / 2, top, cx + w / 2, top + 28 * d, 14 * d, 14 * d, face)
-        letters.color = if (wheelPick >= 0) theme.onAccent else theme.muted
+        letters.color = if (wheelPick >= 0) theme.onAccent else if (hint != null) theme.accent else theme.muted
         canvas.drawText(label, cx, top + 14 * d - (letters.descent() + letters.ascent()) / 2, letters)
         letters.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
     }

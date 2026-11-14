@@ -57,6 +57,16 @@ object Cards {
         return ListCard(lines[0].removeSuffix(":"), items.take(5), rest)
     }
 
+    // ---------- reply options ----------
+
+    /** Two to four versions, one per line, each starting "1)", "2)"...; the user picks one. */
+    fun options(text: String): List<String>? {
+        val lines = text.lines().map { it.trim() }.filter { it.isNotEmpty() }
+        if (lines.size !in 2..4) return null
+        val m = lines.map { Regex("""^([1-4])\)\s+(.+)$""").find(it) ?: return null }
+        return m.map { it.groupValues[2].trim().removeSurrounding("\"").removeSurrounding("“", "”").trim() }
+    }
+
     // ---------- Notion pages ----------
 
     data class NotionCard(val title: String, val edited: String, val url: String) {
@@ -78,7 +88,7 @@ object Cards {
     /** Kinds a trigger can watch for, with the words shown in the editor. */
     val KINDS = listOf(
         "person" to "a person's name", "time" to "a date or time", "place" to "a place or address",
-        "link" to "a link", "email" to "an email address", "phone" to "a phone number", "keyword" to "a word I choose", "any" to "anything",
+        "link" to "a link", "email" to "an email address", "phone" to "a phone number", "foreign" to "another language", "keyword" to "a word I choose", "any" to "anything",
     )
 
     private val TIME = Regex(
@@ -124,6 +134,7 @@ object Cards {
         "link" -> LINK.containsMatchIn(text)
         "email" -> EMAIL.containsMatchIn(text)
         "phone" -> PHONE.containsMatchIn(text)
+        "foreign" -> Acts.isForeign(text)
         "keyword" -> keyword.isNotBlank() && keyword.split(",").map { it.trim() }.filter { it.isNotEmpty() }.any { text.contains(it, ignoreCase = true) }
         "any" -> text.isNotBlank()
         else -> false
@@ -145,6 +156,48 @@ data class Trigger(val kind: String, val keyword: String, val skill: String, val
             "Save event" to "The text describes an event or a meeting. Work out its title, date, start time and place, resolving words like tomorrow from today's date. Reply with one line describing it, then a final [[open:https://calendar.google.com/calendar/render?action=TEMPLATE&text=TITLE&dates=YYYYMMDDTHHMMSS/YYYYMMDDTHHMMSS&location=PLACE]] line in local time, one hour long if no end is given. If Google Calendar tools are available, save it with them instead.",
             "Place" to "The text names a place. Find it with the place search and return its name, address and a Google Maps link, with the map marker line.",
         )
-        val DEFAULTS = listOf(Trigger("person", "", "Who is", false), Trigger("time", "", "Save event", false), Trigger("place", "", "Place", false))
+        val DEFAULTS = listOf(Trigger("person", "", "Who is", false), Trigger("time", "", "Schedule it", false), Trigger("place", "", "Place", false), Trigger("foreign", "", "Understand any language", false))
+    }
+}
+
+/** Ready-made acts offered in the Acts panel next to the user's own skills. */
+object Acts {
+    class Act(val emoji: String, val name: String, val instruction: String, val needsCopied: Boolean)
+
+    val BUILTIN = listOf(
+        Act("💬", "Reply options", "Write three different versions of the reply or message the user wants, using their text and the copied message if there is one: one warm, one brief, one formal. Return exactly three lines starting with 1), 2) and 3), and nothing else.", false),
+        Act("📅", "Schedule it", "The text or the copied message describes an event (a meeting, a birthday, a reminder). Work out its title, date, time and place, using today's date for words like tomorrow; a birthday or holiday is a whole-day event. Reply with a short friendly message the user can send to invite someone, with the event details, then a final [[open:https://calendar.google.com/calendar/render?action=TEMPLATE&text=TITLE&dates=DATES&details=DETAILS&location=PLACE]] line, where DATES is YYYYMMDD/YYYYMMDD (end is the next day) for a whole-day event, otherwise local YYYYMMDDTHHMMSS/YYYYMMDDTHHMMSS, one hour long if no end is given.", false),
+        Act("🌐", "Understand any language", "The copied message, or the text, may be in any language. Reply with: on the first line From LANGUAGE (the language it is written in); then what it says, translated naturally into English (into Hindi if the user's own text is in Hindi); then a last line starting Tone: with one short phrase on the tone and what the sender wants.", true),
+        Act("📝", "Save to Notion", "Save the copied message, or the text, to the user's Notion. Find a page to save under with notion_search: prefer one called Inbox, Notes, Saved or Reading list, otherwise the most recently edited page. Create a page under it with notion_create_page whose title is a short summary of under eight words and whose content is the full copied text, then a line with a one-sentence summary. Reply with exactly two lines, the new page title and then Last edited: Just now, and end with [[open:NEW_PAGE_URL]]. If Notion is not connected, reply: Connect Notion in Verbo to save pages, and end with [[open:https://www.notion.so]].", true),
+        Act("🎯", "Extract what matters", "From the copied message or the text, pull out only what matters: decisions, dates and times, amounts, names and things the user must do. One short item per line, each starting with a dash. Nothing else.", true),
+        Act("🧠", "Explain simply", "Explain the copied message, or the text, in plain words a 14-year-old would understand, in two to four short sentences. Keep names and numbers.", true),
+        Act("✅", "Fact check", "Check the claims in the copied message, or the text, searching the web where needed. First line: True, False, Misleading or Unclear. Then one or two short lines with what is actually true and the source name.", true),
+        Act("🗣️", "Sound like a native", "Rewrite the text so it sounds like a native speaker of its language wrote it: natural, idiomatic, same meaning and tone, similar length.", false),
+    )
+
+    /** True when a skill works on a copied message rather than on what the user typed. */
+    fun needsCopied(instruction: String) = Regex("""copied|the context|message the user received|they received|names a person""", RegexOption.IGNORE_CASE).containsMatchIn(instruction)
+
+    /** Mostly written in a script other than Latin and Devanagari (Japanese, Arabic, Russian...): worth translating. */
+    fun isForeign(text: String): Boolean {
+        val letters = text.filter { it.isLetter() }
+        if (letters.length < 4) return false
+        val other = letters.count { c ->
+            val block = Character.UnicodeBlock.of(c)
+            block != Character.UnicodeBlock.BASIC_LATIN && block != Character.UnicodeBlock.LATIN_1_SUPPLEMENT &&
+                block != Character.UnicodeBlock.LATIN_EXTENDED_A && block != Character.UnicodeBlock.LATIN_EXTENDED_B && block != Character.UnicodeBlock.DEVANAGARI
+        }
+        return other * 10 >= letters.length * 4
+    }
+
+    /** Acts that fit [text] best, most useful first: a date suggests Schedule it, a foreign message Understand, a link Save to Notion. */
+    fun forContext(text: String): List<String> {
+        if (text.isBlank()) return emptyList()
+        val out = ArrayList<String>()
+        if (isForeign(text)) out += "Understand any language"
+        if (Cards.matches("time", "", text)) out += "Schedule it"
+        if (Cards.matches("link", "", text)) out += "Save to Notion"
+        if (Cards.personName(text) != null) out += "Who is"
+        return out
     }
 }

@@ -59,4 +59,17 @@ class CardsTest {
         assertFalse(Cards.matches("keyword", "", "anything"))
         assertEquals("Who is · David Miller", Cards.chipLabel(Trigger("person", "", "Who is", false), msg))
     }
+
+    @Test
+    fun replyOptionsAndContextActs() {
+        assertEquals(listOf("Sure, see you then!", "Works for me."), Cards.options("1) \"Sure, see you then!\"\n2) Works for me."))
+        assertNull(Cards.options("Picks\n1) a\n2) b")) // a title line means it is not a set of options
+        assertTrue(Acts.isForeign("旅行用eSIMをお探しの場合は、渡航先の国と旅行日程をお知らせください。"))
+        assertFalse(Acts.isForeign("kal milte hain, theek hai?"))
+        assertFalse(Acts.isForeign("कल मिलते हैं"))
+        assertEquals(listOf("Schedule it", "Who is"), Acts.forContext("We're meeting with David Miller from Google Cloud tomorrow"))
+        assertEquals(listOf("Save to Notion"), Acts.forContext("watch this https://youtu.be/z4JRQ36H-3Y"))
+        assertTrue(Acts.needsCopied(Acts.BUILTIN.first { it.name == "Save to Notion" }.instruction))
+        assertTrue(Cards.matches("foreign", "", "Привет, как дела у тебя сегодня?"))
+    }
 }

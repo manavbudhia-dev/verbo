@@ -480,6 +480,20 @@ class KeyboardTest {
         ime.onStartInputView(field.info, false)
         layout(agentRoot)
         snap(agentRoot, "keyboard-triggers")
+        // The wheel with that message copied: Schedule it and Who is take the middle, ringed.
+        val ctxKeys = ime.keys!!
+        holdBar(ctxKeys)
+        touch(ctxKeys, MotionEvent.ACTION_MOVE, listOf(Triple(0, ctxKeys.width * 0.5f, ctxKeys.height * 0.97f)))
+        layout(agentRoot)
+        snap(agentRoot, "wheel-context")
+        touch(ctxKeys, MotionEvent.ACTION_UP, listOf(Triple(0, ctxKeys.width * 0.5f, ctxKeys.height * 0.97f)))
+        ime.showActs()
+        layout(agentRoot)
+        snap(agentRoot, "panel-acts")
+        ime.showResult(ActionResult("1) Thank you for your time, but I've decided not to go ahead with this purchase. I appreciate your help!\n2) Thanks for checking in, but I'm not interested in buying this right now.\n3) Thanks for the offer, but this isn't something I need at the moment.", null), {}, {})
+        layout(agentRoot)
+        snap(agentRoot, "panel-options")
+        ime.hidePanel()
         clipboard.setPrimaryClip(android.content.ClipData.newPlainText("m", ""))
         field.text.append(kept)
         store.theme = "system"

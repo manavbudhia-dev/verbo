@@ -74,11 +74,12 @@ const DEFAULT_SKILLS = [
 ].map(([emoji, name, instruction, category, key = '']) => ({ emoji, name, instruction, category, key }));
 
 // Auto actions: when a copied message has one of these, the keyboard offers (or runs) the skill.
-const TRIGGER_KINDS = ['person', 'time', 'place', 'link', 'email', 'phone', 'keyword', 'any'];
+const TRIGGER_KINDS = ['person', 'time', 'place', 'link', 'email', 'phone', 'foreign', 'keyword', 'any'];
 const DEFAULT_TRIGGERS = [
   { kind: 'person', keyword: '', skill: 'Who is', auto: false },
-  { kind: 'time', keyword: '', skill: 'Save event', auto: false },
+  { kind: 'time', keyword: '', skill: 'Schedule it', auto: false },
   { kind: 'place', keyword: '', skill: 'Place', auto: false },
+  { kind: 'foreign', keyword: '', skill: 'Understand any language', auto: false },
 ];
 
 const defaultConfig = () => ({

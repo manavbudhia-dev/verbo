@@ -226,9 +226,9 @@ function skillDialog(index, preset) {
 
 const TRIGGER_KINDS = [
   ['person', "a person's name"], ['time', 'a date or time'], ['place', 'a place or address'], ['link', 'a link'],
-  ['email', 'an email address'], ['phone', 'a phone number'], ['keyword', 'words I choose'], ['any', 'anything'],
+  ['email', 'an email address'], ['phone', 'a phone number'], ['foreign', 'another language'], ['keyword', 'words I choose'], ['any', 'anything'],
 ];
-const BUILTIN_TRIGGER_SKILLS = ['Who is', 'Save event', 'Place'];
+const BUILTIN_TRIGGER_SKILLS = ['Who is', 'Save event', 'Place', 'Reply options', 'Schedule it', 'Understand any language', 'Save to Notion', 'Extract what matters', 'Explain simply', 'Fact check', 'Sound like a native'];
 
 // Auto actions: copy a message on the phone, and the matching skill is offered (or run) by itself.
 function triggersCard() {

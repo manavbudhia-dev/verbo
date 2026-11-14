@@ -153,7 +153,10 @@ class PageActivity : Activity() {
         note(column, "When you copy a message, Verbo checks it on your phone for the things below and shows a ⚡ chip above the keys. " +
             "Example: copy \"We're meeting David Miller tomorrow\" and get \"Who is · David Miller\" and \"Save event\". Nothing is sent until a skill runs. " +
             "Turn on Automatic to run a skill as soon as you open the keyboard after copying.")
-        column.addView(ui.rows(ui.row(R.drawable.ic_zap, "Suggest actions for copied text", "Checked on the phone only", ui.toggle(store.triggersOn) { store.triggersOn = it; render() })))
+        column.addView(ui.rows(
+            ui.row(R.drawable.ic_zap, "Suggest actions for copied text", "Checked on the phone only", ui.toggle(store.triggersOn) { store.triggersOn = it; render() }),
+            ui.row(R.drawable.ic_sparkles, "Show my acts when I copy", "Opens the acts in place of the keys, once per copy", ui.toggle(store.actsOnCopy) { store.actsOnCopy = it }),
+        ))
         val triggers = store.triggers
         if (triggers.isNotEmpty()) column.addView(ui.rows(*triggers.mapIndexed { i, t ->
             val what = Cards.KINDS.firstOrNull { it.first == t.kind }?.second ?: t.kind
@@ -163,7 +166,7 @@ class PageActivity : Activity() {
                 "When copied text has $condition" + if (missing) " · skill not found" else "", ui.chevron()) { editTrigger(i) }
         }.toTypedArray()))
         column.addView(ui.button("New auto action", R.drawable.ic_plus, filled = true) { editTrigger(-1) })
-        column.addView(ui.button("Reset to the three defaults", null) { store.triggers = Trigger.DEFAULTS; render() })
+        column.addView(ui.button("Reset to the defaults", null) { store.triggers = Trigger.DEFAULTS; render() })
     }
 
     private fun editTrigger(index: Int) {
@@ -179,7 +182,7 @@ class PageActivity : Activity() {
         val keyword = ui.field("Words to look for, separated by commas", existing?.keyword ?: "")
         form.addView(keyword)
         form.addView(ui.text("Run this skill", 13.5f, ui.muted).apply { setPadding(0, ui.dp(10), 0, 0) })
-        val names = (store.skills.map { it.name } + Trigger.BUILTIN.keys).distinct()
+        val names = (store.skills.map { it.name } + Trigger.BUILTIN.keys + Acts.BUILTIN.map { it.name }).distinct()
         val skill = android.widget.Spinner(this).apply {
             adapter = android.widget.ArrayAdapter(this@PageActivity, android.R.layout.simple_spinner_dropdown_item, names)
             setSelection(names.indexOf(existing?.skill ?: "Who is").coerceAtLeast(0))
