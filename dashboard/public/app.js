@@ -228,7 +228,7 @@ const TRIGGER_KINDS = [
   ['person', "a person's name"], ['time', 'a date or time'], ['place', 'a place or address'], ['link', 'a link'],
   ['email', 'an email address'], ['phone', 'a phone number'], ['foreign', 'another language'], ['keyword', 'words I choose'], ['any', 'anything'],
 ];
-const BUILTIN_TRIGGER_SKILLS = ['Who is', 'Save event', 'Place', 'Reply options', 'Schedule it', 'Understand any language', 'Save to Notion', 'Extract what matters', 'Explain simply', 'Fact check', 'Sound like a native'];
+const BUILTIN_TRIGGER_SKILLS = ['Who is', 'Save event', 'Place', 'Reply options', 'Schedule it', 'Understand any language', 'Save to Notion', 'Find anything', 'Extract what matters', 'Explain simply', 'Fact check', 'Sound like a native'];
 
 // Auto actions: copy a message on the phone, and the matching skill is offered (or run) by itself.
 function triggersCard() {
@@ -279,6 +279,40 @@ function factDialog(index) {
   });
 }
 
+// A chain runs several acts in order as one act. Stored as a skill: "Chain: step | step"; the phone expands each step.
+const isChain = (s) => s.instruction.startsWith('Chain:');
+const chainSteps = (s) => s.instruction.slice(6).split('|').map((x) => x.trim()).filter(Boolean);
+
+function chainDialog(index) {
+  const skills = state.config.skills;
+  const existing = skills[index];
+  const names = [...new Set([...skills.filter((s) => !isChain(s)).map((s) => s.name), ...BUILTIN_TRIGGER_SKILLS])];
+  const steps = existing ? chainSteps(existing) : [names[0], names[1]];
+  modal(existing ? 'Edit chain' : 'New chain', (close) => {
+    const name = h('input', { type: 'text', value: existing ? existing.name : '', placeholder: 'Trip planner' });
+    const list = h('div');
+    const draw = () => list.replaceChildren(...steps.map((st, i) => h('div', { class: 'row', style: 'margin:6px 0' },
+      h('span', { class: 'keycap' }, String(i + 1)),
+      select(names.includes(st) ? st : names[0], names.map((n) => [n, n]), (v) => { steps[i] = v; }, 'Step ' + (i + 1)),
+      steps.length > 2 && h('button', { class: 'btn ghost', onclick: () => { steps.splice(i, 1); draw(); } }, icon('x')))));
+    draw();
+    return h('div', null,
+      h('p', { class: 'muted' }, 'Runs each act in order, passing what one makes to the next. Events from any step are saved to the phone calendar.'),
+      h('label', { class: 'field' }, 'Name', name), list,
+      steps.length < 6 && h('button', { class: 'btn', style: 'margin-top:6px', onclick: () => { steps.push(names[0]); draw(); } }, icon('plus'), 'Add step'),
+      h('div', { class: 'actions' },
+        h('button', { class: 'btn primary', onclick: async () => {
+          if (!name.value.trim()) return toast('Give the chain a name');
+          const item = { emoji: '⛓️', name: name.value.trim(), instruction: 'Chain: ' + steps.join(' | '), category: 'write', key: existing ? existing.key : '' };
+          const next = skills.slice();
+          if (existing) next[index] = item; else next.push(item);
+          if (await saveSkills(next, null, 'Chain saved')) close();
+        } }, 'Save'),
+        h('button', { class: 'btn', onclick: close }, 'Cancel'),
+        existing && h('button', { class: 'btn ghost danger', onclick: async () => { if (await saveSkills(skills.filter((_, i) => i !== index), null, 'Chain removed')) close(); } }, 'Delete')));
+  });
+}
+
 function triggerDialog(index) {
   const list = state.config.triggers || [];
   const t = list[index] || { kind: 'person', keyword: '', skill: 'Who is', auto: false };
@@ -316,6 +350,7 @@ function skillsTab() {
       h('div', null, h('h1', null, 'My skills'), h('p', { class: 'muted sub' }, 'Each skill is one instruction your keyboard can apply to what you typed.')),
       h('div', { class: 'actions' },
         h('button', { class: 'btn', onclick: () => go('assistant') }, icon('sparkles'), 'Ask the assistant'),
+        h('button', { class: 'btn', onclick: () => chainDialog(-1) }, '⛓️ New chain'),
         h('button', { class: 'btn primary', onclick: () => skillDialog(-1) }, icon('plus'), 'New skill'))),
     h('div', { class: 'card' },
       h('h2', null, 'Hold keys'),
@@ -328,7 +363,7 @@ function skillsTab() {
     skills.length > 6 && h('input', { type: 'search', placeholder: 'Search my skills', value: state.search, 'aria-label': 'Search my skills',
       style: 'margin-top:16px', oninput: (e) => { state.search = e.target.value; renderKeepingFocus(e.target); } }),
     h('div', { class: 'grid', style: 'margin-top:16px' },
-      shown.map(([s, i]) => h('button', { class: 'card tile', onclick: () => skillDialog(i) },
+      shown.map(([s, i]) => h('button', { class: 'card tile', onclick: () => (isChain(s) ? chainDialog(i) : skillDialog(i)) },
         h('div', { class: 'top' }, h('div', { class: 'emoji' }, s.emoji || '✦'), h('h3', null, s.name), s.key && h('span', { class: 'keycap', title: `Hold ${s.key.toUpperCase()}` }, s.key.toUpperCase())),
         h('p', { class: 'muted clamp' }, s.instruction),
         h('div', { class: 'foot' },

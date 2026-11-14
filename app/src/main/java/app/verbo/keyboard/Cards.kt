@@ -169,11 +169,26 @@ object Acts {
         Act("📅", "Schedule it", "The text or the copied message describes an event (a meeting, a birthday, a reminder). Work out its title, date, time and place, using today's date for words like tomorrow; a birthday or holiday is a whole-day event. Reply with a short friendly message the user can send to invite someone, with the event details, then a final [[open:https://calendar.google.com/calendar/render?action=TEMPLATE&text=TITLE&dates=DATES&details=DETAILS&location=PLACE]] line, where DATES is YYYYMMDD/YYYYMMDD (end is the next day) for a whole-day event, otherwise local YYYYMMDDTHHMMSS/YYYYMMDDTHHMMSS, one hour long if no end is given.", false),
         Act("🌐", "Understand any language", "The copied message, or the text, may be in any language. Reply with: on the first line From LANGUAGE (the language it is written in); then what it says, translated naturally into English (into Hindi if the user's own text is in Hindi); then a last line starting Tone: with one short phrase on the tone and what the sender wants.", true),
         Act("📝", "Save to Notion", "Save the copied message, or the text, to the user's Notion. Find a page to save under with notion_search: prefer one called Inbox, Notes, Saved or Reading list, otherwise the most recently edited page. Create a page under it with notion_create_page whose title is a short summary of under eight words and whose content is the full copied text, then a line with a one-sentence summary. Reply with exactly two lines, the new page title and then Last edited: Just now, and end with [[open:NEW_PAGE_URL]]. If Notion is not connected, reply: Connect Notion in Verbo to save pages, and end with [[open:https://www.notion.so]].", true),
+        Act("🔎", "Find anything", "Search everything the user has connected for what the text or the copied message asks about: use gmail_search, notion_search, google_calendar_events, slack_search, github_search, linear_search_issues and todoist_list_tasks where you have them (try several if unsure), and the web only if nothing matches. Return a short title line, then up to five numbered lines, most relevant first, in exactly this form: 1. Title | - | Source (Gmail, Notion, Calendar, Slack...) | date or who | one short tag. If one result is clearly the answer, end with its link on a final [[open:URL]] line. If nothing is connected or found, say so in one line.", false),
         Act("🎯", "Extract what matters", "From the copied message or the text, pull out only what matters: decisions, dates and times, amounts, names and things the user must do. One short item per line, each starting with a dash. Nothing else.", true),
         Act("🧠", "Explain simply", "Explain the copied message, or the text, in plain words a 14-year-old would understand, in two to four short sentences. Keep names and numbers.", true),
         Act("✅", "Fact check", "Check the claims in the copied message, or the text, searching the web where needed. First line: True, False, Misleading or Unclear. Then one or two short lines with what is actually true and the source name.", true),
         Act("🗣️", "Sound like a native", "Rewrite the text so it sounds like a native speaker of its language wrote it: natural, idiomatic, same meaning and tone, similar length.", false),
     )
+
+    /** A chain is stored as a skill whose instruction is "Chain: step | step | step"; each step is an act's name or a plain instruction. */
+    fun isChain(instruction: String) = instruction.startsWith("Chain:")
+    fun chainSteps(instruction: String) = instruction.removePrefix("Chain:").split("|").map { it.trim() }.filter { it.isNotEmpty() }
+    fun chain(steps: List<String>) = "Chain: " + steps.joinToString(" | ")
+
+    /** The task for a chain, with each step's full instruction looked up by [lookup] (null: the step is its own instruction). */
+    fun chainTask(steps: List<String>, lookup: (String) -> String?): String {
+        val sb = StringBuilder("Task: do these steps in order for the user's text and the copied message, carrying what each step produces into the next. Use the tools you have for each step. ")
+        sb.append("A step that needs an app you have no tool for ends with that app's [[open:...]] link; calendar event links (https://calendar.google.com/calendar/render?action=TEMPLATE...) are saved for the user automatically, so give one for every event. ")
+        sb.append("Finish with the message the user should send, if a step wrote one, then one short line per step starting with ✓ saying what was done.")
+        steps.forEachIndexed { i, step -> sb.append("\nStep ${i + 1}: ").append(lookup(step)?.let { "$step. $it" } ?: step) }
+        return sb.toString()
+    }
 
     /** True when a skill works on a copied message rather than on what the user typed. */
     fun needsCopied(instruction: String) = Regex("""copied|the context|message the user received|they received|names a person""", RegexOption.IGNORE_CASE).containsMatchIn(instruction)
@@ -198,6 +213,7 @@ object Acts {
         if (Cards.matches("time", "", text)) out += "Schedule it"
         if (Cards.matches("link", "", text)) out += "Save to Notion"
         if (Cards.personName(text) != null) out += "Who is"
+        if (Regex("""^\s*(find|search|where is|look for|dhoondo|kahan)\b""", RegexOption.IGNORE_CASE).containsMatchIn(text)) out.add(0, "Find anything")
         return out
     }
 }

@@ -596,6 +596,12 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         if (contextText == null && hasFreshClip()) readClip()?.let { contextText = it }
         refreshContext()
         val schedule = name.equals("Schedule it", true)
+        if (Acts.isChain(skill.instruction)) {
+            val steps = Acts.chainSteps(skill.instruction)
+            val task = Acts.chainTask(steps) { step -> actSkill(step)?.takeIf { !Acts.isChain(it.instruction) }?.instruction }
+            runTask("${skill.name}…", task, card = true, retry = { runAct(name) }, then = { r -> finishChain(r) })
+            return
+        }
         runTask("${skill.name}…", Ai.skillTask(skill.instruction), card = true, retry = { runAct(name) }, then = { r ->
             val event = r.openUri?.let { PhoneCalendar.parseTemplate(it) }
             if (schedule && event != null) {
@@ -607,6 +613,17 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
                 r.copy(text = r.text + "\nAdd it to your calendar: " + r.openUri)
             } else r
         })
+    }
+
+    /** After a chain: every calendar link becomes a saved event; the last other link stays as the button. */
+    private fun finishChain(r: ActionResult): ActionResult {
+        val events = r.links.mapNotNull { PhoneCalendar.parseTemplate(it) }
+        if (events.isNotEmpty() && PhoneCalendar.allowed(this)) worker.execute {
+            val saved = events.count { e -> runCatching { PhoneCalendar.save(this, e) }.isSuccess }
+            main.post { android.widget.Toast.makeText(this, "Saved $saved event${if (saved == 1) "" else "s"} to your calendar", android.widget.Toast.LENGTH_SHORT).show() }
+        }
+        val other = r.links.lastOrNull { PhoneCalendar.parseTemplate(it) == null }
+        return r.copy(openUri = other ?: if (PhoneCalendar.allowed(this)) null else r.links.firstOrNull())
     }
 
     /** The acts, in place of the keys: the copied text on top, then every act as a card. "Type" goes back to the keys. */
@@ -655,7 +672,8 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
                         ellipsize = TextUtils.TruncateAt.END
                     })
                     addView(TextView(this@VerboIme).apply {
-                        text = when { name in fits -> "Fits this text"; name == "Ask AI" -> "Needs text input"; copiedNeeded -> "Needs copied text"; else -> "Needs text input" }
+                        val chain = skills.firstOrNull { it.name == name }?.instruction?.takeIf { Acts.isChain(it) }
+                        text = when { name in fits -> "Fits this text"; chain != null -> "Chain · ${Acts.chainSteps(chain).size} steps"; name == "Ask AI" -> "Needs text input"; copiedNeeded -> "Needs copied text"; else -> "Needs text input" }
                         setTextColor(if (name in fits || copiedNeeded) p.accent else p.muted)
                         setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
                         setPadding(0, dp(3), 0, 0)
@@ -975,6 +993,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
 
     private fun runAction(skill: Skill?) {
         if (skill == null && rememberCommand()) return
+        if (skill != null && Acts.isChain(skill.instruction)) { runAct(skill.name); return }
         // Requests typed for the bar are answers to look at first, so they open as a card with Copy and Insert.
         // Skill keys rewrite your own text, so they apply straight away unless Agent Mode is "Ask first".
         runTask(

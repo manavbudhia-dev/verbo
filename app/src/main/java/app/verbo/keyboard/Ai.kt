@@ -22,7 +22,7 @@ import java.time.Duration
 /** What the keyboard should do with a finished action. */
 /** [map] is a latitude/longitude to preview when the result is one specific place. */
 /** [autoOpen]: the link should open at once ("[[go:...]]"), with the text only describing what was opened. */
-data class ActionResult(val text: String, val openUri: String?, val map: Pair<Double, Double>? = null, val autoOpen: Boolean = false)
+data class ActionResult(val text: String, val openUri: String?, val map: Pair<Double, Double>? = null, val autoOpen: Boolean = false, val links: List<String> = emptyList())
 
 class AiException(message: String) : Exception(message)
 
@@ -256,7 +256,8 @@ INSTRUCTION: the instruction the assistant will follow each time, in two to four
         }
         val text = raw.replace(OPEN, "").replace(MAP, "").trim()
         if (text.isEmpty() && uri == null) throw AiException("Got an empty answer. Try again")
-        return ActionResult(text, uri, map, autoOpen = uri != null && link.groupValues[1] == "go")
+        val links = OPEN.findAll(raw).map { it.groupValues[2] }.filter { u -> ALLOWED.any { u.startsWith(it, ignoreCase = true) } }.toList()
+        return ActionResult(text, uri, map, autoOpen = uri != null && link.groupValues[1] == "go", links = links)
     }
 
     /** A person looked up by the "Who is" skill: name, headline, labelled facts and a LinkedIn link. */

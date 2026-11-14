@@ -210,7 +210,49 @@ class PageActivity : Activity() {
                 "When copied text has $condition" + if (missing) " · skill not found" else "", ui.chevron()) { editTrigger(i) }
         }.toTypedArray()))
         column.addView(ui.button("New auto action", R.drawable.ic_plus, filled = true) { editTrigger(-1) })
+        column.addView(ui.text("\nChains", 16f, bold = true).apply { setPadding(ui.dp(2), ui.dp(10), 0, ui.dp(6)) })
+        note(column, "A chain runs several acts one after another, as one act: for example Schedule it → Save to Notion → Reply options. Chains appear with your acts and can be used by an auto action.")
+        val chains = store.skills.withIndex().filter { Acts.isChain(it.value.instruction) }
+        if (chains.isNotEmpty()) column.addView(ui.rows(*chains.map { (i, sk) ->
+            ui.row(R.drawable.ic_zap, sk.name, Acts.chainSteps(sk.instruction).joinToString(" → "), ui.chevron()) { editChain(i) }
+        }.toTypedArray()))
+        column.addView(ui.button("New chain", R.drawable.ic_plus) { editChain(-1) })
         column.addView(ui.button("Reset to the defaults", null) { store.triggers = Trigger.DEFAULTS; render() })
+    }
+
+    private fun editChain(index: Int) {
+        val skills = store.skills.toMutableList()
+        val existing = skills.getOrNull(index)
+        val names = (skills.filter { !Acts.isChain(it.instruction) }.map { it.name } + Acts.BUILTIN.map { it.name }).distinct()
+        val order = existing?.let { Acts.chainSteps(it.instruction).filter { s -> s in names }.toMutableList() } ?: mutableListOf()
+        val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(ui.dp(22), ui.dp(8), ui.dp(22), 0) }
+        val name = ui.field("Chain name, e.g. Trip planner", existing?.name ?: "")
+        form.addView(name)
+        val shown = ui.text("", 13.5f, ui.muted).apply { setPadding(0, ui.dp(8), 0, ui.dp(4)) }
+        fun refresh() { shown.text = if (order.isEmpty()) "Tick acts in the order they should run" else order.joinToString(" → ") }
+        refresh()
+        form.addView(shown)
+        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        names.forEach { n ->
+            list.addView(android.widget.CheckBox(this).apply {
+                text = n
+                isChecked = n in order
+                setOnCheckedChangeListener { _, on -> if (on) order.add(n) else order.remove(n); refresh() }
+            })
+        }
+        form.addView(android.widget.ScrollView(this).apply { addView(list) }, LinearLayout.LayoutParams(-1, ui.dp(260)))
+        val dialog = AlertDialog.Builder(this).setTitle(if (existing == null) "New chain" else "Edit chain").setView(form)
+            .setPositiveButton("Save") { _, _ ->
+                val n = name.text.toString().trim().take(40)
+                if (n.isEmpty() || order.size < 2) { ui.toast("Give it a name and at least two steps"); return@setPositiveButton }
+                val sk = Skill("⛓️", n, Acts.chain(order), "write", existing?.key ?: "")
+                if (existing == null) skills.add(sk) else skills[index] = sk
+                store.skills = skills
+                render()
+            }
+            .setNegativeButton("Cancel", null)
+        if (existing != null) dialog.setNeutralButton("Delete") { _, _ -> skills.removeAt(index); store.skills = skills; render() }
+        dialog.show()
     }
 
     private fun editTrigger(index: Int) {

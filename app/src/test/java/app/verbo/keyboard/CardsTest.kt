@@ -72,4 +72,18 @@ class CardsTest {
         assertTrue(Acts.needsCopied(Acts.BUILTIN.first { it.name == "Save to Notion" }.instruction))
         assertTrue(Cards.matches("foreign", "", "Привет, как дела у тебя сегодня?"))
     }
+
+    @Test
+    fun chainsAndFind() {
+        val c = Acts.chain(listOf("Schedule it", "Reply options", "Tell them I will bring cake"))
+        assertTrue(Acts.isChain(c))
+        assertEquals(listOf("Schedule it", "Reply options", "Tell them I will bring cake"), Acts.chainSteps(c))
+        val task = Acts.chainTask(Acts.chainSteps(c)) { if (it == "Schedule it") "Make an event." else null }
+        assertTrue(task.contains("Step 1: Schedule it. Make an event."))
+        assertTrue(task.contains("Step 3: Tell them I will bring cake"))
+        assertEquals("Find anything", Acts.forContext("find the invoice Asha sent").first())
+        val r = Ai.parse("Done\n[[open:https://calendar.google.com/calendar/render?action=TEMPLATE&text=A&dates=20261120/20261121]]\n[[open:https://wa.me/?text=hi]]")
+        assertEquals(2, r.links.size)
+        assertEquals("https://wa.me/?text=hi", r.openUri)
+    }
 }
