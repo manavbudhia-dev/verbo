@@ -155,7 +155,13 @@ class PageActivity : Activity() {
             ui.row(R.drawable.ic_sun, "Weather", "Forecasts from Open-Meteo, no account", ui.toggle(store.weather) { store.weather = it }),
             ui.row(R.drawable.ic_globe, "Places and maps", "Finds addresses and shows a map, from OpenStreetMap", ui.toggle(store.places) { store.places = it }),
         ))
-        column.addView(ui.rows(ui.row(R.drawable.ic_pencil_line, "Gmail", "Writes the email and opens it as a ready draft in Gmail. No sign-in needed. Reading your inbox is not available yet", ui.icon(R.drawable.ic_check, 20, Color.parseColor("#4ADE80")))))
+        val ready = { ui.icon(R.drawable.ic_check, 20, Color.parseColor("#4ADE80")) }
+        column.addView(ui.rows(
+            ui.row(R.drawable.ic_pencil_line, "Gmail and Outlook", "Writes the email and opens it as a ready draft. No sign-in needed", ready()),
+            ui.row(R.drawable.ic_pencil_line, "LinkedIn", "Writes a post and opens LinkedIn with it filled in. \"Who is\" finds people", ready()),
+            ui.row(R.drawable.ic_pencil_line, "WhatsApp and Telegram", "Writes the message and opens the app to pick a chat", ready()),
+            ui.row(R.drawable.ic_list, "Calendar, YouTube and X", "Opens an event, a search or a post with your text filled in", ready()),
+        ))
         val meetState = when {
             store.googleConnected -> "Connected through your dashboard. The Meeting link shortcut makes a real Google Meet link"
             store.deviceToken.isEmpty() -> "Needs the web dashboard: pair this keyboard, then connect Google there. Until then the shortcut offers an instant no-account link"
@@ -170,6 +176,12 @@ class PageActivity : Activity() {
             ui.row(R.drawable.ic_list, "Calendly", if (store.calendlyToken.isEmpty()) "Not connected" else "Connected", ui.chevron()) {
                 editToken("Calendly", "Paste a personal access token from Calendly → Integrations → API & webhooks.", store.calendlyToken) { store.calendlyToken = it }
             },
+            *TOKEN_APPS.map { (field, title, help) ->
+                val token = store.token(field)
+                ui.row(R.drawable.ic_square_terminal, title, if (token.isEmpty()) "Not connected" else "Connected", ui.chevron()) {
+                    editToken(title, help, token) { store.setToken(field, it) }
+                }
+            }.toTypedArray(),
         ))
         store.customApis.forEachIndexed { index, api ->
             column.addView(ui.rows(ui.row(R.drawable.ic_plug, api.name, api.description.ifBlank { api.url }, ui.chevron()) { editApi(index) }))
@@ -826,7 +838,7 @@ class PageActivity : Activity() {
             }
             column.addView(box)
         }
-        note(column, "\nNotion and Calendly need a token under Automate. Gmail, WhatsApp, Calendar, Maps, YouTube and X open the app with a draft, so nothing is sent until you press send there.")
+        note(column, "\nNotion, Calendly, Slack, GitHub, Todoist, Linear and Discord need a token under Automate. Gmail, LinkedIn, WhatsApp, Telegram, Outlook, Calendar, Maps, YouTube and X open the app with a draft, so nothing is sent until you press send there.")
     }
 
     // ---------- try it ----------
@@ -841,5 +853,16 @@ class PageActivity : Activity() {
             setSelection(text.length)
         })
         column.addView(box)
+    }
+
+    private companion object {
+        /** Token apps beyond Notion and Calendly: dashboard field, name, where to get the token. */
+        val TOKEN_APPS = listOf(
+            Triple("slackToken", "Slack", "Create an app at api.slack.com/apps with the user scopes channels:read, groups:read, channels:history, groups:history, chat:write and search:read, install it, and paste the User OAuth Token (xoxp-…)."),
+            Triple("githubToken", "GitHub", "Create a fine-grained token at github.com/settings/personal-access-tokens with read and write access to Issues, and paste it here."),
+            Triple("todoistToken", "Todoist", "In Todoist open Settings → Integrations → Developer and copy your API token."),
+            Triple("linearToken", "Linear", "In Linear open Settings → Security & access → Personal API keys and create a key."),
+            Triple("discordWebhook", "Discord", "In Discord open a channel's settings → Integrations → Webhooks → New Webhook, and paste its webhook URL."),
+        )
     }
 }

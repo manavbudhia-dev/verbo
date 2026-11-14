@@ -151,4 +151,16 @@ class SyncTest {
         assertEquals("custom", remote.getString("provider"))
         assertEquals("sk-gw-local-2468", store.customKey)
     }
+
+    @Test
+    fun appTokensSyncBothWays() {
+        remote.put("slackToken", "xoxp-from-dashboard")
+        Sync.pull(store)
+        assertEquals("xoxp-from-dashboard", store.token("slackToken"))
+        assertTrue(store.tools().any { it.name == "slack_send_message" })
+        store.setToken("todoistToken", "todo-phone-1111")
+        Sync.pull(store)
+        assertEquals("todo-phone-1111", remote.getString("todoistToken"))
+        assertEquals("todo-phone-1111", store.token("todoistToken"))
+    }
 }

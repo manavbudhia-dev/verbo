@@ -43,6 +43,9 @@ main { min-width: 0; }
 .tile.dashed { border-style: dashed; box-shadow: none; background: none; align-items: center; justify-content: center; color: var(--muted); min-height: 120px; }
 .tile .top { display: flex; align-items: center; gap: 12px; }
 .tile .top h3 { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile.conn .top h3 { white-space: normal; overflow-wrap: anywhere; }
+h2.section { margin: 30px 0 2px; font-size: 1.05rem; }
+.section-sub { margin: 0 0 12px; }
 .emoji { width: 42px; height: 42px; border-radius: 12px; background: var(--soft); display: grid; place-items: center; font-size: 1.25rem; flex: none; color: var(--accent); }
 .clamp { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .foot { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: auto; }

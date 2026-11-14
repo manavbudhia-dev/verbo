@@ -57,13 +57,15 @@ const DEFAULT_SKILLS = [
   ['📍', 'Place', 'The text names a place. Find it with the place search and return its name, address and a Google Maps link, with the map marker line.', 'write', 'l'],
   ['👤', 'Who is', 'The text or the context names a person. Look them up on the web and reply with one item per line: their full name; a one-line headline with their role and organisation; then Current: their current role, Previous: their previous role, Education: where they studied; and last a LinkedIn people search link, https://www.linkedin.com/search/results/people/?keywords= followed by the name with spaces written as %20. Leave out any line you cannot verify. If you cannot tell who they are, say so in one line instead of guessing.', 'write', 'w'],
   ['🗒️', 'Notion', "Search the user's Notion for the page the text describes and return its title and link. If Notion is not connected, say so in one line.", 'write', 'n'],
+  ['📧', 'Email', 'Turn the text into a clear email with a short subject. Return the email text, then a final [[open:mailto:?subject=...&body=...]] line with both URL-encoded so it opens as a ready draft in Gmail.', 'write'],
+  ['💼', 'LinkedIn post', 'Turn the text into a LinkedIn post: a strong first line, short paragraphs, no more than three hashtags at the end. Return the post, then a final [[open:https://www.linkedin.com/feed/?shareActive=true&text=...]] line with the post URL-encoded.', 'write'],
   ['📋', 'List', "Turn the text into a tidy list, one item per line, each starting with a dash. Keep the user's wording where you can.", 'edit'],
 ].map(([emoji, name, instruction, category, key = '']) => ({ emoji, name, instruction, category, key }));
 
 const defaultConfig = () => ({
   apiKey: '', model: MODELS[0], provider: 'anthropic', openaiKey: '', openaiModel: 'gpt-5.5',
   customBase: 'https://api.airouter.in/v1', customKey: '', customModel: 'anthropic/claude-haiku-5.5', webSearch: true, weather: true,
-  notionToken: '', calendlyToken: '', customApis: [], skills: DEFAULT_SKILLS, googleRefresh: '',
+  notionToken: '', calendlyToken: '', slackToken: '', githubToken: '', todoistToken: '', linearToken: '', discordWebhook: '', customApis: [], skills: DEFAULT_SKILLS, googleRefresh: '',
   keyboard: {}, // the phone's own settings (look, sound, wheel...), kept here so they can be changed from the web
 });
 
@@ -113,6 +115,9 @@ function saveConfig(userId, config) {
   return updated;
 }
 
+// Tokens for apps the keyboard can act in. Kept on the server and synced to paired phones, which make the calls.
+const APP_TOKENS = ['notionToken', 'calendlyToken', 'slackToken', 'githubToken', 'todoistToken', 'linearToken', 'discordWebhook'];
+
 // What the browser gets: secrets are never sent back, only whether they are set.
 const hint = (secret) => (secret && secret.length >= 8 ? secret.slice(-4) : '');
 
@@ -160,6 +165,7 @@ function publicConfig(config) {
     // The last four characters, so a saved key can be recognised without ever being shown.
     apiKeyHint: hint(config.apiKey), openaiKeyHint: hint(config.openaiKey), customKeyHint: hint(config.customKey),
     apiKeySet: !!config.apiKey, notionSet: !!config.notionToken, calendlySet: !!config.calendlyToken,
+    appsSet: Object.fromEntries(APP_TOKENS.map((t) => [t, !!config[t]])),
     customApis: config.customApis.map(({ headerValue, ...rest }) => ({ ...rest, headerValueSet: !!headerValue })),
   };
 }
@@ -203,8 +209,11 @@ function applyUpdate(config, body) {
   }
   if ('keyboard' in body) next.keyboard = { ...config.keyboard, ...cleanKeyboard(body.keyboard) };
   for (const flag of ['webSearch', 'weather']) if (flag in body) next[flag] = body[flag] === true;
-  for (const secret of ['apiKey', 'openaiKey', 'customKey', 'notionToken', 'calendlyToken']) {
+  for (const secret of ['apiKey', 'openaiKey', 'customKey', ...APP_TOKENS]) {
     if (typeof body[secret] === 'string') next[secret] = str(body[secret], 500, 'Token');
+  }
+  if (next.discordWebhook && next.discordWebhook !== config.discordWebhook && !/^https:\/\/(discord|discordapp)\.com\/api\/webhooks\/\d+\/[\w-]+$/.test(next.discordWebhook)) {
+    throw new Bad(400, 'Paste the whole webhook address, starting https://discord.com/api/webhooks/');
   }
   if ('skills' in body) {
     if (!Array.isArray(body.skills) || body.skills.length > 60) throw new Bad(400, 'Too many skills');
@@ -511,7 +520,8 @@ function chatSystem(config) {
 
 How Verbo works:
 - A skill is one saved instruction applied to the text in the field (or to a copied message). It appears as a key above the keyboard, can be bound to a letter (hold that letter to run it), and can be put on the wheel (hold the space bar, slide, release). The wheel holds six shortcuts.
-- Skills can use connected tools during an action: web search, place search with maps, weather, Notion (token), Calendly (token), Google Meet links (Google sign-in), and the user's own HTTPS APIs. Gmail, WhatsApp, Calendar, Maps, YouTube and X need no connection: a skill opens them with a draft filled in.
+- Skills can use connected tools during an action: web search, place search with maps, weather, Google Meet links (Google sign-in), the user's own HTTPS APIs, and these apps once a token is pasted under Connections: Notion (search, read, create pages), Calendly (booking links), Slack (list channels, read, send, search messages), GitHub (repos, search and create issues), Todoist (list and add tasks), Linear (search and create issues), Discord (send to a channel through a webhook).
+- Gmail, LinkedIn, WhatsApp, Telegram, Outlook, Google Calendar, Maps, YouTube and X need no connection: a skill writes the text and opens the app with a draft or post filled in, and the user presses send there. Reading the Gmail inbox or LinkedIn profiles is not available.
 - Connections, the AI model and API key, and keyboard settings each have a page in this dashboard.
 
 This user right now:
@@ -519,7 +529,7 @@ Skills:
 ${skills}
 Hold keys in use: ${usedKeys}
 Wheel: ${kb.wheel.map((id) => id.replace('skill:', '')).join(', ')}
-Connected: Notion ${config.notionToken ? 'yes' : 'no'}, Calendly ${config.calendlyToken ? 'yes' : 'no'}, Google Meet ${config.googleRefresh ? 'yes' : 'no'}, custom APIs ${config.customApis.length}
+Connected: ${APP_TOKENS.map((t) => `${t.replace(/Token$|Webhook$/, '')} ${config[t] ? 'yes' : 'no'}`).join(', ')}, Google Meet ${config.googleRefresh ? 'yes' : 'no'}, custom APIs ${config.customApis.length}
 AI key saved: ${hasKey ? 'yes' : 'no'}
 
 Reply with one JSON object and nothing else: {"reply": "...", "actions": [...]}.

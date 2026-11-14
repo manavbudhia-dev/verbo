@@ -71,6 +71,15 @@ function request(method, url, body, headers = {}) {
     })());
     check('an unpaired caller cannot upload', (await request('PUT', '/api/device/config', { weather: true })).status === 401);
 
+    // App tokens (Slack and friends): saved on the web, shown only as connected, delivered to the phone.
+    const apps = await request('PUT', '/api/config', { slackToken: 'xoxp-1-secret', todoistToken: 'todo-secret' }, web);
+    check('app tokens show as connected, never the token', apps.body.appsSet.slackToken === true && apps.body.appsSet.githubToken === false && !JSON.stringify(apps.body).includes('xoxp-1-secret'));
+    const phoneApps = (await request('GET', '/api/device/config', null, phone)).body;
+    check('the phone receives app tokens', phoneApps.slackToken === 'xoxp-1-secret' && phoneApps.todoistToken === 'todo-secret');
+    check('a Discord webhook must be a Discord address', (await request('PUT', '/api/config', { discordWebhook: 'https://evil.example/hook' }, web)).status === 400
+      && (await request('PUT', '/api/config', { discordWebhook: 'https://discord.com/api/webhooks/123/abc-DEF_9' }, web)).body.appsSet.discordWebhook === true);
+    check('an app token can be removed', (await request('PUT', '/api/config', { slackToken: '' }, web)).body.appsSet.slackToken === false);
+
     // The assistant.
     check('chat needs a signed-in user', (await request('POST', '/api/chat', { messages: [{ role: 'user', content: 'hi' }] })).status === 401);
     nextReply = 'Sure! {"reply": "Here is a skill that turns your text into emoji.", "actions": [{"type": "create_skill", "name": "Emoji Translator", "emoji": "😀", "does": "Turns text into emoji", "instruction": "Replace the text with emoji.", "group": "edit", "key": "E", "wheel": true}, {"type": "delete_everything"}, {"type": "open", "page": "connections", "label": "Connect Notion", "why": "Needs a token"}, {"type": "bind_key", "skill": "Polish", "key": "pp"}]}';

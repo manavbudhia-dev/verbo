@@ -417,30 +417,92 @@ function apiDialog(index) {
   });
 }
 
-function connection(iconName, title, about, status, control) {
-  return h('div', { class: 'card tile', style: 'cursor:default' },
+function connection(iconName, title, about, status, ...controls) {
+  return h('div', { class: 'card tile conn', style: 'cursor:default' },
     h('div', { class: 'top' }, h('div', { class: 'emoji' }, icon(iconName)), h('h3', null, title), status),
     h('p', { class: 'muted' }, about),
-    h('div', { class: 'foot' }, control));
+    h('div', { class: 'foot' }, controls));
+}
+
+// Apps a skill opens with the text already filled in. Nothing to connect; the user presses send in the app.
+const LINK_APPS = [
+  ['mail', 'Gmail', 'Writes the email and opens it as a ready draft in Gmail.',
+    ['📧', 'Email', 'Turn the text into a clear email with a short subject. Return the email text, then a final [[open:mailto:?subject=...&body=...]] line with both URL-encoded so it opens as a ready draft in Gmail.', 'write']],
+  ['briefcase', 'LinkedIn', 'Writes a post and opens LinkedIn with it filled in. The “Who is” skill finds people.',
+    ['💼', 'LinkedIn post', 'Turn the text into a LinkedIn post: a strong first line, short paragraphs, no more than three hashtags at the end. Return the post, then a final [[open:https://www.linkedin.com/feed/?shareActive=true&text=...]] line with the post URL-encoded.', 'write']],
+  ['message_circle', 'WhatsApp', 'Writes the message and opens WhatsApp to pick a chat.',
+    ['🟢', 'WhatsApp', 'Write the message the user wants to send. Return it, then a final [[open:https://wa.me/?text=...]] line with the message URL-encoded (use wa.me/NUMBER if they gave a number with country code).', 'write']],
+  ['send', 'Telegram', 'Writes the message and opens Telegram to share it.',
+    ['✈️', 'Telegram', 'Write the message the user wants to send. Return it, then a final [[open:https://t.me/share/url?url=%20&text=...]] line with the message URL-encoded.', 'write']],
+  ['inbox', 'Outlook', 'Writes the email and opens an Outlook draft.',
+    ['📨', 'Outlook email', 'Turn the text into a clear work email with a subject. Return it, then a final [[open:https://outlook.office.com/mail/deeplink/compose?subject=...&body=...]] line with both URL-encoded.', 'write']],
+  ['calendar', 'Google Calendar', 'Turns “lunch with Sam Friday 1pm” into an event ready to save.',
+    ['📅', 'Calendar event', 'The text describes an event. Work out the title, date, time and place, and return one line describing it, then a final [[open:https://calendar.google.com/calendar/render?action=TEMPLATE&text=...&dates=YYYYMMDDTHHMMSS/YYYYMMDDTHHMMSS&location=...]] line. Assume one hour if no end time is given.', 'write']],
+  ['map_pin', 'Google Maps', 'Finds places and adds a Maps link and a small map. Try the “Place” skill.', null],
+  ['play', 'YouTube', 'Opens a YouTube search for what you describe.',
+    ['▶️', 'YouTube', 'Work out what the user wants to watch. Return one short line, then a final [[open:https://www.youtube.com/results?search_query=...]] line.', 'write']],
+  ['at_sign', 'X', 'Writes a post under 280 characters and opens X with it.',
+    ['𝕏', 'Post on X', 'Turn the text into a post under 280 characters. Return it, then a final [[open:https://x.com/intent/post?text=...]] line with the post URL-encoded.', 'write']],
+];
+
+// Apps that need a token. Paired phones get the token on sync and call the app's own API during an action.
+const TOKEN_APPS = [
+  ['hash', 'Slack', 'slackToken', 'List channels, read and send messages, search.',
+    'At api.slack.com/apps create an app, add the user token scopes channels:read, groups:read, channels:history, groups:history, chat:write and search:read, install it to your workspace, and paste the User OAuth Token (it starts with xoxp-).',
+    ['💬', 'Slack', 'Use the Slack tools. If the text asks to send or post something, send it to the channel it names (find it with slack_list_channels) and say in one line where it went. Otherwise search or read Slack and answer briefly.', 'write']],
+  ['notebook_text', 'Notion', 'notionToken', 'Search, read and create pages.',
+    'Create an internal integration at notion.so/my-integrations, paste its token here, and share the pages you want with that integration.', null],
+  ['git_branch', 'GitHub', 'githubToken', 'Your repos, search issues and pull requests, open new issues.',
+    'At github.com/settings/personal-access-tokens create a fine-grained token with read and write access to Issues for the repos you want, and paste it here.',
+    ['🐙', 'GitHub issue', 'Turn the text into a GitHub issue with a clear title and a short body. Create it with github_create_issue in the repo the user names (use github_my_repos to find it) and return the issue link.', 'write']],
+  ['list_checks', 'Todoist', 'todoistToken', 'Add tasks with due dates and see what is due.',
+    'In Todoist open Settings → Integrations → Developer and copy your API token.',
+    ['✅', 'Add task', 'Add each task in the text to Todoist with todoist_add_task, with a due date in words if one is mentioned (like "tomorrow 5pm"). Reply with one line listing what was added.', 'write']],
+  ['square_kanban', 'Linear', 'linearToken', 'Search issues and create new ones.',
+    'In Linear open Settings → Security & access → Personal API keys, create a key and paste it here.',
+    ['📐', 'Linear issue', 'Turn the text into a Linear issue with a clear title and description, create it with linear_create_issue, and return its identifier and link.', 'write']],
+  ['message_square', 'Discord', 'discordWebhook', 'Post messages to a channel.',
+    'In Discord open the channel settings → Integrations → Webhooks → New Webhook, then Copy Webhook URL and paste it here.',
+    ['🎮', 'Discord', 'Write the message the user wants posted, send it with discord_send_message, and say in one line that it was posted.', 'write']],
+  ['calendar', 'Calendly', 'calendlyToken', 'Drop your booking links into a message.',
+    'In Calendly open Integrations → API & webhooks and create a personal access token.',
+    ['🗓️', 'Booking link', 'Write a short friendly line offering a meeting and add the matching Calendly booking link from calendly_scheduling_links.', 'write']],
+];
+
+// One click puts a ready-made skill for the app on the keyboard.
+function skillButton(template) {
+  if (!template) return null;
+  const [emoji, name, instruction, category] = template;
+  const has = state.config.skills.some((s) => s.name.toLowerCase() === name.toLowerCase());
+  return h('button', { class: 'btn ghost', disabled: has, onclick: () => saveSkills([...state.config.skills, { emoji, name, instruction, category }], null, `“${name}” added to your skills`) },
+    has ? icon('check') : icon('plus'), has ? `${name} skill added` : `Add ${name} skill`);
 }
 
 function connectionsTab() {
   const c = state.config;
+  const set = c.appsSet || {};
   const pill = (on, yes = 'Connected', no = 'Not connected') => h('span', { class: 'pill' + (on ? ' ok' : ' off') }, on ? yes : no);
   return [
     h('div', { class: 'head' }, h('div', null, h('h1', null, 'Connections'),
-      h('p', { class: 'muted sub' }, 'Apps and services your skills can use. Gmail, WhatsApp, Calendar, Maps, YouTube and X need nothing here: skills open them with a draft.'))),
+      h('p', { class: 'muted sub' }, 'Apps your skills can use. Run a skill from the keyboard and it writes the text, then opens the app or does the job there.'))),
+    h('h2', { class: 'section' }, 'Ready to use'),
+    h('p', { class: 'muted small section-sub' }, 'Nothing to connect. The skill opens the app with your text filled in, and nothing is sent until you press send there.'),
     h('div', { class: 'grid' },
+      LINK_APPS.map(([ic, title, about, template]) => connection(ic, title, about, pill(true, 'Ready'), skillButton(template)))),
+    h('h2', { class: 'section' }, 'Connect your accounts'),
+    h('p', { class: 'muted small section-sub' }, 'Paste a token once. Paired phones pick it up on the next sync, and skills can then read and act in the app for you.'),
+    h('div', { class: 'grid' },
+      TOKEN_APPS.map(([ic, title, field, about, help, template]) => connection(ic, title, about, pill(set[field]),
+        h('button', { class: 'btn' + (set[field] ? '' : ' primary'), onclick: () => tokenDialog(title, help, field, set[field]) }, set[field] ? 'Manage' : 'Connect'),
+        set[field] && skillButton(template))),
       connection('video', 'Google Meet', 'One-tap meeting links from the keyboard.', c.googleAvailable ? pill(c.googleConnected) : h('span', { class: 'pill off' }, 'Not set up'),
         !c.googleAvailable ? h('p', { class: 'muted small' }, 'This server has no Google client yet. See “Google Meet” in the dashboard README.')
           : c.googleConnected ? h('button', { class: 'btn ghost danger', onclick: async () => {
             try { state.config = await api('POST', '/api/google/disconnect'); toast('Google disconnected'); render(); } catch (e) { toast(e.message); }
           } }, 'Disconnect')
-            : h('button', { class: 'btn primary', onclick: () => { location.href = '/api/google/start'; } }, 'Connect Google')),
-      connection('notebook_text', 'Notion', 'Search, read and create pages.', pill(c.notionSet),
-        h('button', { class: 'btn', onclick: () => tokenDialog('Notion', 'Create an internal integration at notion.so/my-integrations, paste its token here, and share the pages you want with that integration.', 'notionToken', c.notionSet) }, c.notionSet ? 'Manage' : 'Connect')),
-      connection('calendar', 'Calendly', 'Drop your booking links into a message.', pill(c.calendlySet),
-        h('button', { class: 'btn', onclick: () => tokenDialog('Calendly', 'In Calendly open Integrations → API & webhooks and create a personal access token.', 'calendlyToken', c.calendlySet) }, c.calendlySet ? 'Manage' : 'Connect')),
+            : h('button', { class: 'btn primary', onclick: () => { location.href = '/api/google/start'; } }, 'Connect Google'))),
+    h('h2', { class: 'section' }, 'Built in, and your own APIs'),
+    h('div', { class: 'grid' },
       connection('globe', 'Web search', 'Lets skills look up fresh facts. Works with a Claude or OpenAI key, not through a gateway.', pill(c.webSearch, 'On', 'Off'),
         toggle(c.webSearch, (v) => save({ webSearch: v }), 'Web search')),
       connection('cloud_sun', 'Weather', 'Forecasts from Open-Meteo. No account needed.', pill(c.weather, 'On', 'Off'),

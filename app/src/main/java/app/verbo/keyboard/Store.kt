@@ -140,6 +140,7 @@ class Store(context: Context) {
     fun fieldValue(field: String): Any = when (field) {
         "apiKey" -> apiKey; "openaiKey" -> openaiKey; "customKey" -> customKey
         "notionToken" -> notionToken; "calendlyToken" -> calendlyToken
+        in APP_TOKENS -> token(field)
         "model" -> model; "provider" -> provider; "openaiModel" -> openaiModel
         "customBase" -> customBase; "customModel" -> customModel
         "webSearch" -> webSearch; "weather" -> weather
@@ -195,6 +196,7 @@ class Store(context: Context) {
         b("weather", "weather", o.optBoolean("weather", true))
         s("notionToken", "notion_token", o.optString("notionToken"))
         s("calendlyToken", "calendly_token", o.optString("calendlyToken"))
+        for ((field, pref) in APP_TOKENS) s(field, pref, o.optString(field))
         o.optJSONArray("customApis")?.let { s("customApis", "custom_apis", it.toString()) }
         o.optJSONArray("skills")?.let { s("skills", "skills", it.toString()) }
         o.optJSONObject("keyboard")?.let { applyKeyboard(e, it, keep) }
@@ -244,6 +246,9 @@ class Store(context: Context) {
     var weather: Boolean get() = bool("weather", true); set(v) = put("weather", v)
     var notionToken: String get() = str("notion_token"); set(v) = put("notion_token", v.trim())
     var calendlyToken: String get() = str("calendly_token"); set(v) = put("calendly_token", v.trim())
+    /** Slack, GitHub, Todoist, Linear and Discord, by dashboard field name (see [APP_TOKENS]). */
+    fun token(field: String): String = APP_TOKENS[field]?.let { str(it) } ?: ""
+    fun setToken(field: String, value: String) { APP_TOKENS[field]?.let { put(it, value.trim()) } }
 
     var customApis: List<CustomApi>
         get() = try {
@@ -266,7 +271,7 @@ class Store(context: Context) {
 
     var places: Boolean get() = bool("places", true); set(v) = put("places", v)
 
-    fun tools(): List<ToolSpec> = Connections.tools(weather, notionToken, calendlyToken, customApis, places)
+    fun tools(): List<ToolSpec> = Connections.tools(weather, notionToken, calendlyToken, customApis, places, APP_TOKENS.keys.associateWith { token(it) })
 
     var skills: List<Skill>
         get() {
@@ -336,14 +341,19 @@ class Store(context: Context) {
             KeyboardField("wheel", "wheel", 'l') { WHEEL_TOOLS.map { it.first } },
             KeyboardField("languages", "languages", 'l') { ALL_LANGUAGES },
         )
-        val SECRETS = setOf("apiKey", "openaiKey", "customKey", "notionToken", "calendlyToken")
+        /** App tokens beyond Notion and Calendly: dashboard field -> local preference key. */
+        val APP_TOKENS = linkedMapOf(
+            "slackToken" to "slack_token", "githubToken" to "github_token", "todoistToken" to "todoist_token",
+            "linearToken" to "linear_token", "discordWebhook" to "discord_webhook",
+        )
+        val SECRETS = setOf("apiKey", "openaiKey", "customKey", "notionToken", "calendlyToken") + APP_TOKENS.keys
         /** Local preference key -> dashboard field name. Keyboard settings are "keyboard.<name>". */
         val SYNCED: Map<String, String> by lazy {
             mapOf(
                 "api_key" to "apiKey", "openai_key" to "openaiKey", "custom_key" to "customKey", "notion_token" to "notionToken", "calendly_token" to "calendlyToken",
                 "model" to "model", "provider" to "provider", "openai_model" to "openaiModel", "custom_base" to "customBase", "custom_model" to "customModel",
                 "web_search" to "webSearch", "weather" to "weather", "skills" to "skills", "custom_apis" to "customApis",
-            ) + KEYBOARD_FIELDS.associate { it.pref to "keyboard." + it.name }
+            ) + APP_TOKENS.entries.associate { (field, pref) -> pref to field } + KEYBOARD_FIELDS.associate { it.pref to "keyboard." + it.name }
         }
 
         /** The last four characters of a saved key, so it can be recognised without being shown (as on the dashboard). */
@@ -391,6 +401,8 @@ class Store(context: Context) {
             Skill("📍", "Place", "The text names a place. Find it with the place search and return its name, address and a Google Maps link, with the map marker line.", "write", "l"),
             Skill("👤", "Who is", "The text or the context names a person. Look them up on the web and reply with one item per line: their full name; a one-line headline with their role and organisation; then Current: their current role, Previous: their previous role, Education: where they studied; and last a LinkedIn people search link, https://www.linkedin.com/search/results/people/?keywords= followed by the name with spaces written as %20. Leave out any line you cannot verify. If you cannot tell who they are, say so in one line instead of guessing.", "write", "w"),
             Skill("🗒️", "Notion", "Search the user's Notion for the page the text describes and return its title and link. If Notion is not connected, say so in one line.", "write", "n"),
+            Skill("📧", "Email", "Turn the text into a clear email with a short subject. Return the email text, then a final [[open:mailto:?subject=...&body=...]] line with both URL-encoded so it opens as a ready draft in Gmail.", "write"),
+            Skill("💼", "LinkedIn post", "Turn the text into a LinkedIn post: a strong first line, short paragraphs, no more than three hashtags at the end. Return the post, then a final [[open:https://www.linkedin.com/feed/?shareActive=true&text=...]] line with the post URL-encoded.", "write"),
             Skill("📋", "List", "Turn the text into a tidy list, one item per line, each starting with a dash. Keep the user's wording where you can.", "edit"),
         )
     }
