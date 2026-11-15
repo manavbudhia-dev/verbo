@@ -26,6 +26,8 @@ class MainActivity : Activity() {
         store = Store(this)
         ui = Ui(this)
         build()
+        // First run: the step-by-step guide (keyboard on, Google sign-in, a first try).
+        if (savedInstanceState == null && !store.locked && !store.onboarded) open("welcome")
     }
 
     private var shownTheme = ""
@@ -294,6 +296,7 @@ class MainActivity : Activity() {
             ui.row(R.drawable.ic_volume_2, "Sound & vibration", "Sound ${on(store.sound)} · vibration ${if (store.haptic) store.hapticStrength else "off"}", ui.chevron()) { open("feedback") },
             ui.row(R.drawable.ic_spell_check, "Typing", "Auto-correct ${on(store.autoCorrect)} · suggestions ${on(store.suggestions)}", ui.chevron()) { open("typing") },
             ui.row(R.drawable.ic_circle_dashed, "Wheel", if (store.wheelOn) "${store.wheel.size} shortcuts" else "Off", ui.chevron()) { open("wheel") },
+            ui.row(R.drawable.ic_keyboard, "Keys", if (!store.keysOn) "Paused" else "${store.skills.count { it.key.isNotEmpty() } + store.keymap.size} held-key actions", ui.chevron()) { open("keys") },
             ui.row(R.drawable.ic_languages, "Languages", store.languages.joinToString(", ").ifEmpty { "None chosen" }, ui.chevron()) { open("languages") },
         ))
         column.addView(ui.rows(
@@ -307,6 +310,7 @@ class MainActivity : Activity() {
             ui.row(R.drawable.ic_shield, "Privacy", "What leaves your phone", ui.chevron()) { open("privacy") },
             ui.row(R.drawable.ic_zap, "Battery", "Battery Saver ${if (store.batterySaver) "followed" else "ignored"}", ui.chevron()) { open("battery") },
             ui.row(R.drawable.ic_upload, "Export / Import", "Save settings and skills to a file", ui.chevron()) { exportImport() },
+            ui.row(R.drawable.ic_sparkle, "Setup guide", "Turn on the keyboard, sign in, try it", ui.chevron()) { open("welcome") },
         ))
     }
 

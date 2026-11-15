@@ -603,7 +603,7 @@ class KeyboardTest {
             snap(frame, if (tab == "settings") "settings" else "home-$tab")
         }
         MainActivity.tab = "home"
-        for (page in listOf("ai", "triggers", "memory", "usage", "textshortcuts", "look", "typing", "languages", "create", "wheel", "feedback", "battery", "templates", "prompts", "automate", "shortcuts", "privacy", "dashboard", "category:edit")) {
+        for (page in listOf("ai", "triggers", "memory", "usage", "textshortcuts", "look", "typing", "languages", "create", "wheel", "feedback", "battery", "templates", "prompts", "automate", "shortcuts", "privacy", "dashboard", "welcome", "keys", "category:edit")) {
             val a = Robolectric.buildActivity(PageActivity::class.java, android.content.Intent().putExtra("page", page)).setup().get()
             val s = content(a)
             s.layout(0, 0, 1080, maxOf((s as ViewGroup).getChildAt(0).measuredHeight, 900))

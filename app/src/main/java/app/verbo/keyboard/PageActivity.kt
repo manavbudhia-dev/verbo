@@ -43,6 +43,19 @@ class PageActivity : Activity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) = render()
 
+    // The guide shows live ticks: back from system settings, the keyboard picker or the browser, redraw it.
+    private var resumed = false
+    override fun onResume() {
+        super.onResume()
+        if (resumed && (page == "welcome" || page == "dashboard" || page == "keys")) { store = Store(this); render() }
+        resumed = true
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && page == "welcome" && resumed) render() // the keyboard picker is a dialog, so onResume doesn't fire after it
+    }
+
     private fun render() {
         val column = ui.page()
         when {
@@ -65,6 +78,8 @@ class PageActivity : Activity() {
             page == "memory" -> memoryPage(column)
             page == "textshortcuts" -> textShortcutsPage(column)
             page == "usage" -> usagePage(column)
+            page == "welcome" -> welcomePage(column)
+            page == "keys" -> keysPage(column)
             else -> tryPage(column)
         }
     }
@@ -657,6 +672,161 @@ class PageActivity : Activity() {
         }.toTypedArray()))
     }
 
+    // ---------- first-run guide ----------
+
+    private fun imm() = getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+    private fun keyboardEnabled() = imm().enabledInputMethodList.any { it.packageName == packageName }
+    private fun keyboardSelected() = (android.provider.Settings.Secure.getString(contentResolver, android.provider.Settings.Secure.DEFAULT_INPUT_METHOD) ?: "").startsWith("$packageName/")
+
+    private fun signInWithGoogle() {
+        try {
+            startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(Sync.googleSignInUrl(store))))
+        } catch (e: SyncException) {
+            ui.toast(e.message ?: "Couldn't start the sign-in")
+        } catch (e: Exception) {
+            ui.toast("No browser found to sign in with")
+        }
+    }
+
+    private fun welcomePage(column: LinearLayout) {
+        column.addView(ui.topBar("Welcome to Verbo", "A few quick steps, then your keyboard does the rest"))
+        val enabled = keyboardEnabled()
+        val selected = keyboardSelected()
+        val signedIn = store.deviceToken.isNotEmpty()
+        val hasKey = store.activeKey.isNotEmpty()
+        val calendar = checkSelfPermission(Manifest.permission.WRITE_CALENDAR) == PackageManager.PERMISSION_GRANTED
+        val done = listOf(enabled, selected, signedIn || hasKey).count { it }
+        note(column, "$done of 3 steps done. The ticks update by themselves when you come back here.")
+        fun tick(ok: Boolean) = if (ok) ui.icon(R.drawable.ic_check, 22, Color.parseColor("#4ADE80")) else ui.chevron()
+        column.addView(ui.rows(
+            ui.row(R.drawable.ic_keyboard, "1. Turn on Verbo", if (enabled) "Done" else "Switch on Verbo Keyboard in the list that opens", tick(enabled)) {
+                if (!enabled) startActivity(android.content.Intent(android.provider.Settings.ACTION_INPUT_METHOD_SETTINGS))
+            },
+            ui.row(R.drawable.ic_check, "2. Choose Verbo", if (selected) "Done: Verbo is your keyboard" else "Pick Verbo in the keyboard chooser", tick(selected)) {
+                if (!enabled) ui.toast("Turn on Verbo first") else if (!selected) imm().showInputMethodPicker()
+            },
+            ui.row(R.drawable.ic_cloud, "3. Continue with Google", if (signedIn) "Signed in. Skills, agents and keys sync with " + store.serverUrl.removePrefix("https://") else "One account for this phone and the web dashboard", tick(signedIn)) {
+                if (!signedIn) signInWithGoogle()
+            },
+            ui.row(R.drawable.ic_sparkles, "Or use my own AI key", if (hasKey) "Key saved for ${store.providerName}" else "Skip sign-in and paste a Claude, OpenAI or gateway key", tick(hasKey)) { go("ai") },
+            ui.row(R.drawable.ic_box, "Allow calendar (optional)", if (calendar) "Allowed: events save in one tap" else "So Schedule it can save events straight away", tick(calendar)) {
+                if (!calendar) requestPermissions(arrayOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR), 2)
+            },
+        ))
+        column.addView(ui.section(R.drawable.ic_wand_sparkles, "Try it"))
+        note(column, "Type a rough sentence below with Verbo, then hold the lit P key to polish it.")
+        val box = ui.cardBox().apply { setPadding(ui.dp(14), ui.dp(8), ui.dp(14), ui.dp(12)) }
+        box.addView(ui.field("i reached late sorry, lets meet tmrw 5pm?", lines = 3))
+        column.addView(box)
+        column.addView(ui.rows(
+            ui.row(R.drawable.ic_keyboard, "Hold a lit letter", "Runs its skill or agent. Set keys per app under Settings, Keys"),
+            ui.row(R.drawable.ic_circle_dashed, "Hold the space bar", "The wheel: translate, rewrite, ask AI, voice, clips"),
+            ui.row(R.drawable.ic_layers, "Copy a message", "Acts and auto actions appear for it, like Reply options or Schedule it"),
+            ui.row(R.drawable.ic_cloud, "Build agents on the web", "Drag blocks on the dashboard; they arrive here after a sync"),
+        ))
+        column.addView(ui.button(if (done == 3) "Start using Verbo" else "Finish later", R.drawable.ic_check, filled = done == 3) {
+            store.onboarded = true
+            finish()
+        })
+    }
+
+    // ---------- keys: hold a letter, per app ----------
+
+    private class KeyRow(val action: KeyAction, val fromSkill: Boolean)
+
+    private fun keyRows(): List<KeyRow> =
+        (store.skills.filter { it.key.length == 1 }.map { KeyRow(KeyAction(it.key[0], "", "skill:" + it.name), true) } + store.keymap.map { KeyRow(it, false) })
+            .sortedWith(compareBy({ it.action.app.isNotEmpty() }, { it.action.app }, { it.action.key }))
+
+    private fun keysPage(column: LinearLayout) {
+        column.addView(ui.topBar("Keys", "Hold a letter to run anything, per app"))
+        note(column, "A tap still types the letter; holding it runs the action. A key set for one app wins over the same key in all apps. You can set these on the web dashboard too.")
+        column.addView(ui.rows(ui.row(R.drawable.ic_keyboard, "Held-key actions", if (store.keysOn) "On" else "Paused: letters just type",
+            ui.toggle(store.keysOn) { store.keysOn = it; if (store.deviceToken.isNotEmpty()) Sync.soon(store); render() })))
+        val rows = keyRows()
+        val skills = store.skills
+        if (rows.isNotEmpty()) column.addView(ui.rows(*rows.map { r ->
+            ui.row(R.drawable.ic_zap, "Hold ${r.action.key.uppercaseChar()}  ·  ${KeyAction.appName(r.action.app)}", KeyAction.label(r.action.action, skills), ui.chevron()) { keyActionMenu(r) }
+        }.toTypedArray()))
+        else note(column, "No key actions yet.")
+        column.addView(ui.button("Add key action", R.drawable.ic_plus, filled = true) { pickApp(null) })
+    }
+
+    private fun keyActionMenu(r: KeyRow) {
+        AlertDialog.Builder(this).setTitle("Hold ${r.action.key.uppercaseChar()} in ${KeyAction.appName(r.action.app)}")
+            .setMessage(KeyAction.label(r.action.action, store.skills))
+            .setPositiveButton("Change") { _, _ -> pickApp(r) }
+            .setNeutralButton("Delete") { _, _ -> saveKeyAction(r, null) }
+            .setNegativeButton("Close", null).show()
+    }
+
+    /** Step 1 of 3: which app. Common apps first, then any installed app. */
+    private fun pickApp(prev: KeyRow?) {
+        val launcher = android.content.Intent(android.content.Intent.ACTION_MAIN).addCategory(android.content.Intent.CATEGORY_LAUNCHER)
+        val installed = try {
+            packageManager.queryIntentActivities(launcher, 0).map { it.activityInfo.packageName to it.loadLabel(packageManager).toString() }
+                .filter { (pkg, _) -> pkg != packageName && KeyAction.COMMON_APPS.none { it.first == pkg } }.distinctBy { it.first }.sortedBy { it.second.lowercase() }
+        } catch (e: Exception) { emptyList() }
+        val apps = KeyAction.COMMON_APPS + installed
+        AlertDialog.Builder(this).setTitle("In which app?")
+            .setItems(apps.map { it.second }.toTypedArray()) { _, i -> pickLetter(prev, apps[i].first) }
+            .setNegativeButton("Cancel", null).show()
+    }
+
+    /** Step 2 of 3: which letter. Letters already used in that app say what they run now. */
+    private fun pickLetter(prev: KeyRow?, app: String) {
+        val used = keyRows().filter { it.action.app == app && it.action != prev?.action }
+        val letters = ('a'..'z').toList()
+        val labels = letters.map { l ->
+            used.firstOrNull { it.action.key == l }?.let { "${l.uppercaseChar()}   (now ${KeyAction.label(it.action.action, store.skills)})" } ?: l.uppercaseChar().toString()
+        }
+        AlertDialog.Builder(this).setTitle("Hold which key?")
+            .setItems(labels.toTypedArray()) { _, i -> pickAction(prev, app, letters[i]) }
+            .setNegativeButton("Cancel", null).show()
+    }
+
+    /** Step 3 of 3: what it runs. */
+    private fun pickAction(prev: KeyRow?, app: String, letter: Char) {
+        val options = store.skills.map { "skill:" + it.name } + Acts.BUILTIN.map { "act:" + it.name } + Store.WHEEL_TOOLS.map { "tool:" + it.first } + "text:"
+        val labels = options.map { if (it == "text:") "✍️ Type a saved text…" else KeyAction.label(it, store.skills) }
+        AlertDialog.Builder(this).setTitle("Hold ${letter.uppercaseChar()} to…")
+            .setItems(labels.toTypedArray()) { _, i ->
+                if (options[i] != "text:") saveKeyAction(prev, KeyAction(letter, app, options[i]))
+                else {
+                    val field = ui.field("On my way!", lines = 3)
+                    AlertDialog.Builder(this).setTitle("Text to type").setView(ui.pad(field, top = 8))
+                        .setPositiveButton("Save") { _, _ ->
+                            val text = field.text.toString()
+                            if (text.isBlank()) ui.toast("Type the text first") else saveKeyAction(prev, KeyAction(letter, app, "text:$text"))
+                        }
+                        .setNegativeButton("Cancel", null).show()
+                }
+            }
+            .setNegativeButton("Cancel", null).show()
+    }
+
+    /** Same rules as the dashboard: one action per letter per app; a skill in all apps uses the skill's own hold key. */
+    private fun saveKeyAction(prev: KeyRow?, next: KeyAction?) {
+        var skills = store.skills
+        var map = store.keymap
+        if (prev != null) {
+            if (prev.fromSkill) skills = skills.map { if (it.key == prev.action.key.toString() && "skill:" + it.name == prev.action.action) it.copy(key = "") else it }
+            else map = map.filterNot { it.key == prev.action.key && it.app == prev.action.app }
+        }
+        if (next != null) {
+            map = map.filterNot { it.key == next.key && it.app == next.app }
+            if (next.app.isEmpty()) skills = skills.map { if (it.key == next.key.toString()) it.copy(key = "") else it }
+            val name = if (next.action.startsWith("skill:")) next.action.removePrefix("skill:") else null
+            if (name != null && next.app.isEmpty() && skills.any { it.name == name }) skills = skills.map { if (it.name == name) it.copy(key = next.key.toString()) else it }
+            else map = map + next
+        }
+        store.skills = skills
+        store.keymap = map
+        if (store.deviceToken.isNotEmpty()) Sync.soon(store)
+        ui.toast(if (next == null) "Key action removed" else "Hold ${next.key.uppercaseChar()}: ${KeyAction.label(next.action, skills)}")
+        render()
+    }
+
     // ---------- dashboard ----------
 
     private fun dashboardPage(column: LinearLayout) {
@@ -671,13 +841,16 @@ class PageActivity : Activity() {
             column.addView(buttons)
             return
         }
-        note(column, "Sign in to your dashboard, open Keyboards and choose Pair a keyboard to get a code.")
+        note(column, "Sign in with Google: this phone joins your account on the Verbo dashboard, and skills, agents, keys and connections sync both ways.")
+        column.addView(ui.button("Continue with Google", R.drawable.ic_cloud, filled = true) { signInWithGoogle() })
+        column.addView(ui.section(R.drawable.ic_keyboard, "Or pair with a code"))
+        note(column, "For your own server, or without Google: on the dashboard open Settings → Phones → Pair a phone.")
         val box = ui.cardBox().apply { setPadding(ui.dp(14), ui.dp(8), ui.dp(14), ui.dp(12)) }
         val address = ui.field("Dashboard address, e.g. verbo.example.com")
         val code = ui.field("Pairing code")
         box.addView(address); box.addView(code)
         column.addView(box)
-        column.addView(ui.button("Pair", R.drawable.ic_cloud, filled = true) {
+        column.addView(ui.button("Pair", R.drawable.ic_cloud) {
             val a = address.text.toString()
             val c = code.text.toString()
             if (a.isBlank() || c.isBlank()) ui.toast("Enter the address and the code")

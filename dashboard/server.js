@@ -50,6 +50,12 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS pair_codes (code TEXT PRIMARY KEY, user_id INTEGER NOT NULL, expires INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS devices (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, name TEXT NOT NULL, token_hash TEXT UNIQUE NOT NULL, created INTEGER NOT NULL, last_seen INTEGER);
 `);
+// Columns added after the first release. ALTER fails harmlessly when the column is already there.
+for (const sql of [
+  'ALTER TABLE users ADD COLUMN google_sub TEXT', // set once the account has signed in with Google
+  'ALTER TABLE users ADD COLUMN name TEXT',
+  'ALTER TABLE pair_codes ADD COLUMN challenge TEXT', // app sign-in: only the phone that started it can use the code
+]) { try { db.exec(sql); } catch { /* already there */ } }
 
 const CATEGORIES = ['write', 'edit', 'translate', 'summarize'];
 const MODELS = ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5']; // first is the default: cheapest
@@ -93,6 +99,9 @@ const defaultConfig = () => ({
   usage: null, // this month's requests, tokens and estimated cost, reported by the phone
   monthlyLimit: 0, // US dollars; 0 = no limit
   keyboard: {}, // the phone's own settings (look, sound, wheel...), kept here so they can be changed from the web
+  agents: [], // visual agents: the editor's blocks and links. Each is also saved as a chain skill the phone runs.
+  keymap: [], // hold a letter (in all apps or in one app) -> an action: { key, app, action }
+  favorites: [], // starred skill names
 });
 
 // ---------- helpers ----------
@@ -153,7 +162,7 @@ const hint = (secret) => (secret && secret.length >= 8 ? secret.slice(-4) : '');
 const THEMES = ['system', 'dark', 'light', 'amoled', 'custom', 'ocean', 'rose', 'forest', 'sunset', 'mint'];
 const KEYBOARD_FIELDS = {
   assistantOn: 'boolean', numberRow: 'boolean', sound: 'boolean', haptic: 'boolean', autoCorrect: 'boolean',
-  suggestions: 'boolean', wheelOn: 'boolean', batterySaver: 'boolean',
+  suggestions: 'boolean', wheelOn: 'boolean', batterySaver: 'boolean', keysOn: 'boolean',
   agentMode: ['auto', 'ask', 'manual'], theme: THEMES,
   keyShape: ['raised', 'rounded', 'square', 'bubble', 'glass', 'outline', 'flat'],
   soundPack: ['system', 'typewriter', 'mechanical', 'pop', 'drop', 'soft'], hapticStrength: ['light', 'medium', 'strong'],
@@ -162,7 +171,7 @@ const KEYBOARD_FIELDS = {
 };
 const KEYBOARD_DEFAULTS = {
   assistantOn: true, numberRow: false, sound: true, haptic: true, autoCorrect: true, suggestions: true, wheelOn: true,
-  batterySaver: true, agentMode: 'auto', theme: 'system', keyShape: 'raised', soundPack: 'system', hapticStrength: 'medium',
+  batterySaver: true, keysOn: true, agentMode: 'auto', theme: 'system', keyShape: 'raised', soundPack: 'system', hapticStrength: 'medium',
   heightPercent: 100, soundVolume: 60, wheel: ['translate', 'rewrite', 'ai', 'meet', 'voice', 'clips'],
   languages: ['English', 'Hindi', 'Spanish', 'French', 'Chinese (Simplified)'],
 };
@@ -201,6 +210,9 @@ function publicConfig(config) {
     clips: config.clips,
     usage: config.usage,
     monthlyLimit: config.monthlyLimit,
+    agents: config.agents,
+    keymap: config.keymap,
+    favorites: config.favorites,
   };
 }
 
@@ -309,6 +321,12 @@ function applyUpdate(config, body) {
       return trigger;
     });
   }
+  if ('favorites' in body) {
+    if (!Array.isArray(body.favorites) || body.favorites.length > 60 || !body.favorites.every((f) => typeof f === 'string' && f.length <= 40)) throw new Bad(400, 'Favourites must be skill names');
+    next.favorites = [...new Set(body.favorites)];
+  }
+  if ('keymap' in body) next.keymap = cleanKeymap(body.keymap);
+  if ('agents' in body) next.agents = cleanAgents(body.agents);
   if ('customApis' in body) {
     if (!Array.isArray(body.customApis) || body.customApis.length > 40) throw new Bad(400, 'Too many APIs');
     next.customApis = body.customApis.map((a) => {
@@ -324,6 +342,62 @@ function applyUpdate(config, body) {
     });
   }
   return next;
+}
+
+// What a held key can open besides a skill or an act: the wheel's tools.
+const KEY_TOOLS = ['ai', 'translate', 'rewrite', 'meet', 'voice', 'clips'];
+
+/** Key actions: hold a letter, in every app or in one app (by its package name), to run something. */
+function cleanKeymap(list) {
+  if (!Array.isArray(list) || list.length > 80) throw new Bad(400, 'Too many key actions');
+  const seen = new Set();
+  return list.map((k) => {
+    const key = typeof k?.key === 'string' ? k.key.trim().toLowerCase() : '';
+    if (!/^[a-z]$/.test(key)) throw new Bad(400, 'A key action needs one letter');
+    const app = typeof k.app === 'string' ? k.app.trim() : '';
+    if (!/^[A-Za-z0-9._]{0,100}$/.test(app)) throw new Bad(400, 'That does not look like an app');
+    const action = typeof k.action === 'string' ? k.action.slice(0, 2100) : '';
+    const m = /^(skill|act|tool|text):([\s\S]+)$/.exec(action);
+    if (!m || !m[2].trim()) throw new Bad(400, 'A key action needs something to do');
+    if (m[1] === 'tool' && !KEY_TOOLS.includes(m[2])) throw new Bad(400, 'Unknown keyboard tool');
+    if (m[1] !== 'text' && m[2].length > 40) throw new Bad(400, 'Skill name is too long');
+    if (seen.has(key + '@' + app)) throw new Bad(400, `Hold ${key.toUpperCase()} is set twice for the same app`);
+    seen.add(key + '@' + app);
+    return { key, app, action };
+  });
+}
+
+const NODE_KINDS = ['trigger', 'step', 'action'];
+
+/** Visual agents from the editor. Only the shape is checked here; the dashboard also saves each one as a chain skill. */
+function cleanAgents(list) {
+  if (!Array.isArray(list) || list.length > 30) throw new Bad(400, 'Too many agents');
+  const ids = new Set();
+  return list.map((a) => {
+    if (!a || typeof a !== 'object') throw new Bad(400, 'An agent is not readable');
+    const id = typeof a.id === 'string' && /^[A-Za-z0-9_-]{1,40}$/.test(a.id) ? a.id : crypto.randomUUID();
+    if (ids.has(id)) throw new Bad(400, 'Two agents have the same id');
+    ids.add(id);
+    const agent = {
+      id, name: str(a.name ?? '', 40, 'Agent name'), emoji: str(a.emoji ?? '', 16, 'Emoji'),
+      description: str(a.description ?? '', 300, 'Description'), active: a.active !== false,
+    };
+    if (!agent.name) throw new Bad(400, 'An agent needs a name');
+    if (!Array.isArray(a.nodes) || a.nodes.length > 24) throw new Bad(400, 'An agent has up to 24 blocks');
+    const nodeIds = new Set();
+    agent.nodes = a.nodes.map((n) => {
+      if (!n || !NODE_KINDS.includes(n.kind)) throw new Bad(400, 'Unknown kind of block');
+      const clamp = (v) => Math.round(Math.min(Math.max(Number(v) || 0, -5000), 5000));
+      const node = { id: str(String(n.id ?? ''), 40, 'Block id'), kind: n.kind, ref: str(n.ref ?? '', 60, 'Block'), text: str(n.text ?? '', 1000, 'Block text'), auto: n.auto === true, x: clamp(n.x), y: clamp(n.y) };
+      if (!node.id || nodeIds.has(node.id)) throw new Bad(400, 'Each block needs its own id');
+      if (node.kind === 'trigger' && !['manual', ...TRIGGER_KINDS].includes(node.ref)) throw new Bad(400, 'Unknown trigger');
+      nodeIds.add(node.id);
+      return node;
+    });
+    if (!Array.isArray(a.edges) || a.edges.length > 60) throw new Bad(400, 'Too many links');
+    agent.edges = a.edges.filter((e) => e && nodeIds.has(e.from) && nodeIds.has(e.to) && e.from !== e.to).map((e) => ({ from: e.from, to: e.to }));
+    return agent;
+  });
 }
 
 // Small fixed-window limiter for login, signup and pairing attempts.
@@ -407,8 +481,8 @@ const newCode = () => Array.from(crypto.randomBytes(8), (b) => CODE_ALPHABET[b %
 const routes = {
   'GET /api/me': (req) => {
     const token = sessionToken(req);
-    const row = token && db.prepare('SELECT u.email FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires > ?').get(sha(token), now());
-    return { body: { email: row?.email ?? null, allowSignup: ALLOW_SIGNUP } };
+    const row = token && db.prepare('SELECT u.email, u.name FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires > ?').get(sha(token), now());
+    return { body: { email: row?.email ?? null, name: row?.name || '', allowSignup: ALLOW_SIGNUP, googleLogin: GOOGLE_ON } };
   },
 
   'POST /api/signup': async (req, res) => {
@@ -429,8 +503,9 @@ const routes = {
     const email = str(body.email ?? '', 200, 'Email').toLowerCase();
     const user = db.prepare('SELECT id, pw FROM users WHERE email = ?').get(email);
     // Always do the (slow) password check, so response time doesn't reveal which emails have accounts.
-    const ok = typeof body.password === 'string' && checkPassword(body.password, user ? user.pw : DUMMY_HASH);
-    if (!user || !ok) throw new Bad(401, 'Wrong email or password');
+    // Accounts made with Google have no password; they still take the slow check, against the dummy.
+    const ok = typeof body.password === 'string' && checkPassword(body.password, user?.pw ? user.pw : DUMMY_HASH);
+    if (!user || !user.pw || !ok) throw new Bad(401, 'Wrong email or password. If you signed up with Google, choose Continue with Google');
     return { body: { email }, headers: startSession(res, user.id) };
   },
 
@@ -477,8 +552,12 @@ const routes = {
     limit('pair:' + clientIp(req), 10, 15 * 60 * 1000);
     const body = await readJson(req);
     const code = str(body.code ?? '', 20, 'Code').toUpperCase().replace(/[^A-Z0-9]/g, '');
-    const row = db.prepare('SELECT user_id FROM pair_codes WHERE code = ? AND expires > ?').get(code, now());
+    const row = db.prepare('SELECT user_id, challenge FROM pair_codes WHERE code = ? AND expires > ?').get(code, now());
     if (!row) throw new Bad(400, 'That code is wrong or has expired');
+    // A code made by "Continue with Google" in the app works only for the phone that started that sign-in.
+    if (row.challenge && (typeof body.verifier !== 'string' || crypto.createHash('sha256').update(body.verifier).digest('base64url') !== row.challenge)) {
+      throw new Bad(400, 'That sign-in was started on another phone. Try again');
+    }
     db.prepare('DELETE FROM pair_codes WHERE code = ?').run(code);
     const token = randomToken();
     db.prepare('INSERT INTO devices (user_id, name, token_hash, created) VALUES (?, ?, ?, ?)')
@@ -522,16 +601,60 @@ const routes = {
     return { body: parseChat(text) };
   },
 
+  // Try a skill or an agent on the web: each step runs in turn on the user's own key, without tools.
+  'POST /api/run': async (req) => {
+    const userId = requireUser(req);
+    limit('run:' + userId, 60, 60 * 60 * 1000);
+    const body = await readJson(req);
+    let text = str(String(body.text ?? ''), 4000, 'Text');
+    if (!text) throw new Bad(400, 'Type some text to try it on');
+    if (!Array.isArray(body.steps) || body.steps.length === 0 || body.steps.length > 12) throw new Bad(400, 'Nothing to run');
+    const steps = body.steps.map((s) => ({ name: str(String(s?.name ?? ''), 60, 'Step name') || 'Step', instruction: str(String(s?.instruction ?? ''), 2000, 'Instruction') }));
+    const { config } = loadConfig(userId);
+    const logs = [];
+    for (const step of steps) {
+      const started = now();
+      if (!step.instruction) { logs.push({ name: step.name, output: text, ms: 0 }); continue; }
+      try {
+        const out = await callModel(config, RUN_SYSTEM, [{ role: 'user', content: `Instruction: ${step.instruction}\n\nText:\n${text}` }]);
+        text = out.trim() || text;
+        logs.push({ name: step.name, output: text, ms: now() - started });
+      } catch (e) {
+        if (!(e instanceof Bad)) throw e;
+        logs.push({ name: step.name, error: e.message, ms: now() - started });
+        return { body: { logs, result: null } };
+      }
+    }
+    return { body: { logs, result: text } };
+  },
+
   // --- Google Meet ---
 
   'GET /api/google/start': (req) => {
     if (!GOOGLE_ON) throw new Bad(400, 'Google sign-in is not set up on this server');
     const userId = requireUser(req);
     const state = randomToken();
-    oauthStates.set(state, { userId, expires: now() + 10 * 60 * 1000 });
+    oauthStates.set(state, { mode: 'connect', userId, expires: now() + 10 * 60 * 1000 });
     const query = new URLSearchParams({
       client_id: GOOGLE_ID, redirect_uri: PUBLIC_URL + '/api/google/callback', response_type: 'code',
       scope: GOOGLE_SCOPE, access_type: 'offline', prompt: 'consent', include_granted_scopes: 'true', state,
+    });
+    return { status: 302, body: {}, headers: { Location: GOOGLE_AUTH_URL + '?' + query } };
+  },
+
+  // "Continue with Google": signs in to the dashboard or, with app=1, signs the phone in and pairs it.
+  'GET /api/auth/google': (req) => {
+    if (!GOOGLE_ON) throw new Bad(400, 'Google sign-in is not set up on this server');
+    limit('auth:' + clientIp(req), 30, 15 * 60 * 1000);
+    const params = new URL(req.url, 'http://x').searchParams;
+    const app = params.get('app') === '1';
+    const challenge = params.get('challenge') || '';
+    if (app && !/^[A-Za-z0-9_-]{43}$/.test(challenge)) throw new Bad(400, 'Start the sign-in from the Verbo app');
+    const state = randomToken();
+    oauthStates.set(state, { mode: app ? 'app' : 'login', challenge, expires: now() + 10 * 60 * 1000 });
+    const query = new URLSearchParams({
+      client_id: GOOGLE_ID, redirect_uri: PUBLIC_URL + '/api/google/callback', response_type: 'code',
+      scope: 'openid email profile', prompt: 'select_account', state,
     });
     return { status: 302, body: {}, headers: { Location: GOOGLE_AUTH_URL + '?' + query } };
   },
@@ -543,6 +666,7 @@ const routes = {
     const pending = oauthStates.get(params.get('state') || '');
     oauthStates.delete(params.get('state') || '');
     const back = (result) => ({ status: 302, body: {}, headers: { Location: '/?google=' + result } });
+    if (pending && pending.mode !== 'connect') return googleLogin(pending, params);
     if (!pending || pending.expires < now() || !params.get('code')) return back('failed');
     const res = await fetch(GOOGLE_TOKEN_URL, {
       method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -581,6 +705,60 @@ const routes = {
     return { body: { result: await googleAction(device.user_id, body) } };
   },
 };
+
+// ---------- Continue with Google ----------
+
+const RUN_SYSTEM = 'You are the assistant inside the Verbo keyboard, being tried out on the web dashboard. Apply the instruction to the text and reply with only the result, no preamble. Tools and connected apps are not available here: where a step would use one (web search, Notion, Calendar, Slack, sending a message), do what you can from the text and add one line starting with → saying what the phone would do.';
+
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+/** A tiny page with no script (the CSP allows none). [go] sends the browser on at once. */
+const htmlPage = (title, body, go) => `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${go ? `<meta http-equiv="refresh" content="0;url=${esc(go)}">` : ''}<title>${esc(title)}</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0d0b1f;color:#eceaff;font:16px/1.5 system-ui,sans-serif;text-align:center;padding:16px}a{display:inline-block;margin-top:18px;background:#7c5cff;color:#fff;padding:12px 22px;border-radius:999px;text-decoration:none;font-weight:600}p{color:#a9a3cf}</style></head><body><div>${body}</div></body></html>`;
+
+/** The account for a Google identity: by Google id, then by email (linking it), else a new account. */
+function googleUser({ sub, email, name }) {
+  let user = db.prepare('SELECT id FROM users WHERE google_sub = ?').get(sub);
+  if (user) { db.prepare('UPDATE users SET name = ? WHERE id = ?').run(name, user.id); return user.id; }
+  user = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+  if (user) {
+    // Sign-up never checked email ownership, so someone else could have made a password account on this
+    // address first. Google has now proven who owns it, so that password and its sessions stop working.
+    db.prepare("UPDATE users SET google_sub = ?, name = ?, pw = '' WHERE id = ?").run(sub, name, user.id);
+    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user.id);
+    return user.id;
+  }
+  if (!ALLOW_SIGNUP) throw new Bad(403, 'Sign-up is closed on this server');
+  return Number(db.prepare("INSERT INTO users (email, pw, created, google_sub, name) VALUES (?, '', ?, ?, ?)").run(email, now(), sub, name).lastInsertRowid);
+}
+
+async function googleLogin(pending, params) {
+  oauthStates.delete(params.get('state') || '');
+  const fail = (why) => ({ html: htmlPage('Sign-in failed', `<h2>Sign-in did not complete</h2><p>${esc(why)}</p><a href="/">Back to Verbo</a>`) });
+  if (pending.expires < now() || !params.get('code')) return fail('Google did not send the sign-in back. Try again.');
+  const res = await fetch(GOOGLE_TOKEN_URL, {
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ code: params.get('code'), client_id: GOOGLE_ID, client_secret: GOOGLE_SECRET, redirect_uri: PUBLIC_URL + '/api/google/callback', grant_type: 'authorization_code' }),
+  });
+  const tokens = await res.json().catch(() => ({}));
+  // The ID token came straight from Google's token endpoint over TLS, so its claims can be read without checking a signature.
+  let claims = {};
+  try { claims = JSON.parse(Buffer.from(String(tokens.id_token).split('.')[1], 'base64url').toString('utf8')); } catch { claims = {}; }
+  const issuer = ['accounts.google.com', 'https://accounts.google.com'].includes(claims.iss);
+  if (!res.ok || !issuer || claims.aud !== GOOGLE_ID || !claims.sub || !claims.email || claims.email_verified === false) return fail('Google did not confirm the account.');
+  let userId;
+  try { userId = googleUser({ sub: String(claims.sub), email: String(claims.email).toLowerCase(), name: String(claims.name || '').slice(0, 80) }); } catch (e) {
+    if (e instanceof Bad) return fail(e.message);
+    throw e;
+  }
+  if (pending.mode === 'app') {
+    // A one-time pairing code that only the phone holding the verifier for this sign-in can use.
+    const code = newCode();
+    db.prepare('INSERT INTO pair_codes (code, user_id, expires, challenge) VALUES (?, ?, ?, ?)').run(code, userId, now() + 5 * 60 * 1000, pending.challenge);
+    const open = `intent://auth?code=${code}#Intent;scheme=verbo;package=app.verbo.keyboard;end`;
+    return { html: htmlPage('Back to Verbo', `<h2>Signed in</h2><p>Opening the Verbo app…</p><a href="${esc(open)}">Open Verbo</a>`, open) };
+  }
+  // The page moves on by itself, so the next request starts on this site and carries the new SameSite cookie.
+  return { html: htmlPage('Signed in', '<p>Signing you in…</p>', '/'), headers: startSession(null, userId) };
+}
 
 // ---------- Google: Meet, Calendar and Gmail on the owner's sign-in ----------
 
@@ -868,7 +1046,11 @@ http.createServer(async (req, res) => {
   try {
     const handler = routes[`${req.method} ${pathname}`];
     if (!handler) throw new Bad(404, 'Not found');
-    const { status = 200, body, headers } = await handler(req, res);
+    const { status = 200, body, headers, html } = await handler(req, res);
+    if (html) {
+      res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', ...SECURITY, ...headers });
+      return res.end(html);
+    }
     send(res, status, body, headers);
   } catch (e) {
     if (!(e instanceof Bad)) console.error(e);

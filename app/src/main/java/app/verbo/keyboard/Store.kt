@@ -151,12 +151,13 @@ class Store(context: Context) {
         "usage" -> usage
         "monthlyLimit" -> monthlyLimit
         "clips" -> JSONArray(clips)
+        "keymap" -> KeyAction.json(keymap)
         "customApis" -> JSONArray().also { arr ->
             customApis.forEach { arr.put(JSONObject().put("name", it.name).put("description", it.description).put("url", it.url).put("headerName", it.headerName).put("headerValue", it.headerValue)) }
         }
         else -> when (field.removePrefix("keyboard.")) {
             "assistantOn" -> assistantOn; "numberRow" -> numberRow; "sound" -> sound; "haptic" -> haptic
-            "autoCorrect" -> autoCorrect; "suggestions" -> suggestions; "wheelOn" -> wheelOn; "batterySaver" -> batterySaver
+            "autoCorrect" -> autoCorrect; "suggestions" -> suggestions; "wheelOn" -> wheelOn; "batterySaver" -> batterySaver; "keysOn" -> keysOn
             "agentMode" -> agentMode; "theme" -> theme; "keyShape" -> keyShape; "soundPack" -> soundPack; "hapticStrength" -> hapticStrength
             "heightPercent" -> heightPercent; "soundVolume" -> soundVolume; "customAccent" -> customAccent
             "wheel" -> JSONArray(wheel); "languages" -> JSONArray(languages)
@@ -209,6 +210,7 @@ class Store(context: Context) {
         o.optJSONArray("memory")?.let { s("memory", "memory", it.toString()) }
         o.optJSONArray("shortcuts")?.let { s("shortcuts", "shortcuts", it.toString()) }
         o.optJSONArray("clips")?.let { s("clips", "clips", it.toString()) }
+        o.optJSONArray("keymap")?.let { s("keymap", "keymap", it.toString()) }
         if (o.has("monthlyLimit") && "monthlyLimit" !in keep) e.putFloat("monthly_limit", o.optDouble("monthlyLimit", 0.0).toFloat().coerceIn(0f, 1000f))
         o.optJSONObject("keyboard")?.let { applyKeyboard(e, it, keep) }
         e.putBoolean("google_connected", o.optBoolean("googleConnected", false))
@@ -288,6 +290,19 @@ class Store(context: Context) {
         }
 
     var places: Boolean get() = bool("places", true); set(v) = put("places", v)
+
+    /** Hold a letter to run something, per app. Synced with the dashboard (config.keymap). */
+    var keymap: List<KeyAction>
+        get() = try { KeyAction.parse(JSONArray(str("keymap", "[]"))) } catch (e: Exception) { emptyList() }
+        set(v) = put("keymap", KeyAction.json(v).toString())
+    /** Off pauses every held-key action (skill keys too); held letters then just type. */
+    var keysOn: Boolean get() = bool("keys_on", true); set(v) = put("keys_on", v)
+    /** The first-run guide was finished or skipped. Kept on this phone only. */
+    var onboarded: Boolean get() = bool("onboarded", false); set(v) { prefs?.edit()?.putBoolean("onboarded", v)?.apply() }
+    /** Secret for the Google sign-in in progress: the dashboard only pairs the phone that holds it. */
+    var authVerifier: String get() = str("auth_verifier"); set(v) { prefs?.edit()?.putString("auth_verifier", v)?.apply() }
+    /** The dashboard that sign-in was started on. */
+    var authServer: String get() = str("auth_server"); set(v) { prefs?.edit()?.putString("auth_server", v)?.apply() }
 
     /** Suggest (or run) skills when a copied message matches a trigger. The matching happens on the phone; nothing is sent until a skill runs. */
     var triggersOn: Boolean get() = bool("triggers_on", true); set(v) = put("triggers_on", v)
@@ -448,6 +463,7 @@ class Store(context: Context) {
             KeyboardField("sound", "sound", 'b'), KeyboardField("haptic", "haptic", 'b'),
             KeyboardField("autoCorrect", "auto_correct", 'b'), KeyboardField("suggestions", "suggestions", 'b'),
             KeyboardField("wheelOn", "wheel_on", 'b'), KeyboardField("batterySaver", "battery_saver", 'b'),
+            KeyboardField("keysOn", "keys_on", 'b'),
             KeyboardField("agentMode", "agent_mode", 's') { listOf("auto", "ask", "manual") },
             KeyboardField("theme", "theme", 's') { THEMES }, KeyboardField("keyShape", "key_shape", 's') { SHAPES },
             KeyboardField("soundPack", "sound_pack", 's') { Feedback.PACKS.map { it.first } },
@@ -468,12 +484,15 @@ class Store(context: Context) {
             mapOf(
                 "api_key" to "apiKey", "openai_key" to "openaiKey", "custom_key" to "customKey", "notion_token" to "notionToken", "calendly_token" to "calendlyToken",
                 "model" to "model", "provider" to "provider", "openai_model" to "openaiModel", "custom_base" to "customBase", "custom_model" to "customModel",
-                "web_search" to "webSearch", "weather" to "weather", "skills" to "skills", "custom_apis" to "customApis", "triggers" to "triggers", "memory" to "memory", "shortcuts" to "shortcuts", "clips" to "clips", "usage" to "usage", "monthly_limit" to "monthlyLimit",
+                "web_search" to "webSearch", "weather" to "weather", "skills" to "skills", "custom_apis" to "customApis", "triggers" to "triggers", "memory" to "memory", "shortcuts" to "shortcuts", "clips" to "clips", "keymap" to "keymap", "usage" to "usage", "monthly_limit" to "monthlyLimit",
             ) + APP_TOKENS.entries.associate { (field, pref) -> pref to field } + KEYBOARD_FIELDS.associate { it.pref to "keyboard." + it.name }
         }
 
         /** The last four characters of a saved key, so it can be recognised without being shown (as on the dashboard). */
         fun keyHint(key: String) = if (key.length >= 8) key.takeLast(4) else ""
+
+        /** The hosted dashboard, used by "Continue with Google" until the user pairs with another one. */
+        const val DEFAULT_SERVER = "https://verbo-env-fpemontcg1.ap-south-1a.lb.nimbuz.tech"
 
         const val MIN_HEIGHT = 80
         const val MAX_HEIGHT = 130

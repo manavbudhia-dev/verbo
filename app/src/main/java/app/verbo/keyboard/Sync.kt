@@ -19,9 +19,36 @@ object Sync {
         return url
     }
 
-    fun pair(store: Store, address: String, code: String) {
+    /**
+     * The page that starts "Continue with Google". The phone keeps a random verifier and sends only its hash;
+     * the dashboard sends back a one-time code (to verbo://auth) that pairs only with the verifier.
+     */
+    fun googleSignInUrl(store: Store, address: String = store.serverUrl.ifEmpty { Store.DEFAULT_SERVER }): String {
         val url = normalise(address)
-        val body = JSONObject().put("code", code.trim()).put("name", Build.MODEL ?: "Phone").toString()
+        val bytes = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
+        val verifier = android.util.Base64.encodeToString(bytes, android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP)
+        store.authVerifier = verifier
+        store.authServer = url
+        return "$url/api/auth/google?app=1&challenge=" + challenge(verifier)
+    }
+
+    fun challenge(verifier: String): String {
+        val hash = java.security.MessageDigest.getInstance("SHA-256").digest(verifier.toByteArray())
+        return android.util.Base64.encodeToString(hash, android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP)
+    }
+
+    /** Finishes "Continue with Google": the code from verbo://auth pairs this phone with the account. */
+    fun finishGoogle(store: Store, code: String) {
+        val verifier = store.authVerifier
+        if (verifier.isEmpty()) throw SyncException("Start the sign-in from the Verbo app")
+        if (store.deviceToken.isNotEmpty()) store.unpair()
+        pair(store, store.authServer.ifEmpty { Store.DEFAULT_SERVER }, code, verifier)
+        store.authVerifier = ""
+    }
+
+    fun pair(store: Store, address: String, code: String, verifier: String? = null) {
+        val url = normalise(address)
+        val body = JSONObject().put("code", code.trim()).put("name", Build.MODEL ?: "Phone").also { if (verifier != null) it.put("verifier", verifier) }.toString()
         val res = request("POST", "$url/api/device/pair", null, body)
         store.serverUrl = url
         store.deviceToken = res.getString("token")

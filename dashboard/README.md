@@ -42,6 +42,30 @@ Dashboard → **Keyboards** → **Pair a keyboard** shows a one-time code. In th
 under **Dashboard**, enter the site address and the code. The keyboard then pulls its
 settings from the dashboard (on pairing, on **Sync now**, and every 10 minutes while in use).
 
+## Continue with Google (sign-in for the web and the app)
+
+The same Google client (set up below) also turns on **Continue with Google** on the sign-in page and in the
+phone app. It asks only for name and email (`openid email profile`), so it works even before the Meet,
+Calendar and Gmail scopes are approved. Steps 3 and 4 below are all it needs; the redirect URI is the same.
+
+- On the web, the first Google sign-in creates the account. If a password account already has that email,
+  it is linked to Google and its password stops working (sign-up never checked email ownership, so this
+  stops anyone who registered someone else's address first).
+- In the app, **Continue with Google** opens the browser at `/api/auth/google?app=1`. Afterwards the server
+  sends the browser back to `verbo://auth` with a one-time pairing code, which only the phone that started
+  the sign-in can use (it keeps a secret verifier and sent only its SHA-256). The app pairs itself and syncs.
+  The app uses the hosted dashboard address by default; pairing with a code still works for any server.
+
+## Agents, keys and trying skills
+
+- **Agents** are built on a canvas: a trigger, then skills, ready-made acts, tools and actions linked in
+  order. Saving stores the layout in `config.agents` and also writes a chain skill (`Chain: a | b | c`) and,
+  for copied-text triggers, an auto action. Phones already run those, so older app versions get agents too.
+- **Keys** (`config.keymap`) hold a letter to run a skill, an act, a wheel tool or a saved text, in every app
+  or in one app (by package name). `keyboard.keysOn` pauses them all.
+- **Run** on a skill card and **Test** in the agent editor call `POST /api/run`, which runs each step on the
+  user's own AI key. There are no tools on the web, so the reply notes what the phone would do instead.
+
 ## Google: Meet, Calendar and Gmail (optional)
 
 With a Google account connected, the keyboard works in it by itself: the **Meeting link** shortcut drops a

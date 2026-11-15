@@ -47,8 +47,11 @@ function toast(message) {
 
 const app = document.getElementById('app');
 const state = {
-  email: null, allowSignup: true, tab: 'skills', config: null, devices: [], code: null,
+  email: null, name: '', allowSignup: true, googleLogin: false, tab: 'skills', config: null, devices: [], code: null,
   search: '', chat: [], thinking: false, draftMessage: '',
+  filter: 'all', sort: 'used', view: 'grid', // My skills
+  editing: null, selected: null, testText: '', testLogs: null, testing: false, // the agent editor
+  keySel: -1, // the selected row on the Keys page
 };
 
 // ---------- saving ----------
@@ -111,37 +114,6 @@ function modal(title, build) {
 const WHEEL_TOOLS = { ai: 'Ask AI', translate: 'Translate', rewrite: 'Rewrite', meet: 'Meeting link', voice: 'Voice', clips: 'Clips' };
 const MAX_WHEEL = 6;
 const GROUPS = [['write', 'Write'], ['edit', 'Edit'], ['translate', 'Translate'], ['summarize', 'Summarize']];
-
-// ---------- sign in ----------
-
-function authView() {
-  let mode = 'login';
-  const box = h('div', { class: 'auth' });
-  const draw = () => {
-    const email = h('input', { type: 'email', autocomplete: 'email', required: true });
-    const password = h('input', { type: 'password', required: true, minLength: mode === 'signup' ? 10 : 1,
-      autocomplete: mode === 'signup' ? 'new-password' : 'current-password' });
-    const form = h('form', { class: 'card', onsubmit: async (e) => {
-      e.preventDefault();
-      try {
-        const me = await api('POST', mode === 'signup' ? '/api/signup' : '/api/login', { email: email.value, password: password.value });
-        state.email = me.email;
-        await load();
-      } catch (err) { toast(err.message); }
-    } },
-      h('h2', null, mode === 'signup' ? 'Create your account' : 'Sign in'),
-      h('p', { class: 'muted' }, 'Set up your keyboard from the web.'),
-      h('label', { class: 'field' }, 'Email', email),
-      h('label', { class: 'field' }, mode === 'signup' ? 'Password (10 characters or more)' : 'Password', password),
-      h('div', { class: 'actions', style: 'margin-top:18px' },
-        h('button', { class: 'btn primary', type: 'submit' }, mode === 'signup' ? 'Create account' : 'Sign in'),
-        state.allowSignup && h('button', { class: 'btn ghost', type: 'button', onclick: () => { mode = mode === 'signup' ? 'login' : 'signup'; draw(); } },
-          mode === 'signup' ? 'I have an account' : 'Create an account')));
-    box.replaceChildren(h('div', { class: 'brand' }, h('span', null, 'V'), 'Verbo'), form);
-  };
-  draw();
-  return box;
-}
 
 // ---------- My skills ----------
 
@@ -377,41 +349,6 @@ function triggerDialog(index) {
         h('button', { class: 'btn', onclick: close }, 'Cancel'),
         index >= 0 && h('button', { class: 'btn ghost danger', onclick: () => saveList(list.filter((_, i) => i !== index), 'Auto action removed') }, 'Delete')));
   });
-}
-
-function skillsTab() {
-  const { skills, keyboard } = state.config;
-  const byKey = Object.fromEntries(skills.filter((s) => s.key).map((s) => [s.key, s]));
-  const q = state.search.trim().toLowerCase();
-  const shown = skills.map((s, i) => [s, i]).filter(([s]) => !q || (s.name + ' ' + s.instruction).toLowerCase().includes(q));
-  return [
-    h('div', { class: 'head' },
-      h('div', null, h('h1', null, 'My skills'), h('p', { class: 'muted sub' }, 'Each skill is one instruction your keyboard can apply to what you typed.')),
-      h('div', { class: 'actions' },
-        h('button', { class: 'btn', onclick: () => go('assistant') }, icon('sparkles'), 'Ask the assistant'),
-        h('button', { class: 'btn', onclick: () => chainDialog(-1) }, '⛓️ New chain'),
-        h('button', { class: 'btn primary', onclick: () => skillDialog(-1) }, icon('plus'), 'New skill'))),
-    h('div', { class: 'card' },
-      h('h2', null, 'Hold keys'),
-      h('p', { class: 'muted' }, 'Click a letter to choose the skill it runs when held. Purple letters already run one.'),
-      h('div', { class: 'keymap' }, ['qwertyuiop', 'asdfghjkl', 'zxcvbnm'].map((row) => h('div', null, row.split('').map((l) =>
-        h('button', { class: byKey[l] ? 'on' : '', title: byKey[l] ? `Hold ${l.toUpperCase()}: ${byKey[l].name}` : `Hold ${l.toUpperCase()}: nothing yet`,
-          'aria-label': byKey[l] ? `${l.toUpperCase()}, runs ${byKey[l].name}` : `${l.toUpperCase()}, free`, onclick: () => keyDialog(l) }, l)))))),
-    triggersCard(),
-    memoryCard(),
-    shortcutsCard(),
-    skills.length > 6 && h('input', { type: 'search', placeholder: 'Search my skills', value: state.search, 'aria-label': 'Search my skills',
-      style: 'margin-top:16px', oninput: (e) => { state.search = e.target.value; renderKeepingFocus(e.target); } }),
-    h('div', { class: 'grid', style: 'margin-top:16px' },
-      shown.map(([s, i]) => h('button', { class: 'card tile', onclick: () => (isChain(s) ? chainDialog(i) : skillDialog(i)) },
-        h('div', { class: 'top' }, h('div', { class: 'emoji' }, s.emoji || '✦'), h('h3', null, s.name), s.key && h('span', { class: 'keycap', title: `Hold ${s.key.toUpperCase()}` }, s.key.toUpperCase())),
-        h('p', { class: 'muted clamp' }, s.instruction),
-        h('div', { class: 'foot' },
-          h('span', { class: 'pill off' }, (GROUPS.find((g) => g[0] === s.category) || GROUPS[1])[1]),
-          keyboard.wheel.includes(wheelId(s.name)) && h('span', { class: 'pill' }, 'On the wheel')))),
-      !q && h('button', { class: 'card tile dashed', onclick: () => skillDialog(-1) }, icon('plus'), 'New skill')),
-    q && shown.length === 0 && h('p', { class: 'muted', style: 'margin-top:16px' }, 'No skill matches that search.'),
-  ];
 }
 
 // Typing in the search box re-renders the page; put the cursor back where it was.
@@ -670,13 +607,19 @@ function connectionsTab() {
   const set = c.appsSet || {};
   const pill = (on, yes = 'Connected', no = 'Not connected') => h('span', { class: 'pill' + (on ? ' ok' : ' off') }, on ? yes : no);
   return [
-    h('div', { class: 'head' }, h('div', null, h('h1', null, 'Connections'),
-      h('p', { class: 'muted sub' }, 'Apps your skills can use. Run a skill from the keyboard and it writes the text, then opens the app or does the job there.'))),
+    h('div', { class: 'card hero' },
+      h('span', { class: 'tag' }, icon('zap'), 'Connect & automate'),
+      h('h2', null, 'Bring your apps into Verbo'),
+      h('p', null, 'Connect your favourite tools once and your keyboard can write, search, schedule and post in them for you.'),
+      h('div', { class: 'actions' },
+        h('button', { class: 'btn primary', onclick: () => document.getElementById('accounts')?.scrollIntoView({ behavior: 'smooth' }) }, icon('plus'), 'Connect an app'),
+        h('button', { class: 'btn', onclick: () => go('agents') }, icon('bot'), 'Use them in an agent')),
+      h('div', { class: 'art' }, h('div', { class: 'key3d back' }), h('div', { class: 'key3d' }, '🔌'))),
     h('h2', { class: 'section' }, 'Ready to use'),
     h('p', { class: 'muted small section-sub' }, 'Nothing to connect. The skill opens the app with your text filled in, and nothing is sent until you press send there.'),
     h('div', { class: 'grid' },
       LINK_APPS.map(([ic, title, about, template]) => connection(ic, title, about, pill(true, 'Ready'), skillButton(template)))),
-    h('h2', { class: 'section' }, 'Connect your accounts'),
+    h('h2', { class: 'section', id: 'accounts' }, 'Connect your accounts'),
     h('p', { class: 'muted small section-sub' }, 'Paste a token once. Paired phones pick it up on the next sync, and skills can then read and act in the app for you.'),
     h('div', { class: 'grid' },
       googleCard(),
@@ -824,7 +767,7 @@ function usageCard() {
 function settingsTab() {
   return [
     h('div', { class: 'head' }, h('div', null, h('h1', null, 'Settings'), h('p', { class: 'muted sub' }, 'Everything here syncs with your phone.'))),
-    h('div', { class: 'stack' }, modelCard(), usageCard(), phonesCard(), keyboardCard(), wheelCard(), languagesCard(),
+    h('div', { class: 'stack' }, modelCard(), phonesCard(), keyboardCard(), wheelCard(), languagesCard(),
       h('div', { class: 'card row' }, h('div', { class: 'grow' }, h('h2', null, 'Account'), h('p', { class: 'muted' }, state.email)),
         h('button', { class: 'btn', onclick: async () => {
           await api('POST', '/api/logout').catch(() => {});
@@ -834,52 +777,3 @@ function settingsTab() {
   ];
 }
 
-// ---------- shell ----------
-
-const TABS = [
-  ['skills', 'My skills', 'layout_grid', skillsTab],
-  ['assistant', 'Assistant', 'message_circle', assistantTab],
-  ['connections', 'Connections', 'plug', connectionsTab],
-  ['settings', 'Settings', 'settings', settingsTab],
-];
-
-async function go(tab) {
-  state.tab = tab;
-  if (tab === 'settings') state.devices = await api('GET', '/api/devices').catch(() => state.devices);
-  render();
-  window.scrollTo(0, 0);
-}
-
-function render() {
-  if (!state.email) return app.replaceChildren(authView());
-  const current = TABS.find((t) => t[0] === state.tab) || TABS[0];
-  app.replaceChildren(h('div', { class: 'shell' },
-    h('aside', { class: 'side' },
-      h('div', { class: 'brand' }, h('span', null, 'V'), 'Verbo'),
-      h('nav', { 'aria-label': 'Sections' }, TABS.map(([id, name, ic]) =>
-        h('button', { 'aria-current': id === current[0] ? 'page' : null, onclick: () => go(id) }, icon(ic), name)))),
-    h('main', null, current[3]())));
-}
-
-async function load() {
-  [state.config, state.devices] = await Promise.all([api('GET', '/api/config'), api('GET', '/api/devices')]);
-  render();
-}
-
-(async () => {
-  try {
-    // Back from Google's sign-in page: say how it went, open the right tab, and tidy the address bar.
-    const google = new URLSearchParams(location.search).get('google');
-    if (google) {
-      state.tab = 'connections';
-      history.replaceState(null, '', '/');
-      setTimeout(() => toast(google === 'connected' ? 'Google connected' : 'Google sign-in did not complete'), 300);
-    }
-    const me = await api('GET', '/api/me');
-    state.allowSignup = me.allowSignup;
-    state.email = me.email;
-    if (me.email) await load(); else render();
-  } catch (e) {
-    app.replaceChildren(h('div', { class: 'auth' }, h('div', { class: 'card' }, 'Could not reach the server. ' + e.message)));
-  }
-})();

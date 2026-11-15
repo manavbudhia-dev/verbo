@@ -214,10 +214,12 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         baseWheel = wheelIds
         keys?.wheelItems = wheelIds.map { wheelItem(it, false) }
         keys?.barLabel = if (!barActive) "" else if (wheelIds.isEmpty()) "hold to act" else "hold for wheel"
-        keys?.bound = if (assistantOn) skills.mapNotNull { it.key.firstOrNull() }.toSet() else emptySet()
+        keymap = store.keymap
+        keys?.bound = if (assistantOn && store.keysOn) KeyAction.bound(keymap, skills, currentInputEditorInfo?.packageName) else emptySet()
     }
 
     private var baseWheel: List<String> = emptyList()
+    private var keymap: List<KeyAction> = emptyList()
     private var hindiOn = false
     /** The word a swipe just put in (with its trailing space), so a suggestion or backspace can replace it. */
     private var swiped: String? = null
@@ -576,6 +578,11 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     override fun onWheel(index: Int) {
         val id = wheelIds.getOrNull(index) ?: return
         feedback(KeyboardView.Type.ENTER)
+        runShortcut(id)
+    }
+
+    /** A wheel slot or a held key: a tool id, "act:Name", "skill:Name" or "text:words". */
+    private fun runShortcut(id: String) {
         when (id) {
             "ai" -> runAction(null)
             "translate" -> showLanguages()
@@ -583,15 +590,17 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             "voice" -> startVoice(false)
             "clips" -> showClips()
             "meet" -> makeMeetLink()
-            else -> if (id.startsWith("act:")) runAct(id.removePrefix("act:")) else skills.firstOrNull { it.name == id.removePrefix("skill:") }?.let { runAction(it) } ?: showStatus("That skill no longer exists")
+            else -> if (id.startsWith("text:")) currentInputConnection?.commitText(id.removePrefix("text:"), 1)
+            else if (id.startsWith("tool:")) runShortcut(id.removePrefix("tool:"))
+            else if (id.startsWith("act:")) runAct(id.removePrefix("act:")) else skills.firstOrNull { it.name == id.removePrefix("skill:") }?.let { runAction(it) } ?: showStatus("That skill no longer exists")
         }
     }
 
-    /** A letter with a skill bound to it was held: run that skill instead of typing the letter. */
+    /** A lit letter was held: run its key action for this app (or the skill bound to it) instead of typing it. */
     override fun onKeyHeld(letter: Char) {
-        val skill = skills.firstOrNull { it.key == letter.lowercase() } ?: return
+        val action = KeyAction.resolve(keymap, skills, letter, currentInputEditorInfo?.packageName) ?: return
         feedback(KeyboardView.Type.ENTER)
-        runAction(skill)
+        runShortcut(action)
     }
 
     // ---------- context from a copied message ----------
