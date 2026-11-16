@@ -360,6 +360,12 @@ class KeyboardTest {
 
     // ---------- the wheel ----------
 
+    private fun wheelIn(v: View): LanguageWheel? = when {
+        v is LanguageWheel -> v
+        v is ViewGroup -> (0 until v.childCount).firstNotNullOfOrNull { wheelIn(v.getChildAt(it)) }
+        else -> null
+    }
+
     private fun holdBar(keys: KeyboardView): Triple<Int, Float, Float> {
         val bar = Triple(0, keys.width * 0.5f, keys.height * 0.88f)
         touch(keys, MotionEvent.ACTION_DOWN, listOf(bar))
@@ -394,6 +400,47 @@ class KeyboardTest {
         touch(keys, MotionEvent.ACTION_DOWN, listOf(bar))
         touch(keys, MotionEvent.ACTION_UP, listOf(bar))
         assertEquals("hi ", field.text.toString())
+    }
+
+    @Test
+    fun languageWheelSpaceTypesAndCancelReturnsToKeys() {
+        type("hi")
+        val keys = ime.keys!!
+        layout(root)
+        holdBar(keys)
+        val translate = Triple(0, keys.width * 0.14f, keys.height * 0.80f)
+        touch(keys, MotionEvent.ACTION_MOVE, listOf(translate))
+        touch(keys, MotionEvent.ACTION_UP, listOf(translate))
+        val wheel = wheelIn(root)!!
+        layout(root)
+        val space = Triple(0, wheel.width / 2f, wheel.height - 19f)
+        touch(wheel, MotionEvent.ACTION_DOWN, listOf(space))
+        touch(wheel, MotionEvent.ACTION_UP, listOf(space))
+        assertEquals("hi ", field.text.toString())
+        assertEquals("the wheel stays up after space", wheel, wheelIn(root))
+        val cancel = Triple(0, wheel.width / 2f, wheel.height - 140f)
+        touch(wheel, MotionEvent.ACTION_DOWN, listOf(cancel))
+        touch(wheel, MotionEvent.ACTION_UP, listOf(cancel))
+        assertEquals(View.VISIBLE, keys.visibility)
+    }
+
+    @Test
+    fun languageWheelReleaseOnAFlagRunsTheTranslation() {
+        type("hello")
+        val keys = ime.keys!!
+        layout(root)
+        holdBar(keys)
+        val translate = Triple(0, keys.width * 0.14f, keys.height * 0.80f)
+        touch(keys, MotionEvent.ACTION_MOVE, listOf(translate))
+        touch(keys, MotionEvent.ACTION_UP, listOf(translate))
+        val wheel = wheelIn(root)!!
+        layout(root)
+        assertEquals(Store.DEFAULT_LANGUAGES, wheel.languages)
+        // The second flag's centre: 0.74 of the radius out, 126 degrees up from the right.
+        val flag = Triple(0, wheel.width * 0.30f, wheel.height - 403f)
+        touch(wheel, MotionEvent.ACTION_MOVE, listOf(flag))
+        touch(wheel, MotionEvent.ACTION_UP, listOf(flag))
+        assertEquals("the running task replaces the wheel", null, wheelIn(root))
     }
 
     @Test
@@ -516,6 +563,13 @@ class KeyboardTest {
         touch(wheelKeys, MotionEvent.ACTION_UP, listOf(Triple(0, wheelKeys.width * 0.14f, wheelKeys.height * 0.80f)))
         layout(agentRoot)
         snap(agentRoot, "panel-languages")
+        // Mid-gesture on the light wheel: finger over the second flag, then release on Cancel.
+        val langWheel = wheelIn(agentRoot)!!
+        touch(langWheel, MotionEvent.ACTION_MOVE, listOf(Triple(0, langWheel.width * 0.30f, langWheel.height - 403f)))
+        layout(agentRoot)
+        snap(agentRoot, "panel-languages-pick")
+        touch(langWheel, MotionEvent.ACTION_UP, listOf(Triple(0, langWheel.width / 2f, langWheel.height - 140f)))
+        assertEquals("releasing on Cancel returns to the keys", View.VISIBLE, ime.keys!!.visibility)
         ime.showResult(ActionResult("Starbucks\n1585 Broadway, Times Square, New York, NY 10036\nhttps://www.google.com/maps/search/?api=1&query=Starbucks+1585+Broadway", "geo:0,0?q=Starbucks+1585+Broadway", 40.7596521 to -73.9852254), {}, {})
         layout(agentRoot)
         snap(agentRoot, "panel-place")

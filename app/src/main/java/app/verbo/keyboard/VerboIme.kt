@@ -1224,11 +1224,31 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
 
     /** [auto] = choosing the language to keep translating into, rather than translating once. */
     private fun showLanguages(auto: Boolean = false) {
+        if (auto) return showLanguageChoices(true)
+        val mine = store.languages.take(5)
+        showPanel {
+            addView(LanguageWheel(this@VerboIme).apply {
+                languages = mine
+                onPick = { i -> translateInto(listOf(mine[i])) }
+                onCancel = { hidePanel(); showTyping() }
+                onSpace = { currentInputConnection?.commitText(" ", 1) }
+                onMore = { showLanguageChoices(false) }
+            }, LinearLayout.LayoutParams(-1, -1))
+        }
+    }
+
+    private fun translateInto(languages: List<String>) {
+        hidePanel()
+        runTask(if (languages.size == 1) "Into ${languages[0]}…" else "Translating…", Ai.translateTask(languages), card = true) { showLanguages() }
+    }
+
+    /** The full list: every language, all of mine at once, and the auto-translate switch. */
+    private fun showLanguageChoices(auto: Boolean) {
         val mine = store.languages
         fun go(languages: List<String>) {
             hidePanel()
             if (auto) return setAuto(languages[0])
-            runTask(if (languages.size == 1) "Into ${languages[0]}…" else "Translating…", Ai.translateTask(languages), card = true) { showLanguages() }
+            translateInto(languages)
         }
         val choices = ArrayList<Pair<String, () -> Unit>>()
         val current = autoLang
