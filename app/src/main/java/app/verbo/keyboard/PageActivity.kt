@@ -8,6 +8,7 @@ import android.graphics.Color
 import android.os.Bundle
 import android.text.format.DateUtils
 import android.view.Gravity
+import android.view.View
 import android.widget.LinearLayout
 
 /** Detail screens opened from the main settings screen. The "page" extra says which one. */
@@ -15,6 +16,7 @@ class PageActivity : Activity() {
 
     private lateinit var store: Store
     private lateinit var ui: Ui
+    private val look by lazy { Look(this) }
     private lateinit var page: String
     private val preview by lazy { Feedback(this) }
 
@@ -34,11 +36,11 @@ class PageActivity : Activity() {
         store = Store(this)
         ui = Ui(this)
         page = intent.getStringExtra("page") ?: "prompts"
-        render()
-        if (savedInstanceState == null && intent.getBooleanExtra("new", false)) editSkill(-1, null)
+        if (intent.getBooleanExtra("new", false)) page = "skill-new"
         // Opened from a skill card on Home: go straight to that skill.
         val edit = intent.getIntExtra("edit", -1)
-        if (savedInstanceState == null && edit in store.skills.indices) editSkill(edit, null)
+        if (edit in store.skills.indices) page = "skill-edit:$edit"
+        render()
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) = render()
@@ -57,10 +59,12 @@ class PageActivity : Activity() {
     }
 
     private fun render() {
+        if (page == "skill-new" || page.startsWith("skill-edit:")) { skillPage(); return }
         val column = ui.page()
         when {
             page.startsWith("category:") -> skillsPage(column, page.substringAfter(":"))
             page == "prompts" -> skillsPage(column, null)
+            page == "shelves" -> shelvesPage(column)
             page == "automate" -> automatePage(column)
             page == "shortcuts" -> shortcutsPage(column)
             page == "privacy" -> privacyPage(column)
@@ -121,47 +125,138 @@ class PageActivity : Activity() {
     }
 
     private fun editSkill(index: Int, category: String?) {
+        val i = android.content.Intent(this, PageActivity::class.java)
+            .putExtra("page", if (index < 0) "skill-new" else "skill-edit:$index")
+        if (category != null) i.putExtra("cat", category)
+        startActivity(i)
+    }
+
+    /** The New Skill sheet: a photo header with the form on a rounded paper over it. */
+    private fun skillPage() {
+        val index = page.substringAfter("skill-edit:", "").toIntOrNull() ?: -1
         val skills = store.skills.toMutableList()
         val existing = skills.getOrNull(index)
-        var chosen = existing?.category ?: category ?: "edit"
-        val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(ui.dp(22), ui.dp(8), ui.dp(22), 0) }
-        val emoji = ui.field("Emoji (optional)", existing?.emoji ?: "")
-        val name = ui.field("Name, e.g. Pirate", existing?.name ?: "")
-        val instruction = ui.field("What should it do with the text? e.g. Rewrite it the way a cheerful pirate would say it.", existing?.instruction ?: "", lines = 3)
-        val group = ui.button("Group: ${categoryInfo[chosen]?.first}") {}
-        group.setOnClickListener {
-            chosen = Store.CATEGORIES[(Store.CATEGORIES.indexOf(chosen) + 1) % Store.CATEGORIES.size]
-            (group.getChildAt(0) as android.widget.TextView).text = "Group: ${categoryInfo[chosen]?.first}"
-        }
-        val key = ui.field("Hold key (optional): one letter, e.g. n", existing?.key ?: "")
-        form.addView(emoji); form.addView(name); form.addView(instruction); form.addView(key)
-        form.addView(group, LinearLayout.LayoutParams(-2, -2).apply { topMargin = ui.dp(8) })
+        var chosen = existing?.category ?: intent.getStringExtra("cat") ?: "edit"
 
-        val dialog = AlertDialog.Builder(this)
-            .setTitle(if (existing == null) "New skill" else "Edit skill")
-            .setView(form)
-            .setPositiveButton("Save") { _, _ ->
-                val n = name.text.toString().trim()
-                val i = instruction.text.toString().trim()
-                if (n.isEmpty() || i.isEmpty()) {
-                    ui.toast("A skill needs a name and an instruction")
-                } else {
-                    val letter = key.text.toString().trim().lowercase().take(1).takeIf { it.isNotEmpty() && it[0] in 'a'..'z' } ?: ""
-                    // A letter can run only one skill, so taking it frees it from any other skill.
-                    if (letter.isNotEmpty()) for (j in skills.indices) if (j != index && skills[j].key == letter) skills[j] = skills[j].copy(key = "")
-                    val skill = Skill(emoji.text.toString().trim(), n, i, chosen, letter)
-                    if (existing == null) skills.add(skill) else skills[index] = skill
-                    store.skills = skills
+        val root = android.widget.FrameLayout(this)
+        root.addView(android.widget.ImageView(this).apply {
+            setImageResource(R.drawable.photo_header)
+            scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+        }, android.widget.FrameLayout.LayoutParams(-1, look.dp(230)))
+        root.addView(look.circleButton(R.drawable.ic_chevron_left, look.ink) { finish() },
+            android.widget.FrameLayout.LayoutParams(look.dp(40), look.dp(40)).apply { setMargins(look.dp(16), look.dp(16), 0, 0) })
+
+        val column = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            isFocusableInTouchMode = true
+            setPadding(look.dp(20), look.dp(10), look.dp(20), look.dp(22))
+        }
+        column.addView(View(this).apply { background = look.shape(Color.parseColor("#C9C9D4"), 2) },
+            LinearLayout.LayoutParams(look.dp(40), look.dp(4)).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = look.dp(18) })
+        val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, 0, 0, look.dp(20)) }
+        head.addView(look.iconTile(R.drawable.ic_zap, look.accentSoft, look.accent, 56, 26))
+        head.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(look.dp(14), 0, 0, 0)
+            addView(look.text(if (existing == null) "New Skill" else "Edit Skill", 22f, bold = true))
+            addView(look.text("Create a custom skill for your keyboard", 13.5f, look.muted).apply { setPadding(0, look.dp(3), 0, 0) })
+        })
+        column.addView(head)
+
+        val emojiSmile = look.icon(R.drawable.ic_smile, 20, Color.parseColor("#55555F"))
+        val emoji = look.fieldRow(R.drawable.ic_smile, "Emoji (optional)", existing?.emoji ?: "", trailing = emojiSmile)
+        emojiSmile.setOnClickListener { pickEmoji(emoji) }
+        val name = look.fieldRow(R.drawable.ic_tag, "Name, e.g. Pirate", existing?.name ?: "")
+        val instruction = look.fieldRow(R.drawable.ic_file_text,
+            "What should it do with the text? e.g. Rewrite it the way a cheerful pirate would say it.", existing?.instruction ?: "", lines = 3)
+        val key = look.fieldRow(R.drawable.ic_keyboard, "Hold key (optional): one letter, e.g. n", existing?.key ?: "")
+        val group = look.dropRow(R.drawable.ic_layers, "Group: ${categoryInfo[chosen]?.first}") {}
+        group.setOnClickListener {
+            AlertDialog.Builder(this).setItems(Store.CATEGORIES.map { categoryInfo[it]?.first ?: it }.toTypedArray()) { _, w ->
+                chosen = Store.CATEGORIES[w]
+                look.dropText(group).text = "Group: ${categoryInfo[chosen]?.first}"
+            }.show()
+        }
+        group.layoutParams = LinearLayout.LayoutParams(look.dp(250), -2).apply { bottomMargin = look.dp(12) }
+        listOf(emoji, name, instruction, key, group).forEach { column.addView(it) }
+
+        column.addView(look.darkPill("Save Skill", R.drawable.ic_check) {
+            val n = look.editText(name).text.toString().trim()
+            val i = look.editText(instruction).text.toString().trim()
+            if (n.isEmpty() || i.isEmpty()) {
+                look.toast("A skill needs a name and an instruction")
+            } else {
+                val letter = look.editText(key).text.toString().trim().lowercase().take(1).takeIf { it.isNotEmpty() && it[0] in 'a'..'z' } ?: ""
+                // A letter can run only one skill, so taking it frees it from any other skill.
+                if (letter.isNotEmpty()) for (j in skills.indices) if (j != index && skills[j].key == letter) skills[j] = skills[j].copy(key = "")
+                val skill = Skill(look.editText(emoji).text.toString().trim(), n, i, chosen, letter)
+                if (existing == null) skills.add(skill) else skills[index] = skill
+                store.skills = skills
+                finish()
+            }
+        }.apply { (layoutParams as LinearLayout.LayoutParams).topMargin = look.dp(8) })
+        if (existing != null) column.addView(look.text("Remove skill", 14f, Color.parseColor("#DC2626"), bold = true).apply {
+            gravity = Gravity.CENTER
+            setPadding(0, look.dp(14), 0, 0)
+            setOnClickListener {
+                AlertDialog.Builder(this@PageActivity).setMessage("Remove ${existing.name}?")
+                    .setPositiveButton("Remove") { _, _ -> skills.removeAt(index); store.skills = skills; finish() }
+                    .setNegativeButton("Cancel", null).show()
+            }
+        }, LinearLayout.LayoutParams(-1, -2))
+
+        val sheet = android.widget.ScrollView(this).apply {
+            isVerticalScrollBarEnabled = false
+            background = look.sheetShape()
+            addView(column)
+        }
+        root.addView(sheet, android.widget.FrameLayout.LayoutParams(-1, -1).apply { topMargin = look.dp(190) })
+        setContentView(root)
+    }
+
+    private fun pickEmoji(row: LinearLayout) {
+        val emojis = arrayOf("✨", "💬", "✂️", "👔", "😄", "🌍", "🧾", "", "", "👤", "🗒️", "📧", "💼", "📋", "🏴‍☠️", "🤖", "", "", "🔥", "💡", "📝", "", "😊", "")
+        AlertDialog.Builder(this).setTitle("Emoji")
+            .setItems(emojis + "None") { _, w -> look.editText(row).setText(if (w < emojis.size) emojis[w] else "") }.show()
+    }
+
+    /** The ready-made shelf list, kept for adding skills the keyboard ships with. */
+    private var shelf = "Featured"
+
+    private fun shelvesPage(column: LinearLayout) {
+        column.addView(ui.topBar("Skill library", "Ready-made skills. Add one and it appears above your keyboard."))
+        val chips = LinearLayout(this)
+        Library.SHELVES.forEach { name ->
+            val on = name == shelf
+            chips.addView(ui.text(name, 15f, if (on) Color.WHITE else ui.muted, bold = true).apply {
+                gravity = Gravity.CENTER
+                background = ui.ripple(if (on) ui.shape(ui.accent, 20) else ui.shape(ui.card, 20, ui.line), 20)
+                setPadding(ui.dp(18), ui.dp(9), ui.dp(18), ui.dp(9))
+                setOnClickListener { shelf = name; render() }
+            }, LinearLayout.LayoutParams(-2, -2).apply { rightMargin = ui.dp(8) })
+        }
+        column.addView(android.widget.HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(chips) },
+            LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = ui.dp(12) })
+        val mine = store.skills
+        Library.SKILLS.filter { it.shelf == shelf }.forEach { item ->
+            val added = mine.any { it.name == item.name }
+            val button = ui.text(if (added) "Added" else "Add", 14f, if (added) ui.muted else Color.WHITE, bold = true).apply {
+                gravity = Gravity.CENTER
+                background = if (added) ui.shape(Color.TRANSPARENT, 16, ui.line) else ui.ripple(ui.shape(ui.accent, 16), 16)
+                setPadding(ui.dp(16), ui.dp(7), ui.dp(16), ui.dp(7))
+                if (!added) setOnClickListener {
+                    // Give it its suggested hold key only if no other skill is using that letter.
+                    val key = item.key.takeIf { k -> k.isNotEmpty() && mine.none { it.key == k } } ?: ""
+                    store.skills = mine + Skill(item.emoji, item.name, item.instruction, item.group, key)
+                    ui.toast(item.name + " added" + if (key.isEmpty()) "" else ", hold ${key.uppercase()} to run it")
                     render()
                 }
             }
-            .setNegativeButton("Cancel", null)
-        if (existing != null) dialog.setNeutralButton("Delete") { _, _ ->
-            skills.removeAt(index)
-            store.skills = skills
-            render()
+            val row = ui.row(R.drawable.ic_sparkles, item.name, item.about, button)
+            row.removeViewAt(0)
+            row.addView(ui.text(item.emoji, 22f).apply { gravity = Gravity.CENTER; background = ui.shape(ui.accentSoft, 12) }, 0, LinearLayout.LayoutParams(ui.dp(46), ui.dp(46)))
+            column.addView(ui.rows(row))
         }
-        dialog.show()
     }
 
     // ---------- usage and on-device AI ----------

@@ -612,10 +612,12 @@ class KeyboardTest {
             snap(frame, if (tab == "settings") "settings" else "home-$tab")
         }
         MainActivity.tab = "home"
-        for (page in listOf("ai", "triggers", "memory", "usage", "textshortcuts", "look", "typing", "languages", "create", "wheel", "feedback", "battery", "templates", "prompts", "automate", "shortcuts", "privacy", "dashboard", "welcome", "keys", "category:edit")) {
+        for (page in listOf("ai", "triggers", "memory", "usage", "textshortcuts", "look", "typing", "languages", "create", "wheel", "feedback", "battery", "templates", "prompts", "automate", "shortcuts", "privacy", "dashboard", "welcome", "keys", "category:edit", "shelves", "skill-new", "skill-edit:0")) {
             val a = Robolectric.buildActivity(PageActivity::class.java, android.content.Intent().putExtra("page", page)).setup().get()
             val s = content(a)
-            s.layout(0, 0, 1080, maxOf((s as ViewGroup).getChildAt(0).measuredHeight, 900))
+            val h = if (page.startsWith("skill-")) 2000 else maxOf((s as ViewGroup).getChildAt(0).measuredHeight, 900)
+            s.measure(View.MeasureSpec.makeMeasureSpec(1080, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(h, View.MeasureSpec.EXACTLY))
+            s.layout(0, 0, 1080, h)
             snap(s, "page-" + page.replace(":", "-"))
         }
     }

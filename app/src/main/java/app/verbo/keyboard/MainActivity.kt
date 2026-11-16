@@ -63,7 +63,12 @@ class MainActivity : Activity() {
 
     private fun build() {
         when (tab) {
-            "library" -> buildLibrary(ui.page(navBar()))
+            "library" -> buildLibrary(look.page(look.navIcons("skills", listOf(
+                Triple("home", R.drawable.ic_home, { tab = "home"; build() }),
+                Triple("skills", R.drawable.ic_zap, {}),
+                Triple("activity", R.drawable.ic_bar_chart, { open("usage") }),
+                Triple("person", R.drawable.ic_user, { open("memory") }),
+            ))))
             "settings" -> buildSettings(look.page(look.navSettings(
                 { tab = "home"; build() },
                 { open("usage") },
@@ -244,42 +249,75 @@ class MainActivity : Activity() {
     // ---------- library ----------
 
     /** Ready-made skills, grouped on shelves, added with one tap. */
-    private fun buildLibrary(column: LinearLayout) {
-        bigTitle(column, "Skills", "Ready-made skills. Add one and it appears above your keyboard.")
-        newSetupBox(column)
-        val chips = LinearLayout(this)
-        Library.SHELVES.forEach { name ->
-            val on = name == shelf
-            chips.addView(ui.text(name, 15f, if (on) Color.WHITE else ui.muted, bold = true).apply {
-                gravity = Gravity.CENTER
-                background = ui.ripple(if (on) ui.shape(ui.accent, 20) else ui.shape(ui.card, 20, ui.line), 20)
-                setPadding(ui.dp(18), ui.dp(9), ui.dp(18), ui.dp(9))
-                setOnClickListener { shelf = name; build() }
-            }, LinearLayout.LayoutParams(-2, -2).apply { rightMargin = ui.dp(8) })
-        }
-        column.addView(android.widget.HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(chips) },
-            LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = ui.dp(12) })
+    private var skillQuery = ""
+    private var skillChip = "All"
+    private val skillChips = listOf("All", "Writing", "Translate", "Productivity")
 
-        val mine = store.skills
-        Library.SKILLS.filter { it.shelf == shelf }.forEach { item ->
-            val added = mine.any { it.name == item.name }
-            val button = ui.text(if (added) "Added" else "Add", 14f, if (added) ui.muted else Color.WHITE, bold = true).apply {
-                gravity = Gravity.CENTER
-                background = if (added) ui.shape(Color.TRANSPARENT, 16, ui.line) else ui.ripple(ui.shape(ui.accent, 16), 16)
-                setPadding(ui.dp(16), ui.dp(7), ui.dp(16), ui.dp(7))
-                if (!added) setOnClickListener {
-                    // Give it its suggested hold key only if no other skill is using that letter.
-                    val key = item.key.takeIf { k -> k.isNotEmpty() && mine.none { it.key == k } } ?: ""
-                    store.skills = mine + Skill(item.emoji, item.name, item.instruction, item.group, key)
-                    ui.toast(item.name + " added" + if (key.isEmpty()) "" else ", hold ${key.uppercase()} to run it")
-                    build()
+    private fun buildLibrary(column: LinearLayout) {
+        column.addView(look.header("Skills", "Your custom AI actions", look.circleButton(R.drawable.ic_more_horizontal) { skillsMenu() }))
+        val grid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        fun fill() {
+            grid.removeAllViews()
+            val q = skillQuery.trim().lowercase()
+            val shown = store.skills.withIndex().filter { (_, s) ->
+                (q.isEmpty() || s.name.lowercase().contains(q) || s.instruction.lowercase().contains(q)) && when (skillChip) {
+                    "Writing" -> s.category == "write"
+                    "Translate" -> s.category == "translate"
+                    "Productivity" -> s.category == "edit" || s.category == "summarize"
+                    else -> true
                 }
             }
-            val row = ui.row(R.drawable.ic_sparkles, item.name, item.about, button)
-            row.removeViewAt(0)
-            row.addView(ui.text(item.emoji, 22f).apply { gravity = Gravity.CENTER; background = ui.shape(ui.accentSoft, 12) }, 0, LinearLayout.LayoutParams(ui.dp(46), ui.dp(46)))
-            column.addView(ui.rows(row))
+            if (shown.isEmpty()) grid.addView(look.text("Nothing here yet.", 14f, look.muted).apply { setPadding(look.dp(4), look.dp(6), 0, look.dp(10)) })
+            shown.chunked(2).forEach { two ->
+                grid.addView(look.pair(skillPhotoCard(two[0].index, two[0].value), if (two.size > 1) skillPhotoCard(two[1].index, two[1].value) else View(this)))
+            }
         }
+        column.addView(look.searchBar("Search skills", { skillQuery = it; fill() }, {
+            AlertDialog.Builder(this).setItems(skillChips.toTypedArray()) { _, w -> skillChip = skillChips[w]; build() }.show()
+        }))
+        column.addView(look.chips(skillChips, skillChip) { skillChip = it; build() })
+        fill()
+        column.addView(grid)
+        column.addView(look.darkPill("New Skill", R.drawable.ic_plus) { open("skill-new") }.apply {
+            (layoutParams as LinearLayout.LayoutParams).setMargins(0, look.dp(6), 0, look.dp(6))
+        })
+    }
+
+    private fun skillPhotoCard(index: Int, s: Skill): View {
+        val photos = listOf(R.drawable.photo_sunset, R.drawable.photo_snow, R.drawable.photo_mist, R.drawable.photo_hills)
+        val icon = when {
+            s.name == "List" -> R.drawable.ic_list
+            s.category == "translate" -> R.drawable.ic_globe
+            s.category == "summarize" -> R.drawable.ic_file_text
+            s.category == "write" -> R.drawable.ic_sparkles
+            else -> R.drawable.ic_zap
+        }
+        val blurb = s.instruction.substringBefore(". ").take(90)
+        return look.photoCard(photos[index % photos.size], icon, s.name, blurb,
+            { open("skill-edit", { it.putExtra("index", index) }) }, { skillMenu(index) })
+    }
+
+    private fun skillsMenu() = AlertDialog.Builder(this)
+        .setItems(arrayOf("Skill library", "Restore default skills")) { _, w ->
+            if (w == 0) open("shelves")
+            else AlertDialog.Builder(this).setMessage("Replace your skills with the original set?")
+                .setPositiveButton("Restore") { _, _ -> store.resetSkills(); build() }
+                .setNegativeButton("Cancel", null).show()
+        }.show()
+
+    private fun skillMenu(index: Int) {
+        val skills = store.skills.toMutableList()
+        val s = skills.getOrNull(index) ?: return
+        AlertDialog.Builder(this).setTitle(s.name)
+            .setItems(arrayOf("Edit", "Duplicate", "Remove")) { _, w ->
+                when (w) {
+                    0 -> open("skill-edit", { it.putExtra("index", index) })
+                    1 -> { store.skills = skills + s.copy(name = s.name + " copy", key = ""); build() }
+                    else -> AlertDialog.Builder(this).setMessage("Remove ${s.name}?")
+                        .setPositiveButton("Remove") { _, _ -> skills.removeAt(index); store.skills = skills; build() }
+                        .setNegativeButton("Cancel", null).show()
+                }
+            }.show()
     }
 
     // ---------- settings ----------
@@ -350,6 +388,7 @@ class MainActivity : Activity() {
     }
 
     private fun refreshSetup() {
+        if (!::setupBox.isInitialized) return // the Skills tab has no setup banner
         val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
         val enabled = imm.enabledInputMethodList.any { it.packageName == packageName }
         val selected = (Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD) ?: "").startsWith("$packageName/")
@@ -399,7 +438,6 @@ class MainActivity : Activity() {
     companion object {
         /** Which tab is showing; kept across screen rebuilds. */
         internal var tab = "home"
-        private var shelf = "Featured"
         private const val EXPORT = 1
         private const val IMPORT = 2
     }

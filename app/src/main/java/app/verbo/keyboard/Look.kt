@@ -335,10 +335,11 @@ class Look(val a: Activity) {
         val bar = LinearLayout(a).apply {
             gravity = Gravity.CENTER_VERTICAL
             background = shape(card, 16, edge)
+            isFocusableInTouchMode = true
             setPadding(dp(14), dp(4), dp(10), dp(4))
             layoutParams = LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(14) }
         }
-        bar.addView(icon(R.drawable.ic_search, 20, faint))
+        bar.addView(icon(R.drawable.ic_search, 20, Color.parseColor("#55555F")))
         val field = EditText(a).apply {
             this.hint = hint
             setTextColor(ink)
@@ -398,10 +399,10 @@ class Look(val a: Activity) {
         box.addView(ImageView(a).apply {
             setImageResource(photo)
             scaleType = ImageView.ScaleType.CENTER_CROP
-        }, FrameLayout.LayoutParams(-1, dp(210)))
+        }, FrameLayout.LayoutParams(-1, dp(240)))
         box.addView(View(a).apply {
             background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(Color.TRANSPARENT, Color.parseColor("#E6000000")))
-        }, FrameLayout.LayoutParams(-1, dp(120), Gravity.BOTTOM))
+        }, FrameLayout.LayoutParams(-1, dp(130), Gravity.BOTTOM))
         box.addView(ImageView(a).apply {
             setImageResource(iconRes)
             setColorFilter(Color.WHITE)
@@ -418,7 +419,7 @@ class Look(val a: Activity) {
         }, FrameLayout.LayoutParams(dp(36), dp(36), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(12), dp(12), 0) })
         val words = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), 0, dp(14), dp(14)) }
         words.addView(text(title, 17f, Color.WHITE, bold = true))
-        words.addView(text(subtitle, 13f, Color.parseColor("#E4E4EC")).apply { setPadding(0, dp(3), 0, 0); maxLines = 2 })
+        words.addView(text(subtitle, 13f, Color.parseColor("#E4E4EC")).apply { setPadding(0, dp(3), 0, 0); maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END })
         box.addView(words, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
         return box
     }
@@ -426,8 +427,8 @@ class Look(val a: Activity) {
     /** The wide dark pill button: "+ New Skill", "Save Skill"... */
     fun darkPill(label: String, iconRes: Int? = null, onTap: () -> Unit) = LinearLayout(a).apply {
         gravity = Gravity.CENTER
-        background = ripple(shape(dark, 18), 18)
-        setPadding(dp(18), dp(15), dp(18), dp(15))
+        background = ripple(shape(dark, 28), 28)
+        setPadding(dp(18), dp(16), dp(18), dp(16))
         if (iconRes != null) addView(icon(iconRes, 20, Color.WHITE).apply { (layoutParams as LinearLayout.LayoutParams).rightMargin = dp(9) })
         addView(text(label, 15.5f, Color.WHITE, bold = true))
         setOnClickListener { onTap() }
@@ -514,6 +515,13 @@ class Look(val a: Activity) {
 
     // ---------- sheet pieces ----------
 
+    /** The bottom sheet's paper: rounded on top only, square at the screen edge. */
+    fun sheetShape() = GradientDrawable().apply {
+        val r = dp(28).toFloat()
+        cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
+        setColor(Color.parseColor("#F8F8FC"))
+    }
+
     fun label(s: String) = text(s, 15f, ink, bold = true).apply { setPadding(dp(2), dp(14), 0, dp(8)) }
 
     /** White rounded input row: leading icon, edit text, optional trailing view. */
@@ -523,7 +531,7 @@ class Look(val a: Activity) {
             background = shape(card, 16, edge)
             setPadding(dp(14), dp(6), dp(14), dp(6))
         }
-        row.addView(icon(iconRes, 20, faint).apply { setPadding(0, dp(8), 0, 0) })
+        row.addView(icon(iconRes, 20, Color.parseColor("#55555F")).apply { setPadding(0, dp(8), 0, 0) })
         val field = EditText(a).apply {
             this.hint = hint
             setText(value)
