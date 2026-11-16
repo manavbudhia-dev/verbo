@@ -5,6 +5,7 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.text.format.DateUtils
 import android.view.Gravity
@@ -60,6 +61,7 @@ class PageActivity : Activity() {
 
     private fun render() {
         if (page == "skill-new" || page.startsWith("skill-edit:")) { skillPage(); return }
+        if (page == "chain-new" || page.startsWith("chain-edit:")) { chainPage(); return }
         val column = ui.page()
         when {
             page.startsWith("category:") -> skillsPage(column, page.substringAfter(":"))
@@ -414,38 +416,429 @@ class PageActivity : Activity() {
     }
 
     private fun editChain(index: Int) {
+        startActivity(android.content.Intent(this, PageActivity::class.java)
+            .putExtra("page", if (index < 0) "chain-new" else "chain-edit:$index"))
+    }
+
+    private fun actLook(name: String): Triple<Int, Int, Int> = when (name) {
+        "Polish" -> Triple(look.purpleBg, look.purpleTint, R.drawable.ic_sparkles)
+        "Reply" -> Triple(look.blueBg, look.blueTint, R.drawable.ic_corner_up_left)
+        "Shorter" -> Triple(look.pinkBg, look.pinkTint, R.drawable.ic_scissors)
+        "Formal" -> Triple(look.amberBg, look.amberTint, R.drawable.ic_briefcase)
+        "Casual" -> Triple(look.greenBg, look.greenTint, R.drawable.ic_coffee)
+        "English" -> Triple(look.blueBg, look.blueTint, R.drawable.ic_globe)
+        "Summarize" -> Triple(look.purpleBg, look.purpleTint, R.drawable.ic_file_text)
+        else -> Triple(look.indigoBg, look.indigoTint, R.drawable.ic_sparkles)
+    }
+
+    private fun actBlurb(name: String, instruction: String) = when (name) {
+        "Polish" -> "Improve and clean the text"
+        "Reply" -> "Generate a suitable reply"
+        "Summarize" -> "Convert to key points"
+        else -> instruction.substringBefore(". ").take(38)
+    }
+
+    /** The New Chain sheet: numbered steps on a rail, an act carousel below, and a test run. */
+    private fun chainPage() {
+        val index = page.substringAfter("chain-edit:", "").toIntOrNull() ?: -1
         val skills = store.skills.toMutableList()
         val existing = skills.getOrNull(index)
-        val names = (skills.filter { !Acts.isChain(it.instruction) }.map { it.name } + Acts.BUILTIN.map { it.name }).distinct()
+        val acts = (skills.filter { !Acts.isChain(it.instruction) }.map { it.name to it.instruction } +
+            Acts.BUILTIN.map { it.name to it.instruction }).distinctBy { it.first }
+        val names = acts.map { it.first }
+        val lookup = { n: String -> acts.firstOrNull { it.first == n }?.second }
         val order = existing?.let { Acts.chainSteps(it.instruction).filter { s -> s in names }.toMutableList() } ?: mutableListOf()
-        val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(ui.dp(22), ui.dp(8), ui.dp(22), 0) }
-        val name = ui.field("Chain name, e.g. Trip planner", existing?.name ?: "")
-        form.addView(name)
-        val shown = ui.text("", 13.5f, ui.muted).apply { setPadding(0, ui.dp(8), 0, ui.dp(4)) }
-        fun refresh() { shown.text = if (order.isEmpty()) "Tick acts in the order they should run" else order.joinToString(" → ") }
-        refresh()
-        form.addView(shown)
-        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        names.forEach { n ->
-            list.addView(android.widget.CheckBox(this).apply {
-                text = n
-                isChecked = n in order
-                setOnCheckedChangeListener { _, on -> if (on) order.add(n) else order.remove(n); refresh() }
-            })
+        val undo = ArrayDeque<List<String>>()
+        val redo = ArrayDeque<List<String>>()
+
+        val root = android.widget.FrameLayout(this).apply { setBackgroundColor(Color.parseColor("#14141C")) }
+        val column = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            isFocusableInTouchMode = true
+            setPadding(look.dp(20), look.dp(10), look.dp(20), look.dp(20))
         }
-        form.addView(android.widget.ScrollView(this).apply { addView(list) }, LinearLayout.LayoutParams(-1, ui.dp(260)))
-        val dialog = AlertDialog.Builder(this).setTitle(if (existing == null) "New chain" else "Edit chain").setView(form)
-            .setPositiveButton("Save") { _, _ ->
-                val n = name.text.toString().trim().take(40)
-                if (n.isEmpty() || order.size < 2) { ui.toast("Give it a name and at least two steps"); return@setPositiveButton }
-                val sk = Skill("⛓️", n, Acts.chain(order), "write", existing?.key ?: "")
+        column.addView(View(this).apply { background = look.shape(look.accent, 2) },
+            LinearLayout.LayoutParams(look.dp(48), look.dp(4)).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = look.dp(16) })
+        val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, 0, 0, look.dp(14)) }
+        head.addView(look.iconTile(R.drawable.ic_layers, look.accentSoft, look.accent, 56, 26))
+        head.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(look.dp(14), 0, look.dp(8), 0)
+            addView(look.text(if (existing == null) "New Chain" else "Edit Chain", 22f, bold = true))
+            addView(look.text("Run multiple acts in a sequence", 13.5f, look.muted).apply { setPadding(0, look.dp(3), 0, 0) })
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        head.addView(look.circleButton(R.drawable.ic_x, look.ink, 40) { finish() })
+        column.addView(head)
+
+        val nameRow = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            background = look.shape(look.card, 16, look.edge)
+            setPadding(look.dp(14), look.dp(10), look.dp(10), look.dp(10))
+        }
+        nameRow.addView(look.icon(R.drawable.ic_tag, 20, Color.parseColor("#55555F")))
+        val nameField = android.widget.EditText(this).apply {
+            setText(existing?.name ?: "")
+            hint = "Trip Planner"
+            setTextColor(look.ink)
+            setHintTextColor(look.faint)
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 16f)
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            background = null
+            setSingleLine()
+            setPadding(look.dp(12), look.dp(2), look.dp(4), look.dp(2))
+        }
+        nameRow.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(look.text("Chain name", 12f, look.muted))
+            addView(nameField)
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        nameRow.addView(LinearLayout(this).apply {
+            gravity = Gravity.CENTER
+            background = look.shape(Color.parseColor("#E4E4EC"), 12)
+            addView(look.icon(R.drawable.ic_x, 12, Color.parseColor("#55555F")))
+            setOnClickListener { nameField.setText("") }
+        }, LinearLayout.LayoutParams(look.dp(24), look.dp(24)))
+        column.addView(nameRow, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = look.dp(14) })
+
+        // Workflow / Settings tabs and the test run.
+        val tabs = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        val tabBox = LinearLayout(this).apply { background = look.shape(look.card, 16, look.edge); setPadding(look.dp(4), look.dp(4), look.dp(4), look.dp(4)) }
+        fun tab(label: String, iconRes: Int) = LinearLayout(this).apply {
+            gravity = Gravity.CENTER
+            setPadding(look.dp(14), look.dp(10), look.dp(14), look.dp(10))
+            addView(look.icon(iconRes, 18, look.accent).apply { (layoutParams as LinearLayout.LayoutParams).rightMargin = look.dp(8) })
+            addView(look.text(label, 15f, look.accent, bold = true))
+        }
+        val tabWorkflow = tab("Workflow", R.drawable.ic_workflow)
+        val tabSettings = tab("Settings", R.drawable.ic_settings)
+        tabBox.addView(tabWorkflow, LinearLayout.LayoutParams(0, -2, 1f))
+        tabBox.addView(tabSettings, LinearLayout.LayoutParams(0, -2, 1f))
+        tabs.addView(tabBox, LinearLayout.LayoutParams(0, -2, 1f))
+        val testRun = LinearLayout(this).apply {
+            gravity = Gravity.CENTER
+            background = look.ripple(look.shape(look.card, 16, look.edge), 16)
+            setPadding(look.dp(16), look.dp(12), look.dp(16), look.dp(12))
+            addView(look.icon(R.drawable.ic_play, 16, look.accent).apply { (layoutParams as LinearLayout.LayoutParams).rightMargin = look.dp(8) })
+            addView(look.text("Test Run", 15f, look.accent, bold = true))
+        }
+        tabs.addView(testRun, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = look.dp(10) })
+        column.addView(tabs, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = look.dp(14) })
+
+        val workflow = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val settings = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
+        fun showTab(workflowOn: Boolean) {
+            workflow.visibility = if (workflowOn) View.VISIBLE else View.GONE
+            settings.visibility = if (workflowOn) View.GONE else View.VISIBLE
+            tabWorkflow.background = look.shape(if (workflowOn) look.accentSoft else Color.TRANSPARENT, 12)
+            tabSettings.background = look.shape(if (workflowOn) Color.TRANSPARENT else look.accentSoft, 12)
+            (tabWorkflow.getChildAt(0) as android.widget.ImageView).setColorFilter(if (workflowOn) look.accent else look.muted)
+            (tabWorkflow.getChildAt(1) as android.widget.TextView).setTextColor(if (workflowOn) look.accent else look.muted)
+            (tabSettings.getChildAt(0) as android.widget.ImageView).setColorFilter(if (workflowOn) look.muted else look.accent)
+            (tabSettings.getChildAt(1) as android.widget.TextView).setTextColor(if (workflowOn) look.muted else look.accent)
+        }
+        tabWorkflow.setOnClickListener { showTab(true) }
+        tabSettings.setOnClickListener { showTab(false) }
+        showTab(true)
+
+        val wfHead = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, 0, 0, look.dp(12)) }
+        wfHead.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(look.text("Workflow", 20f, bold = true))
+            addView(look.text("Arrange acts in the order you want them to run.", 13f, look.muted).apply { setPadding(0, look.dp(3), 0, 0) })
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        fun smallButton(iconRes: Int) = LinearLayout(this).apply {
+            gravity = Gravity.CENTER
+            background = look.shape(look.card, 12, look.edge)
+            addView(look.icon(iconRes, 18, look.ink))
+        }
+        val undoBtn = smallButton(R.drawable.ic_undo_2)
+        val redoBtn = smallButton(R.drawable.ic_redo_2)
+        wfHead.addView(undoBtn, LinearLayout.LayoutParams(look.dp(44), look.dp(36)).apply { rightMargin = look.dp(8) })
+        wfHead.addView(redoBtn, LinearLayout.LayoutParams(look.dp(44), look.dp(36)))
+        workflow.addView(wfHead)
+
+        val stepsBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        workflow.addView(stepsBox)
+        fun snapshot() { undo.addLast(order.toList()); redo.clear() }
+        fun refreshSteps() {
+            stepsBox.removeAllViews()
+            order.forEachIndexed { i, n ->
+                stepsBox.addView(stepRow(i, n, order, ::snapshot, ::refreshSteps))
+                if (i < order.lastIndex) stepsBox.addView(stepGap())
+            }
+            (undoBtn.getChildAt(0) as android.widget.ImageView).setColorFilter(if (undo.isEmpty()) look.faint else look.ink)
+            (redoBtn.getChildAt(0) as android.widget.ImageView).setColorFilter(if (redo.isEmpty()) look.faint else look.ink)
+        }
+        undoBtn.setOnClickListener {
+            if (undo.isNotEmpty()) { redo.addLast(order.toList()); order.clear(); order.addAll(undo.removeLast()); refreshSteps() }
+        }
+        redoBtn.setOnClickListener {
+            if (redo.isNotEmpty()) { undo.addLast(order.toList()); order.clear(); order.addAll(redo.removeLast()); refreshSteps() }
+        }
+        refreshSteps()
+
+        val dashed = GradientDrawable().apply {
+            cornerRadius = look.dp(16).toFloat()
+            setColor(Color.TRANSPARENT)
+            setStroke(look.dp(2), Color.parseColor("#C4B5FD"), look.dp(6).toFloat(), look.dp(6).toFloat())
+        }
+        val addAct = LinearLayout(this).apply {
+            gravity = Gravity.CENTER
+            background = dashed
+            setPadding(look.dp(16), look.dp(14), look.dp(16), look.dp(14))
+            addView(look.icon(R.drawable.ic_plus, 18, look.accent).apply { (layoutParams as LinearLayout.LayoutParams).rightMargin = look.dp(8) })
+            addView(look.text("Add an act", 15f, look.accent, bold = true))
+        }
+        workflow.addView(addAct, LinearLayout.LayoutParams(-1, -2).apply { topMargin = look.dp(12); bottomMargin = look.dp(16) })
+
+        val addHead = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, 0, 0, look.dp(10)) }
+        addHead.addView(look.text("Add an Act", 18f, bold = true), LinearLayout.LayoutParams(0, -2, 1f))
+        val searchAct = look.circleButton(R.drawable.ic_search, look.ink, 36) {}
+        addHead.addView(searchAct, LinearLayout.LayoutParams(look.dp(36), look.dp(36)).apply { rightMargin = look.dp(8) })
+        val viewAll = LinearLayout(this).apply {
+            gravity = Gravity.CENTER
+            background = look.ripple(look.shape(look.accentSoft, 16), 16)
+            setPadding(look.dp(14), look.dp(9), look.dp(10), look.dp(9))
+            addView(look.text("View All", 14f, look.accent, bold = true))
+            addView(look.icon(R.drawable.ic_chevron_right, 14, look.accent))
+        }
+        addHead.addView(viewAll)
+        workflow.addView(addHead)
+        val actSearch = look.fieldRow(R.drawable.ic_search, "Search acts", "")
+        actSearch.visibility = View.GONE
+        workflow.addView(actSearch)
+        searchAct.setOnClickListener {
+            actSearch.visibility = if (actSearch.visibility == View.GONE) View.VISIBLE else View.GONE
+        }
+
+        val carousel = android.widget.HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false }
+        val pages = LinearLayout(this)
+        carousel.addView(pages)
+        val dots = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(0, look.dp(10), 0, look.dp(12)) }
+        workflow.addView(carousel)
+        workflow.addView(dots)
+        val pageWidth = resources.displayMetrics.widthPixels - look.dp(40)
+        fun buildPages() {
+            pages.removeAllViews()
+            dots.removeAllViews()
+            val q = look.editText(actSearch).text.toString().trim().lowercase()
+            val shown = names.filter { q.isEmpty() || it.lowercase().contains(q) }
+            val chunks = shown.chunked(6).ifEmpty { listOf(emptyList()) }
+            chunks.forEach { six ->
+                val grid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+                six.chunked(3).forEach { three ->
+                    val row = LinearLayout(this)
+                    three.forEach { n ->
+                        val (bg, tint, iconRes) = actLook(n)
+                        val tile = LinearLayout(this).apply {
+                            orientation = LinearLayout.VERTICAL
+                            background = look.ripple(look.shape(look.card, 16, look.edge), 16)
+                            setPadding(look.dp(10), look.dp(10), look.dp(10), look.dp(10))
+                            val top = LinearLayout(this@PageActivity).apply { gravity = Gravity.CENTER_VERTICAL }
+                            top.addView(look.iconTile(iconRes, bg, tint, 34, 17))
+                            top.addView(View(this@PageActivity), LinearLayout.LayoutParams(0, 0, 1f))
+                            top.addView(LinearLayout(this@PageActivity).apply {
+                                gravity = Gravity.CENTER
+                                background = look.shape(look.accentSoft, 14)
+                                addView(look.icon(R.drawable.ic_plus, 14, look.accent))
+                            }, LinearLayout.LayoutParams(look.dp(28), look.dp(28)))
+                            addView(top)
+                            addView(look.text(n, 15f, bold = true).apply { setPadding(0, look.dp(8), 0, 0); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END })
+                            setOnClickListener { snapshot(); order.add(n); refreshSteps() }
+                        }
+                        row.addView(tile, LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(look.dp(4), 0, look.dp(4), look.dp(8)) })
+                    }
+                    grid.addView(row, LinearLayout.LayoutParams(-1, -2))
+                }
+                pages.addView(grid, LinearLayout.LayoutParams(pageWidth, -2))
+            }
+            chunks.indices.forEach { i ->
+                dots.addView(View(this).apply { background = look.shape(if (i == 0) look.accent else Color.parseColor("#D9D4EE"), 4) },
+                    LinearLayout.LayoutParams(look.dp(8), look.dp(8)).apply { setMargins(look.dp(4), 0, look.dp(4), 0) })
+            }
+            carousel.setOnScrollChangeListener { _, x, _, _, _ ->
+                val current = if (pageWidth > 0) (x + pageWidth / 2) / pageWidth else 0
+                for (i in 0 until dots.childCount) dots.getChildAt(i).background =
+                    look.shape(if (i == current) look.accent else Color.parseColor("#D9D4EE"), 4)
+            }
+        }
+        buildPages()
+        look.editText(actSearch).addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) = buildPages()
+        })
+        addAct.setOnClickListener {
+            var v: View? = carousel
+            while (v != null && v !is android.widget.ScrollView) v = v.parent as? View
+            (v as? android.widget.ScrollView)?.fullScroll(View.FOCUS_DOWN)
+        }
+        viewAll.setOnClickListener {
+            AlertDialog.Builder(this).setTitle("Add an act")
+                .setItems(names.toTypedArray()) { _, w -> snapshot(); order.add(names[w]); refreshSteps() }.show()
+        }
+
+        val keyRow = look.fieldRow(R.drawable.ic_keyboard, "Hold key (optional): one letter, e.g. c", existing?.key ?: "")
+        settings.addView(keyRow)
+        settings.addView(look.text("Chains appear with your acts and can be used by an auto action.", 13f, look.muted).apply {
+            setPadding(look.dp(2), 0, look.dp(2), look.dp(12))
+        })
+        if (existing != null) settings.addView(look.text("Remove chain", 14f, Color.parseColor("#DC2626"), bold = true).apply {
+            setOnClickListener {
+                AlertDialog.Builder(this@PageActivity).setMessage("Remove ${existing.name}?")
+                    .setPositiveButton("Remove") { _, _ -> skills.removeAt(index); store.skills = skills; finish() }
+                    .setNegativeButton("Cancel", null).show()
+            }
+        })
+        column.addView(workflow)
+        column.addView(settings)
+
+        val buttons = LinearLayout(this).apply { setPadding(0, look.dp(12), 0, 0) }
+        buttons.addView(look.softPill("Cancel") { finish() }, LinearLayout.LayoutParams(0, -2, 1f))
+        buttons.addView(look.purplePill("Save Chain", R.drawable.ic_check) {
+            val n = nameField.text.toString().trim().take(40)
+            if (n.isEmpty() || order.size < 2) {
+                look.toast("Give it a name and at least two steps")
+            } else {
+                val letter = look.editText(keyRow).text.toString().trim().lowercase().take(1).takeIf { it.isNotEmpty() && it[0] in 'a'..'z' } ?: ""
+                if (letter.isNotEmpty()) for (j in skills.indices) if (j != index && skills[j].key == letter) skills[j] = skills[j].copy(key = "")
+                val sk = Skill("⛓️", n, Acts.chain(order), "write", letter)
                 if (existing == null) skills.add(sk) else skills[index] = sk
                 store.skills = skills
-                render()
+                finish()
             }
-            .setNegativeButton("Cancel", null)
-        if (existing != null) dialog.setNeutralButton("Delete") { _, _ -> skills.removeAt(index); store.skills = skills; render() }
-        dialog.show()
+        }, LinearLayout.LayoutParams(0, -2, 1.3f).apply { leftMargin = look.dp(10) })
+        column.addView(buttons)
+
+        testRun.setOnClickListener {
+            if (order.size < 2) { look.toast("Add at least two steps first"); return@setOnClickListener }
+            look.toast("Running the chain on a sample message…")
+            val steps = order.toList()
+            Thread {
+                val outcome = try {
+                    Engine(store).run(Acts.chainTask(steps, lookup), "tell sam i'm running 15 min late, friendly",
+                        web = false, tools = emptyList(), cancelled = { isDestroyed }, label = "Test run").text
+                } catch (e: Exception) {
+                    e.message ?: "The test run failed"
+                }
+                runOnUiThread {
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    AlertDialog.Builder(this).setTitle("Test run").setMessage(outcome).setPositiveButton("Close", null).show()
+                }
+            }.start()
+        }
+
+        val sheet = android.widget.ScrollView(this).apply {
+            isVerticalScrollBarEnabled = false
+            background = look.sheetShape()
+            addView(column)
+        }
+        root.addView(sheet, android.widget.FrameLayout.LayoutParams(-1, -1).apply { topMargin = look.dp(36) })
+        setContentView(root)
+    }
+
+    /** One numbered step on the rail: grip, pastel icon, name and line, move buttons and a menu. */
+    private fun stepRow(i: Int, name: String, order: MutableList<String>, snapshot: () -> Unit, refresh: () -> Unit): LinearLayout {
+        val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        val rail = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL }
+        rail.addView(look.text("${i + 1}", 13f, Color.WHITE, bold = true).apply {
+            gravity = Gravity.CENTER
+            background = look.shape(look.accent, 14)
+        }, LinearLayout.LayoutParams(look.dp(28), look.dp(28)))
+        rail.addView(View(this).apply { setBackgroundColor(Color.parseColor("#D9D4EE")) },
+            LinearLayout.LayoutParams(look.dp(2), 0, 1f).apply { topMargin = look.dp(4) })
+        row.addView(rail, LinearLayout.LayoutParams(look.dp(28), -1))
+        val (bg, tint, iconRes) = actLook(name)
+        val card = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            background = look.shape(look.card, 16)
+            setPadding(look.dp(8), look.dp(10), look.dp(8), look.dp(10))
+            elevation = look.dp(1).toFloat()
+        }
+        card.addView(look.icon(R.drawable.ic_grip_vertical, 16, Color.parseColor("#B9B9C6")))
+        card.addView(look.iconTile(iconRes, bg, tint, 38, 19).apply {
+            (layoutParams as LinearLayout.LayoutParams).leftMargin = look.dp(8)
+        })
+        card.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(look.dp(8), 0, look.dp(4), 0)
+            addView(look.text(name, 16f, bold = true).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END })
+            addView(look.text(actBlurb(name, Acts.BUILTIN.firstOrNull { it.name == name }?.instruction
+                ?: store.skills.firstOrNull { it.name == name }?.instruction ?: ""), 12f, look.muted).apply {
+                setPadding(0, look.dp(2), 0, 0); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+            })
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        fun move(iconRes: Int, enabled: Boolean, onTap: () -> Unit) = LinearLayout(this).apply {
+            gravity = Gravity.CENTER
+            background = look.shape(if (enabled) look.accentSoft else Color.parseColor("#ECECF2"), 16)
+            addView(look.icon(iconRes, 16, if (enabled) look.accent else look.faint))
+            setOnClickListener { if (enabled) onTap() }
+        }
+        card.addView(move(R.drawable.ic_arrow_up, i > 0) {
+            snapshot(); order[i] = order[i - 1].also { order[i - 1] = order[i] }; refresh()
+        }, LinearLayout.LayoutParams(look.dp(30), look.dp(30)).apply { rightMargin = look.dp(6) })
+        card.addView(move(R.drawable.ic_arrow_down, i < order.lastIndex) {
+            snapshot(); order[i] = order[i + 1].also { order[i + 1] = order[i] }; refresh()
+        }, LinearLayout.LayoutParams(look.dp(30), look.dp(30)))
+        val menu = look.icon(R.drawable.ic_more_horizontal, 20, look.ink).apply {
+            setPadding(look.dp(4), look.dp(4), 0, look.dp(4))
+            setOnClickListener { stepMenu(this, i, order, snapshot, refresh) }
+        }
+        card.addView(menu)
+        row.addView(card, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = look.dp(10) })
+        return row
+    }
+
+    /** The little down-arrow circle between two steps, with the rail running behind it. */
+    private fun stepGap(): LinearLayout {
+        val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        row.addView(View(this).apply { setBackgroundColor(Color.parseColor("#D9D4EE")) },
+            LinearLayout.LayoutParams(look.dp(2), -1).apply { leftMargin = look.dp(13) })
+        row.addView(android.widget.FrameLayout(this).apply {
+            addView(LinearLayout(this@PageActivity).apply {
+                gravity = Gravity.CENTER
+                background = look.shape(look.card, 14)
+                elevation = look.dp(2).toFloat()
+                addView(look.icon(R.drawable.ic_arrow_down, 14, look.accent))
+            }, android.widget.FrameLayout.LayoutParams(look.dp(28), look.dp(28), Gravity.CENTER))
+        }, LinearLayout.LayoutParams(0, look.dp(28), 1f).apply { leftMargin = look.dp(10) })
+        row.layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = -look.dp(6); bottomMargin = -look.dp(6) }
+        return row
+    }
+
+    private fun stepMenu(anchor: View, i: Int, order: MutableList<String>, snapshot: () -> Unit, refresh: () -> Unit) {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = look.shape(look.card, 16)
+            elevation = look.dp(8).toFloat()
+            setPadding(look.dp(6), look.dp(6), look.dp(6), look.dp(6))
+        }
+        fun item(iconRes: Int, label: String, tint: Int, onTap: () -> Unit) {
+            box.addView(LinearLayout(this).apply {
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(look.dp(10), look.dp(10), look.dp(14), look.dp(10))
+                background = look.ripple(null, 10)
+                addView(look.icon(iconRes, 16, tint).apply { (layoutParams as LinearLayout.LayoutParams).rightMargin = look.dp(10) })
+                addView(look.text(label, 14f, tint))
+                setOnClickListener { onTap() }
+            })
+        }
+        val popup = android.widget.PopupWindow(box, look.dp(180), -2)
+        item(R.drawable.ic_pencil_line, "Edit act", look.ink) {
+            popup.dismiss()
+            val current = order[i]
+            val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(look.dp(22), look.dp(8), look.dp(22), 0) }
+            val field = look.fieldRow(R.drawable.ic_file_text, "What this step should do", current, lines = 3)
+            form.addView(field)
+            AlertDialog.Builder(this).setTitle("Edit act").setView(form)
+                .setPositiveButton("Save") { _, _ ->
+                    val t = look.editText(field).text.toString().trim()
+                    if (t.isNotEmpty()) { snapshot(); order[i] = t; refresh() }
+                }.setNegativeButton("Cancel", null).show()
+        }
+        item(R.drawable.ic_copy, "Duplicate", look.ink) { popup.dismiss(); snapshot(); order.add(i + 1, order[i]); refresh() }
+        item(R.drawable.ic_trash_2, "Remove", Color.parseColor("#DC2626")) { popup.dismiss(); snapshot(); order.removeAt(i); refresh() }
+        popup.showAsDropDown(anchor, -look.dp(150), look.dp(4))
     }
 
     private fun editTrigger(index: Int) {
