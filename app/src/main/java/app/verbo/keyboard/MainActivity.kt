@@ -19,12 +19,14 @@ class MainActivity : Activity() {
 
     private lateinit var store: Store
     private lateinit var ui: Ui
+    private lateinit var look: Look
     private lateinit var setupBox: LinearLayout
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = Store(this)
         ui = Ui(this)
+        look = Look(this)
         build()
         // First run: the step-by-step guide (keyboard on, Google sign-in, a first try).
         if (savedInstanceState == null && !store.locked && !store.onboarded) open("welcome")
@@ -60,11 +62,14 @@ class MainActivity : Activity() {
         startActivity(Intent(this, PageActivity::class.java).putExtra("page", page).also(extra))
 
     private fun build() {
-        val column = ui.page(navBar())
         when (tab) {
-            "library" -> buildLibrary(column)
-            "settings" -> buildSettings(column)
-            else -> buildHome(column)
+            "library" -> buildLibrary(ui.page(navBar()))
+            "settings" -> buildSettings(look.page(look.navSettings(
+                { tab = "home"; build() },
+                { open("usage") },
+                { open("try") },
+            )))
+            else -> buildHome(ui.page(navBar()))
         }
         refreshSetup()
     }
@@ -281,37 +286,54 @@ class MainActivity : Activity() {
 
     private fun buildSettings(column: LinearLayout) {
         val version = try { packageManager.getPackageInfo(packageName, 0).versionName } catch (e: Exception) { "" }
-        bigTitle(column, "Settings", "Verbo Keyboard $version")
+        column.addView(look.header("Settings", "Customize your keyboard experience",
+            look.circleButton(R.drawable.ic_info) { settingsMenu() }))
         newSetupBox(column)
+        column.addView(look.appCard(version ?: "0.20.0"))
 
-        val on = { b: Boolean -> if (b) "on" else "off" }
-        val theme = store.theme.replaceFirstChar { it.uppercase() }
+        column.addView(look.sectionHead(R.drawable.ic_sparkles, look.accent, "AI & Personalization", "Make it smarter, your way"))
+        column.addView(look.triple(
+            look.tileCard(look.purpleBg, look.purpleTint, R.drawable.ic_sparkles, "AI Service",
+                "${store.providerName} · ${store.activeModelLabel}") { open("ai") },
+            look.tileCard(look.pinkBg, look.pinkTint, R.drawable.ic_brain, "Memory",
+                if (store.memory.isEmpty()) "Teach Verbo about you" else "${store.memory.size} things remembered") { open("memory") },
+            look.tileCard(look.amberBg, look.amberTint, R.drawable.ic_zap, "Auto Actions",
+                "${store.triggers.size} actions configured") { open("triggers") },
+        ))
+
+        column.addView(look.sectionHead(R.drawable.ic_smile, look.accent, "Keyboard Experience", "Look, feel and type the way you like"))
+        column.addView(look.rowsCard(
+            look.rowTile(look.blueBg, look.blueTint, R.drawable.ic_palette, "Look & Feel", "Theme, key style, height") { open("look") },
+            look.rowTile(look.purpleBg, look.purpleTint, 0, "Typing", "Auto-correct & suggestions", iconText = "Aa") { open("typing") },
+            look.rowTile(look.orangeBg, look.orangeTint, R.drawable.ic_volume_2, "Sound & Vibration", "Feedback & haptics") { open("feedback") },
+        ))
+
+        column.addView(look.sectionHead(R.drawable.ic_layers, look.accent, "More Options", "Languages, keys, shortcuts and connections"))
         val connected = listOf(store.notionToken, store.calendlyToken).count { it.isNotEmpty() } + store.customApis.size + if (store.googleConnected) 1 else 0
-        val hint = Store.keyHint(store.activeKey)
-        column.addView(ui.rows(
-            ui.row(R.drawable.ic_sparkles, "AI service", "${store.providerName} · ${store.activeModelLabel}" + if (store.activeKey.isEmpty()) " · no key" else if (hint.isNotEmpty()) " · key ends $hint" else "", ui.chevron()) { open("ai") },
+        val langs = store.languages
+        val langLine = if (langs.size <= 2) langs.joinToString(", ").ifEmpty { "None chosen" } else langs.take(2).joinToString(", ") + " + more"
+        column.addView(look.pair(
+            look.gridTile(look.blueBg, look.blueTint, R.drawable.ic_keyboard, "Keys", "Shortcuts & actions") { open("keys") },
+            look.gridTile(look.blueBg, look.blueTint, R.drawable.ic_globe, "Languages", langLine) { open("languages") },
         ))
-        column.addView(ui.rows(
-            ui.row(R.drawable.ic_palette, "Look", "$theme · ${store.keyShape} keys · ${store.heightPercent}% height", ui.chevron()) { open("look") },
-            ui.row(R.drawable.ic_volume_2, "Sound & vibration", "Sound ${on(store.sound)} · vibration ${if (store.haptic) store.hapticStrength else "off"}", ui.chevron()) { open("feedback") },
-            ui.row(R.drawable.ic_spell_check, "Typing", "Auto-correct ${on(store.autoCorrect)} · suggestions ${on(store.suggestions)}", ui.chevron()) { open("typing") },
-            ui.row(R.drawable.ic_circle_dashed, "Wheel", if (store.wheelOn) "${store.wheel.size} shortcuts" else "Off", ui.chevron()) { open("wheel") },
-            ui.row(R.drawable.ic_keyboard, "Keys", if (!store.keysOn) "Paused" else "${store.skills.count { it.key.isNotEmpty() } + store.keymap.size} held-key actions", ui.chevron()) { open("keys") },
-            ui.row(R.drawable.ic_languages, "Languages", store.languages.joinToString(", ").ifEmpty { "None chosen" }, ui.chevron()) { open("languages") },
+        column.addView(look.pair(
+            look.gridTile(look.greenBg, look.greenTint, R.drawable.ic_plug, "Connections",
+                if (connected == 0) "No apps connected yet" else "$connected connected apps") { open("automate") },
+            look.gridTile(look.indigoBg, look.indigoTint, R.drawable.ic_shield, "Privacy", "What leaves your phone") { open("privacy") },
         ))
-        column.addView(ui.rows(
-            ui.row(R.drawable.ic_zap, "Usage & on-device AI", "This month about $" + "%.2f".format(store.usage.optDouble("cost", 0.0)) + if (store.monthlyLimit > 0) " of $" + "%.2f".format(store.monthlyLimit) else "", ui.chevron()) { open("usage") },
-            ui.row(R.drawable.ic_sparkles, "Memory", if (store.memory.isEmpty()) "Teach Verbo about you" else "${store.memory.size} things remembered" + if (store.styleLine != null) " · knows your style" else "", ui.chevron()) { open("memory") },
-            ui.row(R.drawable.ic_zap, "Auto actions", if (!store.triggersOn) "Off" else "${store.triggers.size} for copied messages", ui.chevron()) { open("triggers") },
-            ui.row(R.drawable.ic_plug, "Connections", if (connected == 0) "Web search, weather, places" else "$connected connected", ui.chevron()) { open("automate") },
-            ui.row(R.drawable.ic_cloud, "Web dashboard", if (store.deviceToken.isEmpty()) "Not paired" else "Paired with " + store.serverUrl.removePrefix("https://"), ui.chevron()) { open("dashboard") },
-        ))
-        column.addView(ui.rows(
-            ui.row(R.drawable.ic_shield, "Privacy", "What leaves your phone", ui.chevron()) { open("privacy") },
-            ui.row(R.drawable.ic_zap, "Battery", "Battery Saver ${if (store.batterySaver) "followed" else "ignored"}", ui.chevron()) { open("battery") },
-            ui.row(R.drawable.ic_upload, "Export / Import", "Save settings and skills to a file", ui.chevron()) { exportImport() },
-            ui.row(R.drawable.ic_sparkle, "Setup guide", "Turn on the keyboard, sign in, try it", ui.chevron()) { open("welcome") },
-        ))
+    }
+
+    /** Everything the redesigned Settings page keeps out of sight: the info button opens this list. */
+    private fun settingsMenu() {
+        val entries = listOf(
+            "Wheel shortcuts" to { open("wheel") },
+            "Usage & on-device AI" to { open("usage") },
+            "Web dashboard" to { open("dashboard") },
+            "Battery" to { open("battery") },
+            "Export / Import" to { exportImport() },
+            "Setup guide" to { open("welcome") },
+        )
+        AlertDialog.Builder(this).setTitle("More settings").setItems(entries.map { it.first }.toTypedArray()) { _, i -> entries[i].second() }.show()
     }
 
     private fun exportImport() {
@@ -333,17 +355,27 @@ class MainActivity : Activity() {
         val selected = (Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD) ?: "").startsWith("$packageName/")
         setupBox.removeAllViews()
         if (enabled && selected) return
-        val box = ui.cardBox().apply {
-            background = ui.shape(ui.accentSoft, 14, ui.accent)
+        val light = tab != "home"
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = if (light) look.shape(look.accentSoft, 20, look.accent) else ui.shape(ui.accentSoft, 14, ui.accent)
             setPadding(ui.dp(16), ui.dp(14), ui.dp(16), ui.dp(14))
+            layoutParams = LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = ui.dp(10) }
         }
-        box.addView(ui.text("Make Verbo your keyboard", 17f, bold = true))
-        box.addView(ui.text("Android only lets you choose the default keyboard yourself. You do this once; Verbo then stays your keyboard, including after a restart.", 13.5f, ui.muted).apply { setPadding(0, ui.dp(4), 0, 0) })
-        box.addView(ui.text((if (enabled) "✓  " else "1.  ") + "Enable Verbo Keyboard in system settings", 14.5f, Color.parseColor("#D8D6EA")).apply { setPadding(0, ui.dp(8), 0, 0) })
-        box.addView(ui.text((if (selected) "✓  " else "2.  ") + "Switch to Verbo as your keyboard", 14.5f, Color.parseColor("#D8D6EA")).apply { setPadding(0, ui.dp(4), 0, ui.dp(12)) })
+        val title = if (light) look.text("Make Verbo your keyboard", 17f, look.ink, bold = true) else ui.text("Make Verbo your keyboard", 17f, bold = true)
+        val body = if (light) look.text("Android only lets you choose the default keyboard yourself. You do this once; Verbo then stays your keyboard, including after a restart.", 13.5f, look.muted)
+        else ui.text("Android only lets you choose the default keyboard yourself. You do this once; Verbo then stays your keyboard, including after a restart.", 13.5f, ui.muted)
+        box.addView(title)
+        box.addView(body.apply { setPadding(0, ui.dp(4), 0, 0) })
+        val stepColor = if (light) look.ink else Color.parseColor("#D8D6EA")
+        box.addView((if (light) look.text((if (enabled) "✓  " else "1.  ") + "Enable Verbo Keyboard in system settings", 14.5f, stepColor)
+        else ui.text((if (enabled) "✓  " else "1.  ") + "Enable Verbo Keyboard in system settings", 14.5f, stepColor)).apply { setPadding(0, ui.dp(8), 0, 0) })
+        box.addView((if (light) look.text((if (selected) "✓  " else "2.  ") + "Switch to Verbo as your keyboard", 14.5f, stepColor)
+        else ui.text((if (selected) "✓  " else "2.  ") + "Switch to Verbo as your keyboard", 14.5f, stepColor)).apply { setPadding(0, ui.dp(4), 0, ui.dp(12)) })
+        val action = { if (!enabled) { wentToSettings = true; startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) } else imm.showInputMethodPicker() }
         box.addView(
-            if (!enabled) ui.button("Open keyboard settings", filled = true) { wentToSettings = true; startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) }
-            else ui.button("Choose keyboard", filled = true) { imm.showInputMethodPicker() },
+            if (light) look.purplePill(if (!enabled) "Open keyboard settings" else "Choose keyboard", null, action)
+            else ui.button(if (!enabled) "Open keyboard settings" else "Choose keyboard", filled = true, onTap = action),
         )
         setupBox.addView(box)
     }

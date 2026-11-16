@@ -592,6 +592,15 @@ class KeyboardTest {
             store.resetSkills()
         }
 
+        // Two connected apps, as on the design reference device.
+        store.notionToken = "secret_fixture"
+        store.calendlyToken = "fixture"
+        // …and Verbo already enabled and chosen, so the setup banner stays hidden.
+        val app = RuntimeEnvironment.getApplication()
+        val imm = app.getSystemService(android.view.inputmethod.InputMethodManager::class.java)
+        org.robolectric.Shadows.shadowOf(imm).setEnabledInputMethodInfoList(
+            listOf(android.view.inputmethod.InputMethodInfo(app.packageName, "app.verbo.keyboard.VerboIme", "Verbo", null)))
+        android.provider.Settings.Secure.putString(app.contentResolver, android.provider.Settings.Secure.DEFAULT_INPUT_METHOD, "${app.packageName}/app.verbo.keyboard.VerboIme")
         for (tab in listOf("home", "library", "settings")) {
             MainActivity.tab = tab
             val main = Robolectric.buildActivity(MainActivity::class.java).setup().get()
