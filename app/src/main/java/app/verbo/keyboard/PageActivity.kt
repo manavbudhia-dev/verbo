@@ -62,6 +62,8 @@ class PageActivity : Activity() {
     private fun render() {
         if (page == "skill-new" || page.startsWith("skill-edit:")) { skillPage(); return }
         if (page == "chain-new" || page.startsWith("chain-edit:")) { chainPage(); return }
+        if (page == "trigger-new" || page.startsWith("trigger-edit:")) { triggerPage(); return }
+        if (page == "triggers") { triggersPage(); return }
         val column = ui.page()
         when {
             page.startsWith("category:") -> skillsPage(column, page.substringAfter(":"))
@@ -80,7 +82,8 @@ class PageActivity : Activity() {
             page == "feedback" -> feedbackPage(column)
             page == "battery" -> batteryPage(column)
             page == "templates" -> templatesPage(column)
-            page == "triggers" -> triggersPage(column)
+            page == "copysettings" -> copySettingsPage(column)
+            page == "chains" -> chainsPage(column)
             page == "memory" -> memoryPage(column)
             page == "textshortcuts" -> textShortcutsPage(column)
             page == "usage" -> usagePage(column)
@@ -386,33 +389,114 @@ class PageActivity : Activity() {
 
     // ---------- triggers ----------
 
-    private fun triggersPage(column: LinearLayout) {
-        column.addView(ui.topBar("Auto actions", "Copy a message, and the right skill is one tap away"))
-        note(column, "When you copy a message, Verbo checks it on your phone for the things below and shows a ⚡ chip above the keys. " +
-            "Example: copy \"We're meeting David Miller tomorrow\" and get \"Who is · David Miller\" and \"Save event\". Nothing is sent until a skill runs. " +
-            "Turn on Automatic to run a skill as soon as you open the keyboard after copying.")
+    private var trigQuery = ""
+    private var trigChip = "All"
+    private val trigChips = listOf("All", "Text", "People", "Links", "Custom")
+
+    private fun trigChipOf(t: Trigger) = when (t.kind) {
+        "person" -> "People"
+        "link", "email", "phone" -> "Links"
+        "keyword" -> "Custom"
+        else -> "Text"
+    }
+
+    private fun trigLine(t: Trigger) = when (t.kind) {
+        "link" -> "When text is a URL"
+        "foreign" -> "When text is not in English"
+        "keyword" -> "When text has “${t.keyword}”"
+        else -> "When text has " + (Cards.KINDS.firstOrNull { it.first == t.kind }?.second ?: t.kind)
+    }
+
+    private fun kindIcon(kind: String) = when (kind) {
+        "person" -> R.drawable.ic_users
+        "link" -> R.drawable.ic_link
+        "email", "phone" -> R.drawable.ic_message_square
+        "foreign" -> R.drawable.ic_zap
+        "time" -> R.drawable.ic_sun
+        "place" -> R.drawable.ic_globe
+        "keyword" -> R.drawable.ic_tag
+        else -> R.drawable.ic_sparkles
+    }
+
+    private fun triggersPage() {
+        val column = look.page(look.navIcons("actions", listOf(
+            Triple("home", R.drawable.ic_home, { MainActivity.tab = "home"; startActivity(android.content.Intent(this, MainActivity::class.java)); finish() }),
+            Triple("actions", R.drawable.ic_zap, {}),
+            Triple("activity", R.drawable.ic_bar_chart, { go("usage") }),
+            Triple("person", R.drawable.ic_user, { go("memory") }),
+        )))
+        column.addView(look.header("Auto Actions", "Run skills automatically based on copied text",
+            look.circleButton(R.drawable.ic_more_horizontal) { trigMenu() }))
+        val grid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        fun fill() {
+            grid.removeAllViews()
+            val q = trigQuery.trim().lowercase()
+            val shown = store.triggers.withIndex().filter { (_, t) ->
+                (q.isEmpty() || t.skill.lowercase().contains(q) || trigLine(t).lowercase().contains(q)) &&
+                    (trigChip == "All" || trigChipOf(t) == trigChip)
+            }
+            if (shown.isEmpty()) grid.addView(look.text("Nothing here yet.", 14f, look.muted).apply { setPadding(look.dp(4), look.dp(6), 0, look.dp(10)) })
+            val photos = listOf(R.drawable.photo_sunset, R.drawable.photo_snow, R.drawable.photo_mist, R.drawable.photo_hills)
+            shown.chunked(2).forEach { two ->
+                fun card(i: Int, t: Trigger) = look.photoCard(photos[i % photos.size], kindIcon(t.kind), t.skill, trigLine(t),
+                    { go("trigger-edit:$i") }, { trigCardMenu(i) })
+                grid.addView(look.pair(card(two[0].index, two[0].value), if (two.size > 1) card(two[1].index, two[1].value) else View(this)))
+            }
+        }
+        column.addView(look.searchBar("Search auto actions", { trigQuery = it; fill() }, {
+            AlertDialog.Builder(this).setItems(trigChips.toTypedArray()) { _, w -> trigChip = trigChips[w]; render() }.show()
+        }))
+        column.addView(look.chips(trigChips, trigChip) { trigChip = it; render() })
+        fill()
+        column.addView(grid)
+        column.addView(look.darkPill("New Auto Action", R.drawable.ic_plus) { go("trigger-new") }.apply {
+            (layoutParams as LinearLayout.LayoutParams).setMargins(0, look.dp(6), 0, look.dp(6))
+        })
+    }
+
+    private fun trigMenu() = AlertDialog.Builder(this)
+        .setItems(arrayOf("Copy settings", "Chains", "Reset to defaults")) { _, w ->
+            when (w) {
+                0 -> go("copysettings")
+                1 -> go("chains")
+                else -> AlertDialog.Builder(this).setMessage("Replace your auto actions with the original set?")
+                    .setPositiveButton("Reset") { _, _ -> store.triggers = Trigger.DEFAULTS; render() }
+                    .setNegativeButton("Cancel", null).show()
+            }
+        }.show()
+
+    private fun trigCardMenu(index: Int) {
+        val list = store.triggers.toMutableList()
+        val t = list.getOrNull(index) ?: return
+        AlertDialog.Builder(this).setTitle(t.skill)
+            .setItems(arrayOf("Edit", "Duplicate", "Remove")) { _, w ->
+                when (w) {
+                    0 -> go("trigger-edit:$index")
+                    1 -> { store.triggers = list + t; render() }
+                    else -> { list.removeAt(index); store.triggers = list; render() }
+                }
+            }.show()
+    }
+
+    private fun copySettingsPage(column: LinearLayout) {
+        column.addView(ui.topBar("Copy settings", "What happens when you copy a message"))
+        note(column, "When you copy a message, Verbo checks it on your phone for the things your auto actions look for and shows a ⚡ chip above the keys. " +
+            "Example: copy \"We're meeting David Miller tomorrow\" and get \"Who is · David Miller\" and \"Save event\". Nothing is sent until a skill runs.")
         column.addView(ui.rows(
             ui.row(R.drawable.ic_zap, "Suggest actions for copied text", "Checked on the phone only", ui.toggle(store.triggersOn) { store.triggersOn = it; render() }),
             ui.row(R.drawable.ic_pencil_line, "Quick replies when I copy", "Three short replies as chips, one small request per copy", ui.toggle(store.smartReplies) { store.smartReplies = it }),
             ui.row(R.drawable.ic_sparkles, "Show my acts when I copy", "Opens the acts in place of the keys, once per copy", ui.toggle(store.actsOnCopy) { store.actsOnCopy = it }),
         ))
-        val triggers = store.triggers
-        if (triggers.isNotEmpty()) column.addView(ui.rows(*triggers.mapIndexed { i, t ->
-            val what = Cards.KINDS.firstOrNull { it.first == t.kind }?.second ?: t.kind
-            val condition = if (t.kind == "keyword") "the words “${t.keyword}”" else what
-            val missing = store.triggerSkill(t) == null
-            ui.row(R.drawable.ic_zap, "${t.skill}${if (t.auto) " · automatic" else ""}",
-                "When copied text has $condition" + if (missing) " · skill not found" else "", ui.chevron()) { editTrigger(i) }
-        }.toTypedArray()))
-        column.addView(ui.button("New auto action", R.drawable.ic_plus, filled = true) { editTrigger(-1) })
-        column.addView(ui.text("\nChains", 16f, bold = true).apply { setPadding(ui.dp(2), ui.dp(10), 0, ui.dp(6)) })
+    }
+
+    private fun chainsPage(column: LinearLayout) {
+        column.addView(ui.topBar("Chains", "Several acts in a row, as one act"))
         note(column, "A chain runs several acts one after another, as one act: for example Schedule it → Save to Notion → Reply options. Chains appear with your acts and can be used by an auto action.")
         val chains = store.skills.withIndex().filter { Acts.isChain(it.value.instruction) }
         if (chains.isNotEmpty()) column.addView(ui.rows(*chains.map { (i, sk) ->
             ui.row(R.drawable.ic_zap, sk.name, Acts.chainSteps(sk.instruction).joinToString(" → "), ui.chevron()) { editChain(i) }
         }.toTypedArray()))
         column.addView(ui.button("New chain", R.drawable.ic_plus) { editChain(-1) })
-        column.addView(ui.button("Reset to the defaults", null) { store.triggers = Trigger.DEFAULTS; render() })
     }
 
     private fun editChain(index: Int) {
@@ -842,44 +926,97 @@ class PageActivity : Activity() {
     }
 
     private fun editTrigger(index: Int) {
+        startActivity(android.content.Intent(this, PageActivity::class.java)
+            .putExtra("page", if (index < 0) "trigger-new" else "trigger-edit:$index"))
+    }
+
+    /** The New Auto Action sheet: condition, skill, and the automatic checkbox. */
+    private fun triggerPage() {
+        val index = page.substringAfter("trigger-edit:", "").toIntOrNull() ?: -1
         val list = store.triggers.toMutableList()
         val existing = list.getOrNull(index)
-        val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(ui.dp(22), ui.dp(8), ui.dp(22), 0) }
-        form.addView(ui.text("When the copied text has", 13.5f, ui.muted))
-        val kinds = android.widget.Spinner(this).apply {
-            adapter = android.widget.ArrayAdapter(this@PageActivity, android.R.layout.simple_spinner_dropdown_item, Cards.KINDS.map { it.second })
-            setSelection(Cards.KINDS.indexOfFirst { it.first == (existing?.kind ?: "person") }.coerceAtLeast(0))
-        }
-        form.addView(kinds)
-        val keyword = ui.field("Words to look for, separated by commas", existing?.keyword ?: "")
-        form.addView(keyword)
-        form.addView(ui.text("Run this skill", 13.5f, ui.muted).apply { setPadding(0, ui.dp(10), 0, 0) })
+        var kind = existing?.kind ?: "person"
+        var skill = existing?.skill ?: "Who is"
+        var auto = existing?.auto ?: true
         val names = (store.skills.map { it.name } + Trigger.BUILTIN.keys + Acts.BUILTIN.map { it.name }).distinct()
-        val skill = android.widget.Spinner(this).apply {
-            adapter = android.widget.ArrayAdapter(this@PageActivity, android.R.layout.simple_spinner_dropdown_item, names)
-            setSelection(names.indexOf(existing?.skill ?: "Who is").coerceAtLeast(0))
+
+        val root = android.widget.FrameLayout(this)
+        root.addView(android.widget.ImageView(this).apply {
+            setImageResource(R.drawable.photo_header)
+            scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+        }, android.widget.FrameLayout.LayoutParams(-1, look.dp(230)))
+        root.addView(look.circleButton(R.drawable.ic_chevron_left, look.ink) { finish() },
+            android.widget.FrameLayout.LayoutParams(look.dp(40), look.dp(40)).apply { setMargins(look.dp(16), look.dp(16), 0, 0) })
+
+        val column = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            isFocusableInTouchMode = true
+            setPadding(look.dp(20), look.dp(10), look.dp(20), look.dp(22))
         }
-        form.addView(skill)
-        val auto = android.widget.CheckBox(this).apply { text = "Automatic: run it without asking"; isChecked = existing?.auto ?: false }
-        form.addView(auto)
-        kinds.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, pos: Int, id: Long) {
-                keyword.visibility = if (Cards.KINDS[pos].first == "keyword") android.view.View.VISIBLE else android.view.View.GONE
-            }
-            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+        column.addView(View(this).apply { background = look.shape(Color.parseColor("#C9C9D4"), 2) },
+            LinearLayout.LayoutParams(look.dp(40), look.dp(4)).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = look.dp(18) })
+        val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, 0, 0, look.dp(16)) }
+        head.addView(look.iconTile(R.drawable.ic_zap, look.accentSoft, look.accent, 56, 26))
+        head.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(look.dp(14), 0, 0, 0)
+            addView(look.text(if (existing == null) "New Auto Action" else "Edit Auto Action", 22f, bold = true))
+            addView(look.text("Run a skill automatically based on copied text", 13.5f, look.muted).apply { setPadding(0, look.dp(3), 0, 0) })
+        })
+        column.addView(head)
+
+        fun kindLabel(k: String) = (Cards.KINDS.firstOrNull { it.first == k }?.second ?: k).replaceFirstChar { it.uppercase() }
+        column.addView(look.label("When the copied text has", look.violetInk))
+        val keyword = look.fieldRow(R.drawable.ic_tag, "Words to look for, separated by commas", existing?.keyword ?: "")
+        keyword.visibility = if (kind == "keyword") View.VISIBLE else View.GONE
+        val kindRow = look.dropRow(kindIcon(kind), kindLabel(kind)) {}
+        kindRow.setOnClickListener {
+            AlertDialog.Builder(this).setItems(Cards.KINDS.map { it.second.replaceFirstChar { c -> c.uppercase() } }.toTypedArray()) { _, w ->
+                kind = Cards.KINDS[w].first
+                look.dropText(kindRow).text = kindLabel(kind)
+                (kindRow.getChildAt(0) as android.widget.ImageView).setImageResource(kindIcon(kind))
+                keyword.visibility = if (kind == "keyword") View.VISIBLE else View.GONE
+            }.show()
         }
-        val dialog = AlertDialog.Builder(this).setTitle(if (existing == null) "New auto action" else "Edit auto action").setView(form)
-            .setPositiveButton("Save") { _, _ ->
-                val kind = Cards.KINDS[kinds.selectedItemPosition].first
-                if (kind == "keyword" && keyword.text.isBlank()) { ui.toast("Type the words to look for"); return@setPositiveButton }
-                val t = Trigger(kind, keyword.text.toString().trim(), names[skill.selectedItemPosition], auto.isChecked)
+        column.addView(kindRow)
+        column.addView(keyword)
+        column.addView(look.label("Run this skill", look.violetInk))
+        val skillRow = look.dropRow(R.drawable.ic_zap, skill) {}
+        skillRow.setOnClickListener {
+            AlertDialog.Builder(this).setItems(names.toTypedArray()) { _, w ->
+                skill = names[w]
+                look.dropText(skillRow).text = skill
+            }.show()
+        }
+        column.addView(skillRow)
+        column.addView(look.checkRow(auto, "Automatic: run it without asking") { auto = it })
+        column.addView(look.darkPill("Save", R.drawable.ic_check) {
+            if (kind == "keyword" && look.editText(keyword).text.isBlank()) {
+                look.toast("Type the words to look for")
+            } else {
+                val t = Trigger(kind, look.editText(keyword).text.toString().trim(), skill, auto)
                 if (existing == null) list.add(t) else list[index] = t
                 store.triggers = list
-                render()
+                finish()
             }
-            .setNegativeButton("Cancel", null)
-        if (existing != null) dialog.setNeutralButton("Delete") { _, _ -> list.removeAt(index); store.triggers = list; render() }
-        dialog.show()
+        }.apply { (layoutParams as LinearLayout.LayoutParams).topMargin = look.dp(8) })
+        if (existing != null) column.addView(look.text("Remove auto action", 14f, Color.parseColor("#DC2626"), bold = true).apply {
+            gravity = Gravity.CENTER
+            setPadding(0, look.dp(14), 0, 0)
+            setOnClickListener {
+                AlertDialog.Builder(this@PageActivity).setMessage("Remove this auto action?")
+                    .setPositiveButton("Remove") { _, _ -> list.removeAt(index); store.triggers = list; finish() }
+                    .setNegativeButton("Cancel", null).show()
+            }
+        }, LinearLayout.LayoutParams(-1, -2))
+
+        val sheet = android.widget.ScrollView(this).apply {
+            isVerticalScrollBarEnabled = false
+            background = look.sheetShape()
+            addView(column)
+        }
+        root.addView(sheet, android.widget.FrameLayout.LayoutParams(-1, -1).apply { topMargin = look.dp(190) })
+        setContentView(root)
     }
 
     // ---------- connections ----------

@@ -32,6 +32,7 @@ class Look(val a: Activity) {
     val bg = Color.parseColor("#F5F4FA")
     val card = Color.WHITE
     val ink = Color.parseColor("#16161D")
+    val violetInk = Color.parseColor("#4B4569")
     val muted = Color.parseColor("#7A7A88")
     val faint = Color.parseColor("#9A9AA6")
     val line = Color.parseColor("#ECECF2")
@@ -522,7 +523,7 @@ class Look(val a: Activity) {
         setColor(Color.parseColor("#F8F8FC"))
     }
 
-    fun label(s: String) = text(s, 15f, ink, bold = true).apply { setPadding(dp(2), dp(14), 0, dp(8)) }
+    fun label(s: String, color: Int = ink) = text(s, 15f, color, bold = true).apply { setPadding(dp(2), dp(14), 0, dp(8)) }
 
     /** White rounded input row: leading icon, edit text, optional trailing view. */
     fun fieldRow(iconRes: Int, hint: String, value: String = "", lines: Int = 1, trailing: View? = null): LinearLayout {
@@ -589,7 +590,7 @@ class Look(val a: Activity) {
             addView(icon(R.drawable.ic_check, 14, Color.WHITE).apply { visibility = if (on) View.VISIBLE else View.GONE })
         }
         row.addView(box)
-        row.addView(text(label, 15f, ink, bold = true).apply { setPadding(dp(12), 0, 0, 0) })
+        row.addView(text(label, 15f, violetInk, bold = true).apply { setPadding(dp(12), 0, 0, 0) })
         row.setOnClickListener {
             on = !on
             box.background = shape(if (on) accent else card, 6, if (on) null else edge)
