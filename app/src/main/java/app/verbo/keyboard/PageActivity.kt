@@ -50,7 +50,7 @@ class PageActivity : Activity() {
     private var resumed = false
     override fun onResume() {
         super.onResume()
-        if (resumed && (page == "welcome" || page == "dashboard" || page == "keys")) { store = Store(this); render() }
+        if (resumed && (page == "welcome" || page == "dashboard" || page == "keys" || page == "automate" || page == "memory")) { store = Store(this); render() }
         resumed = true
     }
 
@@ -63,6 +63,9 @@ class PageActivity : Activity() {
         if (page == "skill-new" || page.startsWith("skill-edit:")) { skillPage(); return }
         if (page == "chain-new" || page.startsWith("chain-edit:")) { chainPage(); return }
         if (page == "trigger-new" || page.startsWith("trigger-edit:")) { triggerPage(); return }
+        if (page == "api-new" || page.startsWith("api-edit:")) { apiPage(); return }
+        if (page == "key-new" || page.startsWith("key-edit:")) { keyPage(); return }
+        if (page == "memory-new" || page.startsWith("memory-edit:")) { memorySheet(); return }
         if (page == "triggers") { triggersPage(); return }
         val column = ui.page(mainNav(navActive(page)))
         when {
@@ -352,9 +355,9 @@ class PageActivity : Activity() {
             "You can also type \"remember my UPI is me@okicici\" in the keyboard and hold the space bar, or \"forget my UPI\". These sync with your dashboard.")
         val facts = store.memory
         if (facts.isNotEmpty()) column.addView(ui.rows(*facts.mapIndexed { i, f ->
-            ui.row(R.drawable.ic_sparkles, f.label, f.value, ui.chevron()) { editFact(i) }
+            ui.row(R.drawable.ic_sparkles, f.label, f.value, ui.chevron()) { go("memory-edit:$i") }
         }.toTypedArray()))
-        column.addView(ui.button("Add something to remember", R.drawable.ic_plus, filled = true) { editFact(-1) })
+        column.addView(ui.button("Add something to remember", R.drawable.ic_plus, filled = true) { go("memory-new") })
         column.addView(ui.text("\nYour writing style", 16f, bold = true).apply { setPadding(ui.dp(2), ui.dp(10), 0, ui.dp(6)) })
         val style = store.styleLine
         note(column, (style?.let { "Learned so far: $it." } ?: "Verbo learns how you write from messages you send with it (${store.styleSamples.size} of 5 needed).") +
@@ -363,27 +366,37 @@ class PageActivity : Activity() {
         if (store.styleSamples.isNotEmpty()) column.addView(ui.button("Forget what it learned", null) { store.clearStyle(); render() })
     }
 
-    private fun editFact(index: Int) {
+    /** The Remember sheet: a name and a value Verbo keeps and uses when it helps. */
+    private fun memorySheet() {
+        val index = page.substringAfter("memory-edit:", "").toIntOrNull() ?: -1
         val list = store.memory.toMutableList()
         val existing = list.getOrNull(index)
-        val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(ui.dp(22), ui.dp(8), ui.dp(22), 0) }
-        val label = ui.field("What it is, e.g. Mummy, Home address, UPI", existing?.label ?: "")
-        val value = ui.field("The value, e.g. +91 98765 43210", existing?.value ?: "", lines = 3)
-        form.addView(label)
-        form.addView(value)
-        val dialog = AlertDialog.Builder(this).setTitle(if (existing == null) "Remember" else "Edit").setView(form)
-            .setPositiveButton("Save") { _, _ ->
-                val l = label.text.toString().trim()
-                val v = value.text.toString().trim()
-                if (l.isEmpty() || v.isEmpty()) { ui.toast("It needs both a name and a value"); return@setPositiveButton }
-                val f = Memory.Fact(l.take(60), v.take(500))
-                if (existing == null) list.add(f) else list[index] = f
-                store.memory = list
-                render()
-            }
-            .setNegativeButton("Cancel", null)
-        if (existing != null) dialog.setNeutralButton("Forget") { _, _ -> list.removeAt(index); store.memory = list; render() }
-        dialog.show()
+        sheet(Art.memory(this), R.drawable.ic_brain, if (existing == null) "Remember" else "Edit memory",
+            "Tell Verbo once and it uses it when it helps") { column ->
+            column.addView(look.label("What it is", look.violetInk))
+            val label = look.fieldRow(R.drawable.ic_tag, "e.g. Mummy, Home address, UPI", existing?.label ?: "")
+            column.addView(label)
+            column.addView(look.label("The value", look.violetInk))
+            val value = look.fieldRow(R.drawable.ic_file_text, "e.g. +91 98765 43210", existing?.value ?: "", lines = 3)
+            column.addView(value)
+            column.addView(look.darkPill("Save", R.drawable.ic_check) {
+                val l = look.editText(label).text.toString().trim()
+                val v = look.editText(value).text.toString().trim()
+                if (l.isEmpty() || v.isEmpty()) {
+                    look.toast("It needs both a name and a value")
+                } else {
+                    val f = Memory.Fact(l.take(60), v.take(500))
+                    if (existing == null) list.add(f) else list[index] = f
+                    store.memory = list
+                    finish()
+                }
+            }.apply { (layoutParams as LinearLayout.LayoutParams).topMargin = look.dp(8) })
+            if (existing != null) column.addView(look.text("Forget this", 14f, Color.parseColor("#DC2626"), bold = true).apply {
+                gravity = Gravity.CENTER
+                setPadding(0, look.dp(14), 0, 0)
+                setOnClickListener { list.removeAt(index); store.memory = list; finish() }
+            }, LinearLayout.LayoutParams(-1, -2))
+        }
     }
 
     // ---------- triggers ----------
@@ -1071,9 +1084,9 @@ class PageActivity : Activity() {
 
         column.addView(ui.section(R.drawable.ic_plug, "Your APIs"))
         store.customApis.forEachIndexed { index, api ->
-            column.addView(ui.rows(ui.brandRow(Brand.api, api.name, api.description.ifBlank { api.url }, ui.chevron()) { editApi(index) }))
+            column.addView(ui.rows(ui.brandRow(Brand.api, api.name, api.description.ifBlank { api.url }, ui.chevron()) { go("api-edit:$index") }))
         }
-        column.addView(ui.button("Connect an API", R.drawable.ic_plus, filled = true) { editApi(-1) })
+        column.addView(ui.button("Connect an API", R.drawable.ic_plus, filled = true) { go("api-new") })
     }
 
     private fun brandFor(field: String) = when (field) {
@@ -1096,39 +1109,81 @@ class PageActivity : Activity() {
             .setNegativeButton("Cancel", null).show()
     }
 
-    private fun editApi(index: Int) {
+    /** The shared bottom-sheet scaffold: gradient art header, back button, grabber, icon-and-title head, then [fill] adds the fields. */
+    private fun sheet(art: android.graphics.drawable.Drawable, iconRes: Int, title: String, subtitle: String, fill: (LinearLayout) -> Unit) {
+        val root = android.widget.FrameLayout(this)
+        root.addView(View(this).apply { background = art }, android.widget.FrameLayout.LayoutParams(-1, look.dp(230)))
+        root.addView(look.circleButton(R.drawable.ic_chevron_left, look.ink) { finish() },
+            android.widget.FrameLayout.LayoutParams(look.dp(40), look.dp(40)).apply { setMargins(look.dp(16), look.dp(16), 0, 0) })
+        val column = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            isFocusableInTouchMode = true
+            setPadding(look.dp(20), look.dp(10), look.dp(20), look.dp(22))
+        }
+        column.addView(View(this).apply { background = look.shape(Color.parseColor("#C9C9D4"), 2) },
+            LinearLayout.LayoutParams(look.dp(40), look.dp(4)).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = look.dp(18) })
+        val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, 0, 0, look.dp(16)) }
+        head.addView(look.iconTile(iconRes, look.accentSoft, look.accent, 56, 26))
+        head.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(look.dp(14), 0, 0, 0)
+            addView(look.text(title, 22f, bold = true))
+            addView(look.text(subtitle, 13.5f, look.muted).apply { setPadding(0, look.dp(3), 0, 0) })
+        })
+        column.addView(head)
+        fill(column)
+        val scroll = android.widget.ScrollView(this).apply {
+            isVerticalScrollBarEnabled = false
+            background = look.sheetShape()
+            addView(column)
+        }
+        root.addView(scroll, android.widget.FrameLayout.LayoutParams(-1, -1).apply { topMargin = look.dp(190) })
+        setContentView(root)
+    }
+
+    /** The Connect-an-API sheet: name, what it does, address and an optional auth header. */
+    private fun apiPage() {
+        val index = page.substringAfter("api-edit:", "").toIntOrNull() ?: -1
         val apis = store.customApis.toMutableList()
         val existing = apis.getOrNull(index)
-        val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(ui.dp(22), ui.dp(8), ui.dp(22), 0) }
-        val name = ui.field("Name, e.g. NBA scores", existing?.name ?: "")
-        val description = ui.field("What it returns and when to use it", existing?.description ?: "")
-        val url = ui.field("https://… use {query} where the search term goes", existing?.url ?: "")
-        val headerName = ui.field("Header name (optional), e.g. X-Api-Key", existing?.headerName ?: "")
-        val headerValue = ui.field("Header value (optional)", existing?.headerValue ?: "", secret = true)
-        listOf(name, description, url, headerName, headerValue).forEach { form.addView(it) }
-
-        val dialog = AlertDialog.Builder(this)
-            .setTitle(if (existing == null) "Connect an API" else "Edit connection")
-            .setView(form)
-            .setPositiveButton("Save") { _, _ ->
-                val n = name.text.toString().trim()
-                val u = url.text.toString().trim()
+        sheet(Art.api(this), R.drawable.ic_plug, if (existing == null) "Connect an API" else "Edit connection",
+            "Give the assistant a new place to look things up") { column ->
+            column.addView(look.label("Name", look.violetInk))
+            val name = look.fieldRow(R.drawable.ic_tag, "Name, e.g. NBA scores", existing?.name ?: "")
+            column.addView(name)
+            column.addView(look.label("What it does", look.violetInk))
+            val description = look.fieldRow(R.drawable.ic_file_text, "What it returns and when to use it", existing?.description ?: "", lines = 2)
+            column.addView(description)
+            column.addView(look.label("Address", look.violetInk))
+            val url = look.fieldRow(R.drawable.ic_link, "https://… use {query} where the search term goes", existing?.url ?: "")
+            column.addView(url)
+            column.addView(look.label("Header (optional)", look.violetInk))
+            val headerName = look.fieldRow(R.drawable.ic_shield, "Header name, e.g. X-Api-Key", existing?.headerName ?: "")
+            column.addView(headerName)
+            val headerValue = look.fieldRow(R.drawable.ic_shield, "Header value", existing?.headerValue ?: "", secret = true)
+            column.addView(headerValue)
+            column.addView(look.darkPill("Save", R.drawable.ic_check) {
+                val n = look.editText(name).text.toString().trim()
+                val u = look.editText(url).text.toString().trim()
                 if (n.isEmpty() || !u.startsWith("https://")) {
-                    ui.toast("It needs a name and an https:// address")
+                    look.toast("It needs a name and an https:// address")
                 } else {
-                    val api = CustomApi(n, description.text.toString().trim(), u, headerName.text.toString().trim(), headerValue.text.toString().trim())
+                    val api = CustomApi(n, look.editText(description).text.toString().trim(), u, look.editText(headerName).text.toString().trim(), look.editText(headerValue).text.toString().trim())
                     if (existing == null) apis.add(api) else apis[index] = api
                     store.customApis = apis
-                    render()
+                    finish()
                 }
-            }
-            .setNegativeButton("Cancel", null)
-        if (existing != null) dialog.setNeutralButton("Remove") { _, _ ->
-            apis.removeAt(index)
-            store.customApis = apis
-            render()
+            }.apply { (layoutParams as LinearLayout.LayoutParams).topMargin = look.dp(8) })
+            if (existing != null) column.addView(look.text("Remove connection", 14f, Color.parseColor("#DC2626"), bold = true).apply {
+                gravity = Gravity.CENTER
+                setPadding(0, look.dp(14), 0, 0)
+                setOnClickListener {
+                    AlertDialog.Builder(this@PageActivity).setMessage("Remove this connection?")
+                        .setPositiveButton("Remove") { _, _ -> apis.removeAt(index); store.customApis = apis; finish() }
+                        .setNegativeButton("Cancel", null).show()
+                }
+            }, LinearLayout.LayoutParams(-1, -2))
         }
-        dialog.show()
     }
 
     // ---------- AI service ----------
@@ -1424,64 +1479,84 @@ class PageActivity : Activity() {
             ui.toggle(store.keysOn) { store.keysOn = it; if (store.deviceToken.isNotEmpty()) Sync.soon(store); render() })))
         val rows = keyRows()
         val skills = store.skills
-        if (rows.isNotEmpty()) column.addView(ui.rows(*rows.map { r ->
-            ui.row(R.drawable.ic_zap, "Hold ${r.action.key.uppercaseChar()}  ·  ${KeyAction.appName(r.action.app)}", KeyAction.label(r.action.action, skills), ui.chevron()) { keyActionMenu(r) }
+        if (rows.isNotEmpty()) column.addView(ui.rows(*rows.mapIndexed { i, r ->
+            ui.row(R.drawable.ic_zap, "Hold ${r.action.key.uppercaseChar()}  ·  ${KeyAction.appName(r.action.app)}", KeyAction.label(r.action.action, skills), ui.chevron()) { go("key-edit:$i") }
         }.toTypedArray()))
         else note(column, "No key actions yet.")
-        column.addView(ui.button("Add key action", R.drawable.ic_plus, filled = true) { pickApp(null) })
+        column.addView(ui.button("Add key action", R.drawable.ic_plus, filled = true) { go("key-new") })
     }
 
-    private fun keyActionMenu(r: KeyRow) {
-        AlertDialog.Builder(this).setTitle("Hold ${r.action.key.uppercaseChar()} in ${KeyAction.appName(r.action.app)}")
-            .setMessage(KeyAction.label(r.action.action, store.skills))
-            .setPositiveButton("Change") { _, _ -> pickApp(r) }
-            .setNeutralButton("Delete") { _, _ -> saveKeyAction(r, null) }
-            .setNegativeButton("Close", null).show()
-    }
-
-    /** Step 1 of 3: which app. Common apps first, then any installed app. */
-    private fun pickApp(prev: KeyRow?) {
+    /** The key-action sheet: app, letter and what it runs, all on one screen instead of three dialogs. */
+    private fun keyPage() {
+        val index = page.substringAfter("key-edit:", "").toIntOrNull() ?: -1
+        val rows = keyRows()
+        val prev = rows.getOrNull(index)
         val launcher = android.content.Intent(android.content.Intent.ACTION_MAIN).addCategory(android.content.Intent.CATEGORY_LAUNCHER)
         val installed = try {
             packageManager.queryIntentActivities(launcher, 0).map { it.activityInfo.packageName to it.loadLabel(packageManager).toString() }
                 .filter { (pkg, _) -> pkg != packageName && KeyAction.COMMON_APPS.none { it.first == pkg } }.distinctBy { it.first }.sortedBy { it.second.lowercase() }
         } catch (e: Exception) { emptyList() }
         val apps = KeyAction.COMMON_APPS + installed
-        AlertDialog.Builder(this).setTitle("In which app?")
-            .setItems(apps.map { it.second }.toTypedArray()) { _, i -> pickLetter(prev, apps[i].first) }
-            .setNegativeButton("Cancel", null).show()
-    }
-
-    /** Step 2 of 3: which letter. Letters already used in that app say what they run now. */
-    private fun pickLetter(prev: KeyRow?, app: String) {
-        val used = keyRows().filter { it.action.app == app && it.action != prev?.action }
         val letters = ('a'..'z').toList()
-        val labels = letters.map { l ->
-            used.firstOrNull { it.action.key == l }?.let { "${l.uppercaseChar()}   (now ${KeyAction.label(it.action.action, store.skills)})" } ?: l.uppercaseChar().toString()
-        }
-        AlertDialog.Builder(this).setTitle("Hold which key?")
-            .setItems(labels.toTypedArray()) { _, i -> pickAction(prev, app, letters[i]) }
-            .setNegativeButton("Cancel", null).show()
-    }
-
-    /** Step 3 of 3: what it runs. */
-    private fun pickAction(prev: KeyRow?, app: String, letter: Char) {
         val options = store.skills.map { "skill:" + it.name } + Acts.BUILTIN.map { "act:" + it.name } + Store.WHEEL_TOOLS.map { "tool:" + it.first } + "text:"
-        val labels = options.map { if (it == "text:") "✍️ Type a saved text…" else KeyAction.label(it, store.skills) }
-        AlertDialog.Builder(this).setTitle("Hold ${letter.uppercaseChar()} to…")
-            .setItems(labels.toTypedArray()) { _, i ->
-                if (options[i] != "text:") saveKeyAction(prev, KeyAction(letter, app, options[i]))
-                else {
-                    val field = ui.field("On my way!", lines = 3)
-                    AlertDialog.Builder(this).setTitle("Text to type").setView(ui.pad(field, top = 8))
-                        .setPositiveButton("Save") { _, _ ->
-                            val text = field.text.toString()
-                            if (text.isBlank()) ui.toast("Type the text first") else saveKeyAction(prev, KeyAction(letter, app, "text:$text"))
-                        }
-                        .setNegativeButton("Cancel", null).show()
-                }
+        var app = prev?.action?.app ?: ""
+        var letter = prev?.action?.key ?: 'a'
+        var action = prev?.action?.action ?: options.firstOrNull() ?: "text:"
+        val initialText = if (action.startsWith("text:")) action.removePrefix("text:") else ""
+
+        sheet(Art.key(this), R.drawable.ic_keyboard, if (prev == null) "New key action" else "Edit key action",
+            "Hold a letter to run anything, in one app or all") { column ->
+            column.addView(look.label("In which app", look.violetInk))
+            val appRow = look.dropRow(R.drawable.ic_box, KeyAction.appName(app)) {}
+            appRow.setOnClickListener {
+                AlertDialog.Builder(this).setItems(apps.map { it.second }.toTypedArray()) { _, i ->
+                    app = apps[i].first
+                    look.dropText(appRow).text = KeyAction.appName(app)
+                }.show()
             }
-            .setNegativeButton("Cancel", null).show()
+            column.addView(appRow)
+            column.addView(look.label("Hold which key", look.violetInk))
+            val letterRow = look.dropRow(R.drawable.ic_keyboard, letter.uppercaseChar().toString()) {}
+            letterRow.setOnClickListener {
+                val used = rows.filter { it.action.app == app && it.action != prev?.action }
+                val labels = letters.map { l ->
+                    used.firstOrNull { it.action.key == l }?.let { "${l.uppercaseChar()}   (now ${KeyAction.label(it.action.action, store.skills)})" } ?: l.uppercaseChar().toString()
+                }
+                AlertDialog.Builder(this).setItems(labels.toTypedArray()) { _, i ->
+                    letter = letters[i]
+                    look.dropText(letterRow).text = letter.uppercaseChar().toString()
+                }.show()
+            }
+            column.addView(letterRow)
+            column.addView(look.label("What it runs", look.violetInk))
+            val actionRow = look.dropRow(R.drawable.ic_zap, if (action == "text:") "✍️ Type a saved text…" else KeyAction.label(action, store.skills)) {}
+            val textField = look.fieldRow(R.drawable.ic_pencil_line, "The text to type, e.g. On my way!", initialText, lines = 2)
+            textField.visibility = if (action == "text:") View.VISIBLE else View.GONE
+            actionRow.setOnClickListener {
+                val labels = options.map { if (it == "text:") "✍️ Type a saved text…" else KeyAction.label(it, store.skills) }
+                AlertDialog.Builder(this).setItems(labels.toTypedArray()) { _, i ->
+                    action = options[i]
+                    look.dropText(actionRow).text = labels[i]
+                    textField.visibility = if (action == "text:") View.VISIBLE else View.GONE
+                }.show()
+            }
+            column.addView(actionRow)
+            column.addView(textField)
+            column.addView(look.darkPill("Save", R.drawable.ic_check) {
+                val act = if (action == "text:") {
+                    val t = look.editText(textField).text.toString()
+                    if (t.isBlank()) { look.toast("Type the text first"); return@darkPill }
+                    "text:$t"
+                } else action
+                saveKeyAction(prev, KeyAction(letter, app, act))
+                finish()
+            }.apply { (layoutParams as LinearLayout.LayoutParams).topMargin = look.dp(8) })
+            if (prev != null) column.addView(look.text("Remove key action", 14f, Color.parseColor("#DC2626"), bold = true).apply {
+                gravity = Gravity.CENTER
+                setPadding(0, look.dp(14), 0, 0)
+                setOnClickListener { saveKeyAction(prev, null); finish() }
+            }, LinearLayout.LayoutParams(-1, -2))
+        }
     }
 
     /** Same rules as the dashboard: one action per letter per app; a skill in all apps uses the skill's own hold key. */
@@ -1503,7 +1578,6 @@ class PageActivity : Activity() {
         store.keymap = map
         if (store.deviceToken.isNotEmpty()) Sync.soon(store)
         ui.toast(if (next == null) "Key action removed" else "Hold ${next.key.uppercaseChar()}: ${KeyAction.label(next.action, skills)}")
-        render()
     }
 
     // ---------- dashboard ----------

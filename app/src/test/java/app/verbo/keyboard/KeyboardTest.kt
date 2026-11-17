@@ -520,6 +520,78 @@ class KeyboardTest {
         MainActivity.tab = "home"
     }
 
+    /** Click the pill/button whose label is [label] by walking up to its clickable parent. */
+    private fun clickLabel(root: View, label: String) {
+        fun find(v: View): TextView? = when {
+            v is TextView && v.text.toString() == label -> v
+            v is ViewGroup -> (0 until v.childCount).firstNotNullOfOrNull { find(v.getChildAt(it)) }
+            else -> null
+        }
+        var v: View? = find(root)
+        while (v != null && !v.isClickable) v = v.parent as? View
+        v!!.performClick()
+    }
+
+    private fun sheetFields(sc: ViewGroup): List<android.widget.EditText> {
+        val out = ArrayList<android.widget.EditText>()
+        fun walk(v: View) {
+            if (v is android.widget.EditText) out.add(v)
+            if (v is ViewGroup) for (i in 0 until v.childCount) walk(v.getChildAt(i))
+        }
+        walk(sc)
+        return out
+    }
+
+    private fun openSheet(page: String): ViewGroup {
+        val a = Robolectric.buildActivity(PageActivity::class.java, android.content.Intent().putExtra("page", page)).setup().get()
+        return (content(a) as ViewGroup).also { it.layout(0, 0, 1080, 2000) }
+    }
+
+    @Test
+    fun connectApiSheetSavesANewConnection() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        val sc = openSheet("api-new")
+        val fields = sheetFields(sc)
+        fields[0].setText("NBA scores")
+        fields[2].setText("https://example.com/scores?q={query}")
+        clickLabel(sc, "Save")
+        assertEquals(1, store.customApis.size)
+        assertEquals("NBA scores", store.customApis[0].name)
+        assertEquals("https://example.com/scores?q={query}", store.customApis[0].url)
+    }
+
+    @Test
+    fun connectApiSheetRejectsANonHttpsAddress() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        val sc = openSheet("api-new")
+        val fields = sheetFields(sc)
+        fields[0].setText("Bad")
+        fields[2].setText("http://example.com")
+        clickLabel(sc, "Save")
+        assertTrue("an http:// address is not saved", store.customApis.isEmpty())
+    }
+
+    @Test
+    fun rememberSheetSavesAFact() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        val sc = openSheet("memory-new")
+        val fields = sheetFields(sc)
+        fields[0].setText("Mummy")
+        fields[1].setText("+91 98765 43210")
+        clickLabel(sc, "Save")
+        assertEquals(1, store.memory.size)
+        assertEquals("Mummy", store.memory[0].label)
+        assertEquals("+91 98765 43210", store.memory[0].value)
+    }
+
+    @Test
+    fun keyActionSheetBindsAHoldKey() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        val sc = openSheet("key-new")
+        clickLabel(sc, "Save") // defaults: all apps, letter A, the first skill
+        assertTrue("holding A now runs something", KeyAction.resolve(store.keymap, store.skills, 'a', null) != null)
+    }
+
     @Test
     fun meetingLinkWithoutGoogleOffersAnInstantLink() {
         val keys = ime.keys!!
@@ -746,10 +818,10 @@ class KeyboardTest {
         // A saved chain, as on the design reference device.
         store.skills = store.skills + Skill("⛓️", "Trip Planner", Acts.chain(listOf("Polish", "Reply", "Summarize")), "write")
         val chainPageName = "chain-edit:${store.skills.lastIndex}"
-        for (page in listOf("ai", "triggers", "memory", "usage", "textshortcuts", "look", "typing", "languages", "create", "wheel", "feedback", "battery", "templates", "prompts", "automate", "shortcuts", "privacy", "dashboard", "welcome", "keys", "category:edit", "shelves", "skill-new", "skill-edit:0", chainPageName, "trigger-new", "trigger-edit:0", "chains", "copysettings")) {
+        for (page in listOf("ai", "triggers", "memory", "usage", "textshortcuts", "look", "typing", "languages", "create", "wheel", "feedback", "battery", "templates", "prompts", "automate", "shortcuts", "privacy", "dashboard", "welcome", "keys", "category:edit", "shelves", "skill-new", "skill-edit:0", chainPageName, "trigger-new", "trigger-edit:0", "chains", "copysettings", "api-new", "key-new", "memory-new")) {
             val a = Robolectric.buildActivity(PageActivity::class.java, android.content.Intent().putExtra("page", page)).setup().get()
             val s = content(a)
-            val h = if (page.startsWith("skill-") || page.startsWith("trigger-")) 2000 else if (page.startsWith("chain-")) 2600 else maxOf((s as ViewGroup).getChildAt(0).measuredHeight, 900)
+            val h = if (page.startsWith("skill-") || page.startsWith("trigger-") || page.startsWith("api-") || page.startsWith("key-") || page.startsWith("memory-")) 2000 else if (page.startsWith("chain-")) 2600 else maxOf((s as ViewGroup).getChildAt(0).measuredHeight, 900)
             s.measure(View.MeasureSpec.makeMeasureSpec(1080, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(h, View.MeasureSpec.EXACTLY))
             s.layout(0, 0, 1080, h)
             snap(s, "page-" + page.replace(":", "-"))

@@ -508,7 +508,7 @@ class Look(val a: Activity) {
     fun label(s: String, color: Int = ink) = text(s, 15f, color, bold = true).apply { setPadding(dp(2), dp(14), 0, dp(8)) }
 
     /** White rounded input row: leading icon, edit text, optional trailing view. */
-    fun fieldRow(iconRes: Int, hint: String, value: String = "", lines: Int = 1, trailing: View? = null): LinearLayout {
+    fun fieldRow(iconRes: Int, hint: String, value: String = "", lines: Int = 1, trailing: View? = null, secret: Boolean = false): LinearLayout {
         val row = LinearLayout(a).apply {
             gravity = if (lines > 1) Gravity.TOP else Gravity.CENTER_VERTICAL
             background = shape(card, 16, edge)
@@ -529,7 +529,8 @@ class Look(val a: Activity) {
                 inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE or android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
             } else {
                 setSingleLine()
-                inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+                inputType = if (secret) android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+                else android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
             }
         }
         row.addView(field, LinearLayout.LayoutParams(0, -2, 1f))
