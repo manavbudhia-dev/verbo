@@ -27,6 +27,23 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 
+/** Lavender paper with two soft bands curving in from the right; shared by both page scaffolds. */
+class PaperWaves(private val paper: Int) : Drawable() {
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    override fun draw(c: Canvas) {
+        val b = bounds
+        paint.color = paper
+        c.drawRect(b, paint)
+        paint.color = Color.parseColor("#E7E4F6")
+        c.drawCircle(b.width() * 1.12f, b.height() * 0.10f, b.width() * 0.72f, paint)
+        c.drawCircle(b.width() * 1.16f, b.height() * 0.97f, b.width() * 0.78f, paint)
+    }
+    override fun setAlpha(alpha: Int) {}
+    override fun setColorFilter(filter: android.graphics.ColorFilter?) {}
+    @Deprecated("Deprecated in Java")
+    override fun getOpacity() = android.graphics.PixelFormat.TRANSLUCENT
+}
+
 /** The light look of the redesigned screens: soft lavender paper, white cards, pastel icon tiles, violet accents. */
 class Look(val a: Activity) {
     val bg = Color.parseColor("#F5F4FA")
@@ -69,23 +86,6 @@ class Look(val a: Activity) {
     fun ripple(content: Drawable?, radius: Int = 16) =
         RippleDrawable(ColorStateList.valueOf(Color.parseColor("#14000000")), content, shape(Color.WHITE, radius))
 
-    /** Paper background with two soft lavender bands curving in from the right, as in the design. */
-    private inner class Waves : Drawable() {
-        private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-        override fun draw(c: Canvas) {
-            val b = bounds
-            paint.color = bg
-            c.drawRect(b, paint)
-            paint.color = Color.parseColor("#E7E4F6")
-            c.drawCircle(b.width() * 1.12f, b.height() * 0.10f, b.width() * 0.72f, paint)
-            c.drawCircle(b.width() * 1.16f, b.height() * 0.97f, b.width() * 0.78f, paint)
-        }
-        override fun setAlpha(alpha: Int) {}
-        override fun setColorFilter(filter: android.graphics.ColorFilter?) {}
-        @Deprecated("Deprecated in Java")
-        override fun getOpacity() = android.graphics.PixelFormat.TRANSLUCENT
-    }
-
     /** Page scaffold: scrolling column on the lavender paper; [nav] floats at the bottom. Returns the column. */
     fun page(nav: View? = null): LinearLayout {
         val column = LinearLayout(a).apply {
@@ -94,7 +94,7 @@ class Look(val a: Activity) {
         }
         val scroll = ScrollView(a).apply {
             isVerticalScrollBarEnabled = false
-            background = Waves()
+            background = PaperWaves(bg)
             addView(column)
         }
         if (nav == null) a.setContentView(scroll)

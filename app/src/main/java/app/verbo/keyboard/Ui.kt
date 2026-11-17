@@ -5,7 +5,6 @@ import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.graphics.drawable.LayerDrawable
 import android.graphics.drawable.RippleDrawable
 import android.text.InputType
 import android.util.TypedValue
@@ -19,16 +18,17 @@ import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 
-/** Shared look for the settings screens: deep navy background, bordered cards, purple accents. */
+/** Shared look for the settings screens: the same lavender paper, white cards and violet accents as the redesigned pages. */
 class Ui(val a: Activity) {
-    val bg = Color.parseColor("#0C0B1C")
-    val card = Color.parseColor("#16152A")
-    val line = Color.parseColor("#2B2947")
-    val ink = Color.WHITE
-    val muted = Color.parseColor("#A9A7C4")
-    val accent = Color.parseColor("#7C5CFF")
-    val accentSoft = Color.parseColor("#2A2158")
-    val iconTint = Color.parseColor("#9B82FF")
+    val bg = Color.parseColor("#F5F4FA")
+    val card = Color.WHITE
+    val line = Color.parseColor("#ECECF2")
+    val ink = Color.parseColor("#16161D")
+    val muted = Color.parseColor("#7A7A88")
+    val accent = Color.parseColor("#7C3AED")
+    val accentSoft = Color.parseColor("#EFEBFD")
+    val iconTint = Color.parseColor("#7C3AED")
+    val dark = Color.parseColor("#17171F")
 
     fun dp(v: Int) = (v * a.resources.displayMetrics.density + 0.5f).toInt()
 
@@ -39,24 +39,19 @@ class Ui(val a: Activity) {
     }
 
     fun ripple(content: android.graphics.drawable.Drawable?, radius: Int = 14) =
-        RippleDrawable(ColorStateList.valueOf(Color.parseColor("#33FFFFFF")), content, shape(Color.WHITE, radius))
+        RippleDrawable(ColorStateList.valueOf(Color.parseColor("#14000000")), content, shape(Color.WHITE, radius))
 
-    /** Page scaffold: a scroll view with a soft purple glow behind the top. Returns the column to fill. */
+    /** Page scaffold: a scroll view on the lavender paper. Returns the column to fill. */
     /** [nav], when given, floats at the bottom of the screen above the scrolling content. */
     fun page(nav: View? = null): LinearLayout {
         val column = LinearLayout(a).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(10), dp(16), dp(if (nav == null) 36 else 110))
         }
-        val glow = GradientDrawable().apply {
-            gradientType = GradientDrawable.RADIAL_GRADIENT
-            gradientRadius = dp(300).toFloat()
-            setGradientCenter(0.75f, 0f)
-            colors = intArrayOf(Color.parseColor("#55402C96"), Color.TRANSPARENT)
-        }
         val scroll = ScrollView(a).apply {
             fitsSystemWindows = true
-            background = LayerDrawable(arrayOf(shape(bg, 0), glow))
+            isVerticalScrollBarEnabled = false
+            background = PaperWaves(bg)
             addView(column)
         }
         if (nav == null) a.setContentView(scroll)
@@ -83,8 +78,10 @@ class Ui(val a: Activity) {
     /** Sub-page header: back arrow and title. */
     fun topBar(title: String, subtitle: String? = null): LinearLayout {
         val bar = LinearLayout(a).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(8), 0, dp(10)) }
-        bar.addView(icon(R.drawable.ic_arrow_left, 26, ink).apply {
-            background = ripple(null, 20)
+        bar.addView(icon(R.drawable.ic_arrow_left, 22, ink).apply {
+            background = ripple(shape(card, 20), 20)
+            setPadding(dp(9), dp(9), dp(9), dp(9))
+            layoutParams = LinearLayout.LayoutParams(dp(40), dp(40))
             contentDescription = "Back"
             setOnClickListener { a.finish() }
         })
@@ -114,7 +111,7 @@ class Ui(val a: Activity) {
         fun track(color: Int) = GradientDrawable().apply { setColor(color); cornerRadius = dp(14).toFloat(); setSize(dp(50), dp(28)) }
         trackDrawable = android.graphics.drawable.StateListDrawable().apply {
             addState(intArrayOf(android.R.attr.state_checked), track(accent))
-            addState(intArrayOf(), track(Color.parseColor("#3A3856")))
+            addState(intArrayOf(), track(Color.parseColor("#E4E4EC")))
         }
         thumbDrawable = android.graphics.drawable.InsetDrawable(
             GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.WHITE); setSize(dp(22), dp(22)) }, dp(3))
@@ -167,9 +164,9 @@ class Ui(val a: Activity) {
     fun button(label: String, iconRes: Int? = null, filled: Boolean = false, onTap: () -> Unit) = LinearLayout(a).apply {
         gravity = Gravity.CENTER
         setPadding(dp(18), dp(13), dp(18), dp(13))
-        background = ripple(if (filled) shape(accent, 12) else shape(card, 12, Color.parseColor("#4A4770")), 12)
-        if (iconRes != null) addView(icon(iconRes, 20, ink).apply { (layoutParams as LinearLayout.LayoutParams).rightMargin = dp(10) })
-        addView(text(label, 15.5f, bold = true))
+        background = ripple(if (filled) shape(dark, 24) else shape(card, 24, line), 24)
+        if (iconRes != null) addView(icon(iconRes, 20, if (filled) Color.WHITE else ink).apply { (layoutParams as LinearLayout.LayoutParams).rightMargin = dp(10) })
+        addView(text(label, 15.5f, if (filled) Color.WHITE else ink, bold = true))
         setOnClickListener { onTap() }
     }
 
@@ -177,9 +174,9 @@ class Ui(val a: Activity) {
         this.hint = hint
         setText(value)
         setTextColor(ink)
-        setHintTextColor(Color.parseColor("#7C7A99"))
+        setHintTextColor(Color.parseColor("#9A9AA6"))
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 15.5f)
-        backgroundTintList = ColorStateList.valueOf(Color.parseColor("#4A4770"))
+        backgroundTintList = ColorStateList.valueOf(Color.parseColor("#C9C9D4"))
         if (lines > 1) {
             minLines = lines
             gravity = Gravity.TOP

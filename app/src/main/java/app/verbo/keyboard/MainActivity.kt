@@ -117,8 +117,8 @@ class MainActivity : Activity() {
         val ready = key.isNotEmpty() && store.assistantOn
         card.addView(LinearLayout(this).apply {
             gravity = Gravity.CENTER
-            background = ui.shape(if (ready) Color.parseColor("#1E3A2B") else ui.accentSoft, 12)
-            addView(ui.icon(if (ready) R.drawable.ic_check else R.drawable.ic_sparkles, 24, if (ready) Color.parseColor("#4ADE80") else ui.iconTint))
+            background = ui.shape(if (ready) Color.parseColor("#D9F3E0") else ui.accentSoft, 12)
+            addView(ui.icon(if (ready) R.drawable.ic_check else R.drawable.ic_sparkles, 24, if (ready) Color.parseColor("#16A34A") else ui.iconTint))
         }, LinearLayout.LayoutParams(ui.dp(46), ui.dp(46)))
         val texts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(ui.dp(14), 0, ui.dp(8), 0) }
         val hint = Store.keyHint(key)
@@ -155,7 +155,7 @@ class MainActivity : Activity() {
                 val key = LinearLayout(this).apply {
                     orientation = LinearLayout.VERTICAL
                     gravity = Gravity.CENTER
-                    background = ui.ripple(ui.shape(if (skill != null) ui.accent else Color.parseColor("#232240"), 8), 8)
+                    background = ui.ripple(ui.shape(if (skill != null) ui.accent else Color.parseColor("#ECECF2"), 8), 8)
                     contentDescription = letter.uppercase() + (skill?.let { ", runs ${it.name}" } ?: ", no skill")
                     addView(ui.text(letter.uppercase(), 15f, if (skill != null) Color.WHITE else ui.muted, bold = true).apply { gravity = Gravity.CENTER })
                     addView(ui.text(skill?.emoji?.ifEmpty { "•" } ?: " ", 10f).apply { gravity = Gravity.CENTER })
@@ -209,7 +209,7 @@ class MainActivity : Activity() {
         card.addView(texts, LinearLayout.LayoutParams(0, -2, 1f))
         card.addView(ui.text(skill.key.uppercase().ifEmpty { "·" }, 16f, if (skill.key.isEmpty()) ui.muted else Color.WHITE, bold = true).apply {
             gravity = Gravity.CENTER
-            background = ui.shape(if (skill.key.isEmpty()) Color.parseColor("#1F1E36") else ui.accent, 9)
+            background = ui.shape(if (skill.key.isEmpty()) Color.parseColor("#ECECF2") else ui.accent, 9)
             contentDescription = if (skill.key.isEmpty()) "No hold key" else "Hold ${skill.key.uppercase()}"
         }, LinearLayout.LayoutParams(ui.dp(34), ui.dp(34)))
         card.layoutParams = LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = ui.dp(8) }
@@ -370,7 +370,7 @@ class MainActivity : Activity() {
         else ui.text("Android only lets you choose the default keyboard yourself. You do this once; Verbo then stays your keyboard, including after a restart.", 13.5f, ui.muted)
         box.addView(title)
         box.addView(body.apply { setPadding(0, ui.dp(4), 0, 0) })
-        val stepColor = if (light) look.ink else Color.parseColor("#D8D6EA")
+        val stepColor = if (light) look.ink else ui.ink
         box.addView((if (light) look.text((if (enabled) "✓  " else "1.  ") + "Enable Verbo Keyboard in system settings", 14.5f, stepColor)
         else ui.text((if (enabled) "✓  " else "1.  ") + "Enable Verbo Keyboard in system settings", 14.5f, stepColor)).apply { setPadding(0, ui.dp(8), 0, 0) })
         box.addView((if (light) look.text((if (selected) "✓  " else "2.  ") + "Switch to Verbo as your keyboard", 14.5f, stepColor)

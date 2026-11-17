@@ -531,7 +531,7 @@ class PageActivity : Activity() {
         val undo = ArrayDeque<List<String>>()
         val redo = ArrayDeque<List<String>>()
 
-        val root = android.widget.FrameLayout(this).apply { setBackgroundColor(Color.parseColor("#14141C")) }
+        val root = android.widget.FrameLayout(this).apply { setBackgroundColor(look.bg) }
         val column = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             isFocusableInTouchMode = true
@@ -1024,7 +1024,7 @@ class PageActivity : Activity() {
             ui.row(R.drawable.ic_sun, "Weather", "Forecasts from Open-Meteo, no account", ui.toggle(store.weather) { store.weather = it }),
             ui.row(R.drawable.ic_globe, "Places and maps", "Finds addresses and shows a map, from OpenStreetMap", ui.toggle(store.places) { store.places = it }),
         ))
-        val ready = { ui.icon(R.drawable.ic_check, 20, Color.parseColor("#4ADE80")) }
+        val ready = { ui.icon(R.drawable.ic_check, 20, Color.parseColor("#16A34A")) }
         column.addView(ui.rows(
             ui.row(R.drawable.ic_pencil_line, "Gmail and Outlook", if ("gmail" in store.googleServices) "Gmail is connected: emails are sent or drafted for you" else "Writes the email and opens it as a ready draft. Connect Google to send by itself", ready()),
             ui.row(R.drawable.ic_pencil_line, "LinkedIn", "Writes a post and opens LinkedIn with it filled in. \"Who is\" finds people", ready()),
@@ -1276,7 +1276,7 @@ class PageActivity : Activity() {
         val mic = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         column.addView(ui.rows(
             ui.row(R.drawable.ic_mic, "Microphone", if (mic) "Allowed, used only while you dictate" else "Not allowed. Tap to allow voice typing",
-                if (mic) ui.icon(R.drawable.ic_check, 20, Color.parseColor("#4ADE80")) else ui.chevron()) {
+                if (mic) ui.icon(R.drawable.ic_check, 20, Color.parseColor("#16A34A")) else ui.chevron()) {
                 if (!mic) requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 1)
             },
         ))
@@ -1352,7 +1352,7 @@ class PageActivity : Activity() {
         val calendar = checkSelfPermission(Manifest.permission.WRITE_CALENDAR) == PackageManager.PERMISSION_GRANTED
         val done = listOf(enabled, selected, signedIn || hasKey).count { it }
         note(column, "$done of 3 steps done. The ticks update by themselves when you come back here.")
-        fun tick(ok: Boolean) = if (ok) ui.icon(R.drawable.ic_check, 22, Color.parseColor("#4ADE80")) else ui.chevron()
+        fun tick(ok: Boolean) = if (ok) ui.icon(R.drawable.ic_check, 22, Color.parseColor("#16A34A")) else ui.chevron()
         column.addView(ui.rows(
             ui.row(R.drawable.ic_keyboard, "1. Turn on Verbo", if (enabled) "Done" else "Switch on Verbo Keyboard in the list that opens", tick(enabled)) {
                 if (!enabled) startActivity(android.content.Intent(android.provider.Settings.ACTION_INPUT_METHOD_SETTINGS))
@@ -1527,7 +1527,7 @@ class PageActivity : Activity() {
         if (value.isBlank()) return
         box.addView(ui.text(label, 11.5f, ui.muted, bold = true).apply { letterSpacing = 0.08f; setPadding(0, ui.dp(12), 0, ui.dp(4)) })
         box.addView(ui.text(value, 14.5f).apply {
-            background = ui.shape(Color.parseColor("#1F1E36"), 10)
+            background = ui.shape(ui.accentSoft, 10)
             setPadding(ui.dp(12), ui.dp(10), ui.dp(12), ui.dp(10))
             setLineSpacing(0f, 1.15f)
         })
@@ -1615,7 +1615,7 @@ class PageActivity : Activity() {
     /** Shown right after a skill is created: where it should live and what it can use. */
     private fun connectSkill(column: LinearLayout, skill: Skill) {
         val id = "skill:" + skill.name
-        column.addView(ui.rows(ui.row(R.drawable.ic_check, (skill.emoji + "  " + skill.name).trim(), "Created. It is now a skill key above your keyboard", ui.icon(R.drawable.ic_check, 20, Color.parseColor("#4ADE80")))))
+        column.addView(ui.rows(ui.row(R.drawable.ic_check, (skill.emoji + "  " + skill.name).trim(), "Created. It is now a skill key above your keyboard", ui.icon(R.drawable.ic_check, 20, Color.parseColor("#16A34A")))))
         column.addView(ui.section(R.drawable.ic_plug, "Connect it"))
         val wheel = store.wheel
         column.addView(ui.rows(
@@ -1669,7 +1669,7 @@ class PageActivity : Activity() {
     }
 
     private fun smallButton(icon: Int, description: String, enabled: Boolean = true, onTap: () -> Unit) =
-        ui.icon(icon, 20, if (enabled) ui.ink else Color.parseColor("#4A4866")).apply {
+        ui.icon(icon, 20, if (enabled) ui.ink else Color.parseColor("#B9B9C6")).apply {
             setPadding(ui.dp(8), ui.dp(8), ui.dp(8), ui.dp(8))
             layoutParams = LinearLayout.LayoutParams(ui.dp(38), ui.dp(38))
             contentDescription = description
@@ -1778,8 +1778,8 @@ class PageActivity : Activity() {
             max = (Store.MAX_HEIGHT - Store.MIN_HEIGHT) / 5
             progress = (store.heightPercent - Store.MIN_HEIGHT) / 5
             progressTintList = android.content.res.ColorStateList.valueOf(ui.accent)
-            progressBackgroundTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#5A5880"))
-            thumbTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
+            progressBackgroundTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#E4E4EC"))
+            thumbTintList = android.content.res.ColorStateList.valueOf(ui.accent)
             contentDescription = "Keyboard height"
             setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(bar: android.widget.SeekBar?, value: Int, fromUser: Boolean) {
@@ -1821,8 +1821,8 @@ class PageActivity : Activity() {
             max = 19
             progress = store.soundVolume / 5 - 1
             progressTintList = android.content.res.ColorStateList.valueOf(ui.accent)
-            progressBackgroundTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#5A5880"))
-            thumbTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
+            progressBackgroundTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#E4E4EC"))
+            thumbTintList = android.content.res.ColorStateList.valueOf(ui.accent)
             contentDescription = "Key sound volume"
             setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(bar: android.widget.SeekBar?, value: Int, fromUser: Boolean) { store.soundVolume = (value + 1) * 5 }
