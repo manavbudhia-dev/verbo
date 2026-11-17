@@ -386,40 +386,53 @@ class Look(val a: Activity) {
         }
     }
 
-    /** Skill card: the skill's own artwork, glass icon and menu buttons on top, name and line over a scrim below. */
-    fun photoCard(art: android.graphics.drawable.Drawable, iconRes: Int, title: String, subtitle: String, onTap: () -> Unit, onMenu: () -> Unit): FrameLayout {
-        val box = FrameLayout(a).apply {
-            outlineProvider = object : android.view.ViewOutlineProvider() {
-                override fun getOutline(view: View, outline: android.graphics.Outline) {
-                    outline.setRoundRect(0, 0, view.width, view.height, dp(20).toFloat())
-                }
+    /** A rounded square of artwork, the same tile size the Settings cards use. */
+    fun artTile(art: android.graphics.drawable.Drawable, size: Int = 46, radius: Int = 12) = FrameLayout(a).apply {
+        outlineProvider = object : android.view.ViewOutlineProvider() {
+            override fun getOutline(view: View, outline: android.graphics.Outline) {
+                outline.setRoundRect(0, 0, view.width, view.height, dp(radius).toFloat())
             }
-            clipToOutline = true
-            setOnClickListener { onTap() }
         }
-        box.addView(View(a).apply { background = art }, FrameLayout.LayoutParams(-1, dp(240)))
-        box.addView(View(a).apply {
-            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(Color.TRANSPARENT, Color.parseColor("#D9101018")))
-        }, FrameLayout.LayoutParams(-1, dp(130), Gravity.BOTTOM))
-        box.addView(ImageView(a).apply {
-            setImageResource(iconRes)
-            setColorFilter(Color.WHITE)
-            setPadding(dp(9), dp(9), dp(9), dp(9))
-            background = shape(Color.parseColor("#59FFFFFF"), 18)
-        }, FrameLayout.LayoutParams(dp(36), dp(36), Gravity.TOP or Gravity.START).apply { setMargins(dp(12), dp(12), 0, 0) })
-        box.addView(ImageView(a).apply {
-            setImageResource(R.drawable.ic_more_horizontal)
-            setColorFilter(Color.WHITE)
-            setPadding(dp(9), dp(9), dp(9), dp(9))
-            background = shape(Color.parseColor("#59FFFFFF"), 18)
-            contentDescription = "Options for $title"
-            setOnClickListener { onMenu() }
-        }, FrameLayout.LayoutParams(dp(36), dp(36), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(12), dp(12), 0) })
-        val words = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), 0, dp(14), dp(14)) }
-        words.addView(text(title, 17f, Color.WHITE, bold = true))
-        words.addView(text(subtitle, 13f, Color.parseColor("#E4E4EC")).apply { setPadding(0, dp(3), 0, 0); maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END })
-        box.addView(words, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
-        return box
+        clipToOutline = true
+        addView(View(a).apply { background = art }, FrameLayout.LayoutParams(-1, -1))
+        layoutParams = LinearLayout.LayoutParams(dp(size), dp(size))
+    }
+
+    /** The Settings-size card: white with 20dp corners, art tile, name and line, heart pin and use counter. */
+    fun itemCard(art: android.graphics.drawable.Drawable, title: String, subtitle: String, uses: Int, pinned: Boolean,
+                 onPin: () -> Unit, onTap: () -> Unit, onMenu: () -> Unit): LinearLayout {
+        val row = LinearLayout(a).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            background = ripple(shape(card, 20), 20)
+            setPadding(dp(12), dp(12), dp(10), dp(12))
+            setOnClickListener { onTap() }
+            setOnLongClickListener { onMenu(); true }
+            layoutParams = LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) }
+        }
+        row.addView(artTile(art))
+        val words = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, dp(8), 0) }
+        words.addView(text(title, 16.5f, bold = true))
+        words.addView(text(subtitle, 13.5f, muted).apply { setPadding(0, dp(2), 0, 0); maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END })
+        row.addView(words, LinearLayout.LayoutParams(0, -2, 1f))
+        val side = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL }
+        side.addView(icon(if (pinned) R.drawable.ic_heart_filled else R.drawable.ic_heart, 21, if (pinned) pinkTint else Color.parseColor("#B9B9C6")).apply {
+            setPadding(dp(5), dp(5), dp(5), dp(5))
+            background = ripple(null, 15)
+            contentDescription = if (pinned) "Unpin $title" else "Pin $title"
+            setOnClickListener { onPin() }
+        }, LinearLayout.LayoutParams(dp(31), dp(31)))
+        val counted = uses > 0
+        val counter = LinearLayout(a).apply {
+            gravity = Gravity.CENTER
+            background = shape(if (counted) accentSoft else Color.parseColor("#F1F1F6"), 10)
+            setPadding(dp(6), dp(2), dp(6), dp(2))
+            contentDescription = "$title used $uses times"
+        }
+        counter.addView(icon(R.drawable.ic_bar_chart, 12, if (counted) accent else muted))
+        counter.addView(text("$uses", 11f, if (counted) accent else muted, bold = true).apply { setPadding(dp(3), 0, 0, 0) })
+        side.addView(counter, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })
+        row.addView(side)
+        return row
     }
 
     /** The wide dark pill button: "+ New Skill", "Save Skill"... */

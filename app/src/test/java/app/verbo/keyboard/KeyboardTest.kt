@@ -14,6 +14,7 @@ import android.view.ViewGroup
 import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
+import android.widget.TextView
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -489,6 +490,34 @@ class KeyboardTest {
         touch(wheel2, MotionEvent.ACTION_MOVE, listOf(flag(wheel2, back)))
         touch(wheel2, MotionEvent.ACTION_UP, listOf(flag(wheel2, back)))
         assertTrue("releasing on a suggestion adds it back", name in store.languages)
+    }
+
+    @Test
+    fun skillCardsCountUsesAndPinnedSkillsSortFirst() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        type("hello")
+        ime.runAct("Polish")
+        assertEquals("running a skill counts on its card", 1, store.useCount("skill:Polish"))
+        store.pins = listOf("skill:Reply")
+        MainActivity.tab = "library"
+        val main = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+        val sc = content(main) as ViewGroup
+        sc.layout(0, 0, 1080, maxOf(sc.getChildAt(0).measuredHeight, 900))
+        val texts = ArrayList<String>()
+        fun walk(v: View) {
+            if (v is TextView) texts.add(v.text.toString())
+            if (v is ViewGroup) for (i in 0 until v.childCount) walk(v.getChildAt(i))
+        }
+        walk(sc)
+        assertTrue("the pinned skill sorts above the used one", texts.indexOf("Reply") < texts.indexOf("Polish"))
+        fun desc(v: View, s: String): View? = when {
+            v.contentDescription == s -> v
+            v is ViewGroup -> (0 until v.childCount).firstNotNullOfOrNull { desc(v.getChildAt(it), s) }
+            else -> null
+        }
+        desc(sc, "Pin Polish")!!.performClick()
+        assertTrue("the heart pins the skill", "skill:Polish" in store.pins)
+        MainActivity.tab = "home"
     }
 
     @Test

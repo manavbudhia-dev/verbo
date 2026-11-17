@@ -667,6 +667,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     /** Runs an act on the copied message (if there is one) and the field's text, as a card. */
     internal fun runAct(name: String) {
         val skill = actSkill(name) ?: run { showStatus("No act called “$name”"); return }
+        store.recordUse("skill:" + skill.name)
         if (contextText == null && hasFreshClip()) readClip()?.let { contextText = it }
         refreshContext()
         val schedule = name.equals("Schedule it", true)
@@ -776,6 +777,8 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         contextText = clip
         refreshContext()
         buildChips()
+        store.recordUse(store.triggerId(t))
+        store.recordUse("skill:" + skill.name)
         runTask("${skill.name}…", Ai.skillTask(skill.instruction), card = true) { runTrigger(t, clip) }
     }
 
@@ -1084,6 +1087,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     private fun runAction(skill: Skill?) {
         if (skill == null && rememberCommand()) return
         if (skill != null && Acts.isChain(skill.instruction)) { runAct(skill.name); return }
+        if (skill != null) store.recordUse("skill:" + skill.name)
         // Requests typed for the bar are answers to look at first, so they open as a card with Copy and Insert.
         // Skill keys rewrite your own text, so they apply straight away unless Agent Mode is "Ask first".
         runTask(

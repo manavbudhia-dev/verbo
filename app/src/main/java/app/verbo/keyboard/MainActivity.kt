@@ -238,9 +238,8 @@ class MainActivity : Activity() {
                 }
             }
             if (shown.isEmpty()) grid.addView(look.text("Nothing here yet.", 14f, look.muted).apply { setPadding(look.dp(4), look.dp(6), 0, look.dp(10)) })
-            shown.chunked(2).forEach { two ->
-                grid.addView(look.pair(skillPhotoCard(two[0].index, two[0].value), if (two.size > 1) skillPhotoCard(two[1].index, two[1].value) else View(this)))
-            }
+            val pins = store.pins
+            shown.sortedByDescending { "skill:" + it.value.name in pins }.forEach { (i, s) -> grid.addView(skillItemCard(i, s)) }
         }
         column.addView(look.searchBar("Search skills", { skillQuery = it; fill() }, {
             AlertDialog.Builder(this).setItems(skillChips.toTypedArray()) { _, w -> skillChip = skillChips[w]; build() }.show()
@@ -253,10 +252,11 @@ class MainActivity : Activity() {
         })
     }
 
-    private fun skillPhotoCard(index: Int, s: Skill): View {
-        val art = Art.skill(this, s.name, s.category)
-        val blurb = s.instruction.substringBefore(". ").take(90)
-        return look.photoCard(art, art.iconRes, s.name, blurb,
+    private fun skillItemCard(index: Int, s: Skill): View {
+        val id = "skill:" + s.name
+        return look.itemCard(Art.skill(this, s.name, s.category), s.name, s.instruction.substringBefore(". ").take(90),
+            store.useCount(id), id in store.pins,
+            { val now = store.pins; store.pins = if (id in now) now - id else now + id; build() },
             { open("skill-edit", { it.putExtra("index", index) }) }, { skillMenu(index) })
     }
 

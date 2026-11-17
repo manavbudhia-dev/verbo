@@ -430,13 +430,12 @@ class PageActivity : Activity() {
                     (trigChip == "All" || trigChipOf(t) == trigChip)
             }
             if (shown.isEmpty()) grid.addView(look.text("Nothing here yet.", 14f, look.muted).apply { setPadding(look.dp(4), look.dp(6), 0, look.dp(10)) })
-            shown.chunked(2).forEach { two ->
-                fun card(i: Int, t: Trigger): View {
-                    val art = Art.kind(this, t.kind)
-                    return look.photoCard(art, art.iconRes, t.skill, trigLine(t),
-                        { go("trigger-edit:$i") }, { trigCardMenu(i) })
-                }
-                grid.addView(look.pair(card(two[0].index, two[0].value), if (two.size > 1) card(two[1].index, two[1].value) else View(this)))
+            val pins = store.pins
+            shown.sortedByDescending { store.triggerId(it.value) in pins }.forEach { (i, t) ->
+                val id = store.triggerId(t)
+                grid.addView(look.itemCard(Art.kind(this, t.kind), t.skill, trigLine(t), store.useCount(id), id in pins,
+                    { val now = store.pins; store.pins = if (id in now) now - id else now + id; render() },
+                    { go("trigger-edit:$i") }, { trigCardMenu(i) }))
             }
         }
         column.addView(look.searchBar("Search auto actions", { trigQuery = it; fill() }, {

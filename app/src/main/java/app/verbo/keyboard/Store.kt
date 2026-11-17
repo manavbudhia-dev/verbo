@@ -401,6 +401,21 @@ class Store(context: Context) {
         ?: Trigger.BUILTIN[t.skill]?.let { Skill("⚡", t.skill, it, "write") }
         ?: Acts.BUILTIN.firstOrNull { it.name.equals(t.skill, ignoreCase = true) }?.let { Skill(it.emoji, it.name, it.instruction, "write") }
 
+    /** Hearted cards, by id ("skill:Polish" or a trigger id); they sort to the top of their page. */
+    var pins: List<String>
+        get() = str("pins").split("\n").filter { it.isNotEmpty() }
+        set(v) { put("pins", v.joinToString("\n")) }
+
+    fun triggerId(t: Trigger) = "trigger:${t.kind}|${t.keyword}|${t.skill}"
+
+    /** How many times a skill or auto action has run, shown on its card. */
+    fun useCount(id: String): Int = try { JSONObject(str("use_counts", "{}")).optInt(id, 0) } catch (e: Exception) { 0 }
+    fun recordUse(id: String) {
+        val o = try { JSONObject(str("use_counts", "{}")) } catch (e: Exception) { JSONObject() }
+        o.put(id, o.optInt(id, 0) + 1)
+        put("use_counts", o.toString())
+    }
+
     fun tools(): List<ToolSpec> = Connections.tools(weather, notionToken, calendlyToken, customApis, places, APP_TOKENS.keys.associateWith { token(it) },
         googleServices) { action, args -> Sync.google(this, action, args) }
 
