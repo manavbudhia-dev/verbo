@@ -119,6 +119,7 @@ class KeyboardView(
         set(value) { if (field != value) { field = value; invalidate() } }
 
     private val d = resources.displayMetrics.density
+    private val sp = resources.displayMetrics.scaledDensity
     // Keys are kept wide: hairline gaps between them and almost no margin at the screen edges.
     private val rowHeight = 51 * d * scale
     private val gapX = 1.25f * d
@@ -384,37 +385,23 @@ class KeyboardView(
         val cx = wheelCx
         val cy = wheelCy
         val r = wheelR
+        WheelLook.paper(canvas, width.toFloat(), height.toFloat(), d)
+        if (n == 0) return
         val arc = RectF(cx - r, cy - r, cx + r, cy + r)
-        face.shader = null
-        face.color = (theme.bg and 0x00FFFFFF) or 0xF2000000.toInt()
-        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), face)
-        face.color = theme.key
-        canvas.drawArc(arc, 180f, 180f, true, face)
+        WheelLook.fan(canvas, cx, cy, r, d)
+        WheelLook.ticks(canvas, cx, cy, r, d)
         val step = 180f / n
         if (wheelPick >= 0) {
-            face.color = (theme.accent and 0x00FFFFFF) or 0x33000000
-            canvas.drawArc(arc, 180f + wheelPick * step, step, true, face)
-            edge.color = theme.accent
-            edge.strokeWidth = 3.5f * d
-            canvas.drawArc(arc, 180f + wheelPick * step, step, false, edge)
-            edge.strokeWidth = 1.2f * d
+            val (fx, fy) = wheelCenter(wheelPick)
+            WheelLook.beam(canvas, cx, cy, fx, fy, arc, 180f + wheelPick * step + 1.5f, step - 3f, d)
         }
+        val chord = 2 * r * 0.74f * kotlin.math.sin(Math.toRadians((step / 2).toDouble())).toFloat()
         for (i in 0 until n) {
             val item = wheelItems[i]
-            val angle = Math.toRadians((180 - (i + 0.5) * step))
-            val x = cx + (r * 0.68f * kotlin.math.cos(angle)).toFloat()
-            val y = cy - (r * 0.68f * kotlin.math.sin(angle)).toFloat()
-            val size = (if (i == wheelPick) 25 else 21) * d
-            face.color = if (i == wheelPick) theme.accent else theme.fnKey
-            canvas.drawCircle(x, y, size, face)
-            if (item.suggested && i != wheelPick) {
-                // Fits what is being written: ringed in the accent colour.
-                edge.color = theme.accent
-                edge.strokeWidth = 3f * d
-                canvas.drawCircle(x, y, size + 4 * d, edge)
-                edge.strokeWidth = 1.2f * d
-            }
-            val tint = if (i == wheelPick) theme.onAccent else theme.text
+            val (x, y) = wheelCenter(i)
+            WheelLook.tile(canvas, x, y, (if (i == wheelPick) 26f else 24f) * d, d)
+            if (item.suggested && i != wheelPick) WheelLook.ring(canvas, x, y, 29f * d, WheelLook.blue, 2.5f * d)
+            val tint = if (i == wheelPick) WheelLook.blue else WheelLook.ink
             if (item.icon != 0) {
                 val half = 11 * d
                 icon(item.icon).apply {
@@ -423,29 +410,31 @@ class KeyboardView(
                     draw(canvas)
                 }
             } else {
-                letters.color = tint
-                letters.textSize = 20 * d
-                canvas.drawText(item.emoji.ifEmpty { item.label.take(1) }, x, y - (letters.descent() + letters.ascent()) / 2, letters)
+                WheelLook.drawText(canvas, item.emoji.ifEmpty { item.label.take(1) }, x, y, 19 * d, tint)
+            }
+            // The hovered item's name is in the pill; a label here would sit on the beam knob.
+            if (i != wheelPick) {
+                var size = 10.5f * sp
+                letters.textSize = size
+                val tw = letters.measureText(item.label)
+                if (tw > chord * 0.92f) size *= chord * 0.92f / tw
+                WheelLook.drawText(canvas, item.label, x, minOf(y + 37 * d, height - 8 * d), size, WheelLook.label)
             }
         }
         // The middle is where the finger starts: lifting there does nothing.
-        face.color = theme.bg
-        canvas.drawArc(RectF(cx - r * 0.34f, cy - r * 0.34f, cx + r * 0.34f, cy + r * 0.34f), 180f, 180f, true, face)
-        letters.color = theme.muted
-        letters.textSize = 13 * d
-        canvas.drawText("Cancel", cx, cy - r * 0.12f, letters)
+        WheelLook.glow(canvas, cx, cy, d)
+        WheelLook.cancel(canvas, cx, cy, d, sp)
         // What lifting the finger will do, in a pill above the wheel.
         val hint = wheelItems.firstOrNull { it.suggested }?.let { "Try: ${it.label}" }
         val label = if (wheelPick >= 0) wheelItems[wheelPick].label else hint ?: "Slide to choose · release to cancel"
-        letters.textSize = 14.5f * d
-        letters.typeface = Typeface.DEFAULT_BOLD
-        val w = letters.measureText(label) + 26 * d
-        val top = (cy - r - 34 * d).coerceAtLeast(3 * d)
-        face.color = if (wheelPick >= 0) theme.accent else theme.fnKey
-        canvas.drawRoundRect(cx - w / 2, top, cx + w / 2, top + 28 * d, 14 * d, 14 * d, face)
-        letters.color = if (wheelPick >= 0) theme.onAccent else if (hint != null) theme.accent else theme.muted
-        canvas.drawText(label, cx, top + 14 * d - (letters.descent() + letters.ascent()) / 2, letters)
-        letters.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+        val color = if (wheelPick >= 0 || hint != null) WheelLook.blue else WheelLook.ink
+        WheelLook.drawPill(canvas, WheelLook.pillRect(cx, label, d, sp), label, color, d, sp)
+    }
+
+    private fun wheelCenter(i: Int): Pair<Float, Float> {
+        val step = 180f / wheelItems.size
+        val angle = Math.toRadians((180 - (i + 0.5f) * step).toDouble())
+        return Pair(wheelCx + (wheelR * 0.74f * kotlin.math.cos(angle)).toFloat(), wheelCy - (wheelR * 0.74f * kotlin.math.sin(angle)).toFloat())
     }
 
     private fun down(id: Int, x: Float, y: Float) {
