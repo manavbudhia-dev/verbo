@@ -592,6 +592,79 @@ class KeyboardTest {
         assertTrue("holding A now runs something", KeyAction.resolve(store.keymap, store.skills, 'a', null) != null)
     }
 
+    // ---------- editing the wheel ----------
+
+    private fun wheelPage(): PageActivity =
+        Robolectric.buildActivity(PageActivity::class.java, android.content.Intent().putExtra("page", "wheel")).setup().get()
+
+    private fun byDesc(v: View, s: String): View? = when {
+        v.contentDescription == s && v.isClickable -> v
+        v is ViewGroup -> (0 until v.childCount).firstNotNullOfOrNull { byDesc(v.getChildAt(it), s) }
+        else -> null
+    }
+
+    private fun pickDialogItem(i: Int) {
+        val d = org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog()
+        d.listView.performItemClick(null, i, i.toLong())
+    }
+
+    @Test
+    fun wheelAddReplacesWhenFull() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        val a = wheelPage()
+        assertEquals("the wheel starts full", 6, store.wheel.size)
+        byDesc(content(a), "Add to the wheel")!!.performClick()
+        pickDialogItem(0) // give up the leftmost slot
+        assertEquals(listOf("skill:" + store.skills[0].name) + Store.DEFAULT_WHEEL.drop(1), store.wheel)
+    }
+
+    @Test
+    fun wheelArrowsReorderAndXRemovesThenPlusAdds() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        val a = wheelPage()
+        byDesc(content(a), "Move right on the wheel")!!.performClick()
+        assertEquals(listOf("rewrite", "translate") + Store.DEFAULT_WHEEL.drop(2), store.wheel)
+        byDesc(content(a), "Move left on the wheel")!!.performClick()
+        assertEquals(Store.DEFAULT_WHEEL, store.wheel)
+        byDesc(content(a), "Remove from the wheel")!!.performClick()
+        assertEquals(Store.DEFAULT_WHEEL.drop(1), store.wheel)
+        byDesc(content(a), "Add to the wheel")!!.performClick()
+        assertEquals(6, store.wheel.size)
+        assertEquals("the removed tool is offered again and comes back", "translate", store.wheel.last())
+    }
+
+    @Test
+    fun wheelRowTapChangesTheShortcut() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        val a = wheelPage()
+        clickLabel(content(a), "Translate")
+        pickDialogItem(2) // Rewrite is already on the wheel: the two swap places
+        assertEquals(listOf("rewrite", "translate") + Store.DEFAULT_WHEEL.drop(2), store.wheel)
+        clickLabel(content(a), "Rewrite")
+        pickDialogItem(6) // the first skill, not on the wheel yet: it takes the slot
+        assertEquals("skill:" + store.skills[0].name, store.wheel[0])
+        assertEquals("translate", store.wheel[1])
+    }
+
+    @Test
+    fun settingsShowsAdvancedSettingsInline() {
+        MainActivity.tab = "settings"
+        val main = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+        val sc = content(main) as ViewGroup
+        sc.layout(0, 0, 1080, maxOf(sc.getChildAt(0).measuredHeight, 900))
+        val texts = ArrayList<String>()
+        fun walk(v: View) {
+            if (v is TextView) texts.add(v.text.toString())
+            if (v is ViewGroup) for (i in 0 until v.childCount) walk(v.getChildAt(i))
+        }
+        walk(sc)
+        for (t in listOf("Advanced Settings", "Wheel Shortcuts", "Usage & On-device AI", "Web Dashboard", "Battery", "Export / Import", "Setup Guide"))
+            assertTrue("settings lists $t inline, not behind the info button", t in texts)
+        clickLabel(sc, "Wheel Shortcuts")
+        assertEquals("wheel", org.robolectric.Shadows.shadowOf(main).nextStartedActivity.getStringExtra("page"))
+        MainActivity.tab = "home"
+    }
+
     @Test
     fun meetingLinkWithoutGoogleOffersAnInstantLink() {
         val keys = ime.keys!!

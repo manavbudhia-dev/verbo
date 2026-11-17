@@ -287,8 +287,7 @@ class MainActivity : Activity() {
 
     private fun buildSettings(column: LinearLayout) {
         val version = try { packageManager.getPackageInfo(packageName, 0).versionName } catch (e: Exception) { "" }
-        column.addView(look.header("Settings", "Customize your keyboard experience",
-            look.circleButton(R.drawable.ic_info) { settingsMenu() }))
+        column.addView(look.header("Settings", "Customize your keyboard experience"))
         newSetupBox(column)
         column.addView(look.appCard(version ?: "0.20.0"))
 
@@ -310,6 +309,20 @@ class MainActivity : Activity() {
             look.rowTile(look.greenBg, look.greenTint, R.drawable.ic_keyboard, "Try the keyboard", "Type a test line with Verbo") { open("try") },
         ))
 
+        column.addView(look.sectionHead(R.drawable.ic_layers, look.accent, "Advanced Settings", "Power features and system controls"))
+        column.addView(look.pair(
+            look.gridTile(look.purpleBg, look.purpleTint, R.drawable.ic_circle_dashed, "Wheel Shortcuts", "Quick access actions") { open("wheel") },
+            look.gridTile(look.purpleBg, look.purpleTint, R.drawable.ic_cpu, "Usage & On-device AI", "Data, model & privacy") { open("usage") },
+        ))
+        column.addView(look.pair(
+            look.gridTile(look.blueBg, look.blueTint, R.drawable.ic_monitor, "Web Dashboard", "Manage Verbo on web") { open("dashboard") },
+            look.gridTile(look.greenBg, look.greenTint, R.drawable.ic_battery_charging, "Battery", "Usage & optimization") { open("battery") },
+        ))
+        column.addView(look.pair(
+            look.gridTile(look.purpleBg, look.purpleTint, R.drawable.ic_arrow_up_down, "Export / Import", "Backup or restore") { exportImport() },
+            look.gridTile(look.blueBg, look.blueTint, R.drawable.ic_book_open, "Setup Guide", "Learn and get started") { open("welcome") },
+        ))
+
         column.addView(look.sectionHead(R.drawable.ic_layers, look.accent, "More Options", "Languages, keys, shortcuts and connections"))
         val connected = listOf(store.notionToken, store.calendlyToken).count { it.isNotEmpty() } + store.customApis.size + if (store.googleConnected) 1 else 0
         val langs = store.languages
@@ -323,19 +336,6 @@ class MainActivity : Activity() {
                 if (connected == 0) "No apps connected yet" else "$connected connected apps") { open("automate") },
             look.gridTile(look.indigoBg, look.indigoTint, R.drawable.ic_shield, "Privacy", "What leaves your phone") { open("privacy") },
         ))
-    }
-
-    /** Everything the redesigned Settings page keeps out of sight: the info button opens this list. */
-    private fun settingsMenu() {
-        val entries = listOf(
-            "Wheel shortcuts" to { open("wheel") },
-            "Usage & on-device AI" to { open("usage") },
-            "Web dashboard" to { open("dashboard") },
-            "Battery" to { open("battery") },
-            "Export / Import" to { exportImport() },
-            "Setup guide" to { open("welcome") },
-        )
-        AlertDialog.Builder(this).setTitle("More settings").setItems(entries.map { it.first }.toTypedArray()) { _, i -> entries[i].second() }.show()
     }
 
     private fun exportImport() {

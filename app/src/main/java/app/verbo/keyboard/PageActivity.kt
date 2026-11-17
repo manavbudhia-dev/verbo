@@ -1721,7 +1721,7 @@ class PageActivity : Activity() {
                 val now = store.wheel
                 when {
                     !on -> store.wheel = now - id
-                    now.size >= Store.MAX_WHEEL -> { ui.toast("The wheel holds ${Store.MAX_WHEEL}. Remove one on the wheel page first"); render() }
+                    now.size >= Store.MAX_WHEEL -> replaceOnWheel(id)
                     else -> store.wheel = now + id
                 }
             }),
@@ -1756,6 +1756,22 @@ class PageActivity : Activity() {
 
     private fun wheelLabel(id: String) = Store.WHEEL_TOOLS.firstOrNull { it.first == id }?.second ?: id.removePrefix("skill:")
 
+    private fun wheelTitle(id: String) =
+        store.skills.firstOrNull { "skill:" + it.name == id }?.let { (it.emoji + "  " + it.name).trim() } ?: wheelLabel(id)
+
+    private fun wheelOptions(): List<Pair<String, String>> =
+        Store.WHEEL_TOOLS + store.skills.map { ("skill:" + it.name) to (it.emoji + "  " + it.name).trim() }
+
+    /** The wheel is full: pick which current shortcut gives up its slot to [newId]. */
+    private fun replaceOnWheel(newId: String) {
+        val now = store.wheel
+        AlertDialog.Builder(this).setTitle("The wheel is full — replace which one?")
+            .setItems(now.map { wheelTitle(it) }.toTypedArray()) { _, i ->
+                store.wheel = now.toMutableList().apply { set(i, newId) }
+                render()
+            }.show()
+    }
+
     private fun wheelIcon(id: String) = when (id) {
         "ai" -> R.drawable.ic_sparkles
         "translate" -> R.drawable.ic_languages
@@ -1782,23 +1798,38 @@ class PageActivity : Activity() {
         val skills = store.skills
         // Skills that were renamed or deleted drop off the wheel.
         val items = store.wheel.filter { id -> Store.WHEEL_TOOLS.any { it.first == id } || skills.any { "skill:" + it.name == id } }
-        fun title(id: String) = skills.firstOrNull { "skill:" + it.name == id }?.let { (it.emoji + "  " + it.name).trim() } ?: wheelLabel(id)
         fun set(next: List<String>) { store.wheel = next; render() }
 
         column.addView(ui.section(R.drawable.ic_layers, "On the wheel (${items.size} of ${Store.MAX_WHEEL})"))
+        note(column, "Tap a shortcut to change it into another tool or skill. The arrows move it along the wheel, × removes it.")
         if (items.isEmpty()) note(column, "Nothing yet. Add shortcuts from the lists below.")
         else column.addView(ui.rows(*items.mapIndexed { i, id ->
             val controls = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-            controls.addView(smallButton(R.drawable.ic_arrow_big_up, "Move left on the wheel", i > 0) {
+            controls.addView(smallButton(R.drawable.ic_arrow_left, "Move left on the wheel", i > 0) {
                 set(items.toMutableList().apply { add(i - 1, removeAt(i)) })
             })
+            controls.addView(smallButton(R.drawable.ic_arrow_right, "Move right on the wheel", i < items.size - 1) {
+                set(items.toMutableList().apply { add(i + 1, removeAt(i)) })
+            })
             controls.addView(smallButton(R.drawable.ic_x, "Remove from the wheel") { set(items - id) })
-            ui.row(wheelIcon(id), title(id), if (i == 0) "Leftmost" else if (i == items.size - 1) "Rightmost" else null, controls)
+            ui.row(wheelIcon(id), wheelTitle(id), if (i == 0) "Leftmost" else if (i == items.size - 1) "Rightmost" else null, controls) {
+                val options = wheelOptions()
+                AlertDialog.Builder(this).setTitle("Change ${wheelTitle(id)} to…")
+                    .setItems(options.map { it.second }.toTypedArray()) { _, which ->
+                        val nid = options[which].first
+                        if (nid == id) return@setItems
+                        val next = items.toMutableList()
+                        val at = next.indexOf(nid)
+                        if (at >= 0) next[at] = id
+                        next[i] = nid
+                        set(next)
+                    }.show()
+            }
         }.toTypedArray()))
 
         fun addRows(ids: List<String>, subtitle: (String) -> String?) = ids.filter { it !in items }.map { id ->
-            ui.row(wheelIcon(id), title(id), subtitle(id), smallButton(R.drawable.ic_plus, "Add to the wheel") {
-                if (items.size >= Store.MAX_WHEEL) ui.toast("The wheel holds ${Store.MAX_WHEEL}. Remove one first") else set(items + id)
+            ui.row(wheelIcon(id), wheelTitle(id), subtitle(id), smallButton(R.drawable.ic_plus, "Add to the wheel") {
+                if (items.size >= Store.MAX_WHEEL) replaceOnWheel(id) else set(items + id)
             })
         }
         val tools = addRows(Store.WHEEL_TOOLS.map { it.first }) { id ->
