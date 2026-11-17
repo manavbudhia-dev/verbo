@@ -144,10 +144,8 @@ class PageActivity : Activity() {
         var chosen = existing?.category ?: intent.getStringExtra("cat") ?: "edit"
 
         val root = android.widget.FrameLayout(this)
-        root.addView(android.widget.ImageView(this).apply {
-            setImageResource(R.drawable.photo_header)
-            scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
-        }, android.widget.FrameLayout.LayoutParams(-1, look.dp(230)))
+        val header = View(this).apply { background = Art.skill(this@PageActivity, existing?.name ?: "", chosen) }
+        root.addView(header, android.widget.FrameLayout.LayoutParams(-1, look.dp(230)))
         root.addView(look.circleButton(R.drawable.ic_chevron_left, look.ink) { finish() },
             android.widget.FrameLayout.LayoutParams(look.dp(40), look.dp(40)).apply { setMargins(look.dp(16), look.dp(16), 0, 0) })
 
@@ -180,6 +178,7 @@ class PageActivity : Activity() {
             AlertDialog.Builder(this).setItems(Store.CATEGORIES.map { categoryInfo[it]?.first ?: it }.toTypedArray()) { _, w ->
                 chosen = Store.CATEGORIES[w]
                 look.dropText(group).text = "Group: ${categoryInfo[chosen]?.first}"
+                header.background = Art.skill(this@PageActivity, look.editText(name).text.toString().trim(), chosen)
             }.show()
         }
         group.layoutParams = LinearLayout.LayoutParams(look.dp(250), -2).apply { bottomMargin = look.dp(12) }
@@ -431,10 +430,12 @@ class PageActivity : Activity() {
                     (trigChip == "All" || trigChipOf(t) == trigChip)
             }
             if (shown.isEmpty()) grid.addView(look.text("Nothing here yet.", 14f, look.muted).apply { setPadding(look.dp(4), look.dp(6), 0, look.dp(10)) })
-            val photos = listOf(R.drawable.photo_sunset, R.drawable.photo_snow, R.drawable.photo_mist, R.drawable.photo_hills)
             shown.chunked(2).forEach { two ->
-                fun card(i: Int, t: Trigger) = look.photoCard(photos[i % photos.size], kindIcon(t.kind), t.skill, trigLine(t),
-                    { go("trigger-edit:$i") }, { trigCardMenu(i) })
+                fun card(i: Int, t: Trigger): View {
+                    val art = Art.kind(this, t.kind)
+                    return look.photoCard(art, art.iconRes, t.skill, trigLine(t),
+                        { go("trigger-edit:$i") }, { trigCardMenu(i) })
+                }
                 grid.addView(look.pair(card(two[0].index, two[0].value), if (two.size > 1) card(two[1].index, two[1].value) else View(this)))
             }
         }
@@ -936,10 +937,8 @@ class PageActivity : Activity() {
         val names = (store.skills.map { it.name } + Trigger.BUILTIN.keys + Acts.BUILTIN.map { it.name }).distinct()
 
         val root = android.widget.FrameLayout(this)
-        root.addView(android.widget.ImageView(this).apply {
-            setImageResource(R.drawable.photo_header)
-            scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
-        }, android.widget.FrameLayout.LayoutParams(-1, look.dp(230)))
+        val header = View(this).apply { background = Art.kind(this@PageActivity, kind) }
+        root.addView(header, android.widget.FrameLayout.LayoutParams(-1, look.dp(230)))
         root.addView(look.circleButton(R.drawable.ic_chevron_left, look.ink) { finish() },
             android.widget.FrameLayout.LayoutParams(look.dp(40), look.dp(40)).apply { setMargins(look.dp(16), look.dp(16), 0, 0) })
 
@@ -970,6 +969,7 @@ class PageActivity : Activity() {
                 kind = Cards.KINDS[w].first
                 look.dropText(kindRow).text = kindLabel(kind)
                 (kindRow.getChildAt(0) as android.widget.ImageView).setImageResource(kindIcon(kind))
+                header.background = Art.kind(this@PageActivity, kind)
                 keyword.visibility = if (kind == "keyword") View.VISIBLE else View.GONE
             }.show()
         }

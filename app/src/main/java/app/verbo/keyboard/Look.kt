@@ -386,8 +386,8 @@ class Look(val a: Activity) {
         }
     }
 
-    /** Photo card: rounded picture, glass icon and menu buttons on top, name and line over a dark scrim below. */
-    fun photoCard(photo: Int, iconRes: Int, title: String, subtitle: String, onTap: () -> Unit, onMenu: () -> Unit): FrameLayout {
+    /** Skill card: the skill's own artwork, glass icon and menu buttons on top, name and line over a scrim below. */
+    fun photoCard(art: android.graphics.drawable.Drawable, iconRes: Int, title: String, subtitle: String, onTap: () -> Unit, onMenu: () -> Unit): FrameLayout {
         val box = FrameLayout(a).apply {
             outlineProvider = object : android.view.ViewOutlineProvider() {
                 override fun getOutline(view: View, outline: android.graphics.Outline) {
@@ -397,12 +397,9 @@ class Look(val a: Activity) {
             clipToOutline = true
             setOnClickListener { onTap() }
         }
-        box.addView(ImageView(a).apply {
-            setImageResource(photo)
-            scaleType = ImageView.ScaleType.CENTER_CROP
-        }, FrameLayout.LayoutParams(-1, dp(240)))
+        box.addView(View(a).apply { background = art }, FrameLayout.LayoutParams(-1, dp(240)))
         box.addView(View(a).apply {
-            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(Color.TRANSPARENT, Color.parseColor("#E6000000")))
+            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(Color.TRANSPARENT, Color.parseColor("#D9101018")))
         }, FrameLayout.LayoutParams(-1, dp(130), Gravity.BOTTOM))
         box.addView(ImageView(a).apply {
             setImageResource(iconRes)

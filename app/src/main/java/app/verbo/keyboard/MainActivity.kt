@@ -254,16 +254,9 @@ class MainActivity : Activity() {
     }
 
     private fun skillPhotoCard(index: Int, s: Skill): View {
-        val photos = listOf(R.drawable.photo_sunset, R.drawable.photo_snow, R.drawable.photo_mist, R.drawable.photo_hills)
-        val icon = when {
-            s.name == "List" -> R.drawable.ic_list
-            s.category == "translate" -> R.drawable.ic_globe
-            s.category == "summarize" -> R.drawable.ic_file_text
-            s.category == "write" -> R.drawable.ic_sparkles
-            else -> R.drawable.ic_zap
-        }
+        val art = Art.skill(this, s.name, s.category)
         val blurb = s.instruction.substringBefore(". ").take(90)
-        return look.photoCard(photos[index % photos.size], icon, s.name, blurb,
+        return look.photoCard(art, art.iconRes, s.name, blurb,
             { open("skill-edit", { it.putExtra("index", index) }) }, { skillMenu(index) })
     }
 
