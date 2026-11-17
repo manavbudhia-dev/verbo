@@ -63,44 +63,14 @@ class MainActivity : Activity() {
 
     private fun build() {
         when (tab) {
-            "library" -> buildLibrary(look.page(look.navIcons("skills", listOf(
-                Triple("home", R.drawable.ic_home, { tab = "home"; build() }),
-                Triple("skills", R.drawable.ic_zap, {}),
-                Triple("activity", R.drawable.ic_bar_chart, { open("usage") }),
-                Triple("person", R.drawable.ic_user, { open("memory") }),
-            ))))
-            "settings" -> buildSettings(look.page(look.navSettings(
-                { tab = "home"; build() },
-                { open("usage") },
-                { open("try") },
-            )))
-            else -> buildHome(ui.page(navBar()))
+            "library" -> buildLibrary(look.page(look.nav("skills",
+                { tab = "home"; build() }, {}, { open("triggers") }, { open("usage") }, { tab = "settings"; build() })))
+            "settings" -> buildSettings(look.page(look.nav("settings",
+                { tab = "home"; build() }, { tab = "library"; build() }, { open("triggers") }, { open("usage") }, {})))
+            else -> buildHome(ui.page(look.nav("home",
+                {}, { tab = "library"; build() }, { open("triggers") }, { open("usage") }, { tab = "settings"; build() })))
         }
         refreshSetup()
-    }
-
-    /** The floating bar at the bottom: home, skill library, settings, and a shortcut to make a new skill. */
-    private fun navBar(): View {
-        val bar = LinearLayout(this).apply {
-            gravity = Gravity.CENTER_VERTICAL
-            background = ui.shape(Color.parseColor("#201F38"), 30, ui.line)
-            setPadding(ui.dp(8), ui.dp(6), ui.dp(8), ui.dp(6))
-            elevation = ui.dp(8).toFloat()
-        }
-        fun item(id: String?, icon: Int, label: String, onTap: () -> Unit) {
-            val on = id != null && id == tab
-            bar.addView(ui.icon(icon, 26, if (on) Color.WHITE else ui.muted).apply {
-                setPadding(ui.dp(13), ui.dp(11), ui.dp(13), ui.dp(11))
-                background = ui.ripple(if (on) ui.shape(ui.accent, 22) else null, 22)
-                contentDescription = label
-                setOnClickListener { onTap() }
-            }, LinearLayout.LayoutParams(ui.dp(52), ui.dp(48)).apply { setMargins(ui.dp(4), 0, ui.dp(4), 0) })
-        }
-        item("home", R.drawable.ic_keyboard, "Home") { tab = "home"; build() }
-        item("library", R.drawable.ic_wand_sparkles, "Skill library") { tab = "library"; build() }
-        item("settings", R.drawable.ic_settings, "Settings") { tab = "settings"; build() }
-        item(null, R.drawable.ic_plus, "Create a skill") { open("create") }
-        return bar
     }
 
     private fun newSetupBox(column: LinearLayout) {
@@ -344,6 +314,7 @@ class MainActivity : Activity() {
             look.rowTile(look.blueBg, look.blueTint, R.drawable.ic_palette, "Look & Feel", "Theme, key style, height") { open("look") },
             look.rowTile(look.purpleBg, look.purpleTint, 0, "Typing", "Auto-correct & suggestions", iconText = "Aa") { open("typing") },
             look.rowTile(look.orangeBg, look.orangeTint, R.drawable.ic_volume_2, "Sound & Vibration", "Feedback & haptics") { open("feedback") },
+            look.rowTile(look.greenBg, look.greenTint, R.drawable.ic_keyboard, "Try the keyboard", "Type a test line with Verbo") { open("try") },
         ))
 
         column.addView(look.sectionHead(R.drawable.ic_layers, look.accent, "More Options", "Languages, keys, shortcuts and connections"))

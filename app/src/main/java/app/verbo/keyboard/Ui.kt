@@ -62,7 +62,7 @@ class Ui(val a: Activity) {
         if (nav == null) a.setContentView(scroll)
         else a.setContentView(android.widget.FrameLayout(a).apply {
             addView(scroll, android.widget.FrameLayout.LayoutParams(-1, -1))
-            addView(nav, android.widget.FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = dp(26) })
+            addView(nav, android.widget.FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply { bottomMargin = dp(18); leftMargin = dp(18); rightMargin = dp(18) })
         })
         return column
     }

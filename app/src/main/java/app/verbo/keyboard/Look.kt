@@ -100,7 +100,7 @@ class Look(val a: Activity) {
         if (nav == null) a.setContentView(scroll)
         else a.setContentView(FrameLayout(a).apply {
             addView(scroll, FrameLayout.LayoutParams(-1, -1))
-            addView(nav, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = dp(18) })
+            addView(nav, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply { bottomMargin = dp(18); leftMargin = dp(18); rightMargin = dp(18) })
         })
         return column
     }
@@ -455,62 +455,34 @@ class Look(val a: Activity) {
         layoutParams = LinearLayout.LayoutParams(-1, -2)
     }
 
-    /** Settings tab bar: Home, Activity, the round keyboard button, Settings (active gets an underline). */
-    fun navSettings(onHome: () -> Unit, onActivity: () -> Unit, onKeyboard: () -> Unit): LinearLayout {
+    /** The one bottom bar used on every page: five labelled tabs, active one purple with an underline. */
+    fun nav(active: String, onHome: () -> Unit, onSkills: () -> Unit, onActions: () -> Unit, onActivity: () -> Unit, onSettings: () -> Unit): LinearLayout {
         val bar = LinearLayout(a).apply {
             gravity = Gravity.CENTER_VERTICAL
             background = shape(card, 28)
-            setPadding(dp(10), dp(8), dp(10), dp(8))
+            setPadding(dp(8), dp(8), dp(8), dp(8))
             elevation = dp(10).toFloat()
         }
-        fun item(iconRes: Int, label: String, active: Boolean, onTap: () -> Unit) {
-            val col = LinearLayout(a).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER_HORIZONTAL
-                setPadding(dp(14), dp(6), dp(14), dp(4))
-                background = ripple(null, 18)
-                setOnClickListener { onTap() }
-            }
-            col.addView(icon(iconRes, 24, if (active) accent else Color.parseColor("#55555F")))
-            col.addView(text(label, 11.5f, if (active) accent else muted, bold = active).apply { setPadding(0, dp(3), 0, 0) })
-            col.addView(View(a).apply { background = shape(if (active) accent else Color.TRANSPARENT, 2) }, LinearLayout.LayoutParams(dp(44), dp(3)).apply { topMargin = dp(3) })
-            bar.addView(col)
-        }
-        item(R.drawable.ic_home, "Home", false, onHome)
-        item(R.drawable.ic_bar_chart, "Activity", false, onActivity)
-        bar.addView(FrameLayout(a).apply {
-            background = shape(accent, 28)
-            elevation = dp(6).toFloat()
-            addView(icon(R.drawable.ic_keyboard, 26, Color.WHITE), FrameLayout.LayoutParams(dp(26), dp(26), Gravity.CENTER))
-            setOnClickListener { onKeyboard() }
-            contentDescription = "Try the keyboard"
-        }, LinearLayout.LayoutParams(dp(56), dp(56)).apply { setMargins(dp(14), 0, dp(14), 0) })
-        item(R.drawable.ic_settings, "Settings", true) {}
-        return bar
-    }
-
-    /** Icon-only tab bar with a dot under the active tab, as on the Skills and Auto Actions screens. */
-    fun navIcons(active: String, items: List<Triple<String, Int, () -> Unit>>): LinearLayout {
-        val bar = LinearLayout(a).apply {
-            gravity = Gravity.CENTER_VERTICAL
-            background = shape(card, 28)
-            setPadding(dp(12), dp(10), dp(12), dp(8))
-            elevation = dp(10).toFloat()
-        }
-        items.forEach { (id, iconRes, onTap) ->
+        fun item(id: String, iconRes: Int, label: String, onTap: () -> Unit) {
             val on = id == active
             val col = LinearLayout(a).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER_HORIZONTAL
-                setPadding(dp(18), dp(6), dp(18), dp(4))
+                setPadding(0, dp(6), 0, dp(4))
                 background = ripple(null, 18)
+                contentDescription = label
                 setOnClickListener { onTap() }
-                contentDescription = id
             }
-            col.addView(icon(iconRes, 24, if (on) accent else Color.parseColor("#3F3F46")))
-            col.addView(View(a).apply { background = shape(if (on) accent else Color.TRANSPARENT, 2) }, LinearLayout.LayoutParams(dp(4), dp(4)).apply { topMargin = dp(5) })
-            bar.addView(col)
+            col.addView(icon(iconRes, 23, if (on) accent else Color.parseColor("#55555F")))
+            col.addView(text(label, 11f, if (on) accent else muted, bold = on).apply { setPadding(0, dp(3), 0, 0); gravity = Gravity.CENTER_HORIZONTAL })
+            col.addView(View(a).apply { background = shape(if (on) accent else Color.TRANSPARENT, 2) }, LinearLayout.LayoutParams(dp(36), dp(3)).apply { topMargin = dp(3); gravity = Gravity.CENTER_HORIZONTAL })
+            bar.addView(col, LinearLayout.LayoutParams(0, -2, 1f))
         }
+        item("home", R.drawable.ic_home, "Home", onHome)
+        item("skills", R.drawable.ic_wand_sparkles, "Skills", onSkills)
+        item("actions", R.drawable.ic_zap, "Actions", onActions)
+        item("activity", R.drawable.ic_bar_chart, "Activity", onActivity)
+        item("settings", R.drawable.ic_settings, "Settings", onSettings)
         return bar
     }
 

@@ -64,7 +64,7 @@ class PageActivity : Activity() {
         if (page == "chain-new" || page.startsWith("chain-edit:")) { chainPage(); return }
         if (page == "trigger-new" || page.startsWith("trigger-edit:")) { triggerPage(); return }
         if (page == "triggers") { triggersPage(); return }
-        val column = ui.page()
+        val column = ui.page(mainNav(navActive(page)))
         when {
             page.startsWith("category:") -> skillsPage(column, page.substringAfter(":"))
             page == "prompts" -> skillsPage(column, null)
@@ -419,12 +419,7 @@ class PageActivity : Activity() {
     }
 
     private fun triggersPage() {
-        val column = look.page(look.navIcons("actions", listOf(
-            Triple("home", R.drawable.ic_home, { MainActivity.tab = "home"; startActivity(android.content.Intent(this, MainActivity::class.java)); finish() }),
-            Triple("actions", R.drawable.ic_zap, {}),
-            Triple("activity", R.drawable.ic_bar_chart, { go("usage") }),
-            Triple("person", R.drawable.ic_user, { go("memory") }),
-        )))
+        val column = look.page(mainNav("actions"))
         column.addView(look.header("Auto Actions", "Run skills automatically based on copied text",
             look.circleButton(R.drawable.ic_more_horizontal) { trigMenu() }))
         val grid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -1236,6 +1231,21 @@ class PageActivity : Activity() {
             },
         ))
     }
+
+    private fun navActive(page: String) = when {
+        page == "usage" || page == "dashboard" -> "activity"
+        page == "triggers" || page == "chains" || page == "copysettings" -> "actions"
+        page == "shelves" || page == "prompts" || page.startsWith("category:") || page.startsWith("skill-") -> "skills"
+        else -> "settings"
+    }
+
+    /** The shared bottom bar; tab taps jump back to the main activity on the right tab. */
+    private fun mainNav(active: String) = look.nav(active,
+        { MainActivity.tab = "home"; startActivity(android.content.Intent(this, MainActivity::class.java)); finish() },
+        { MainActivity.tab = "library"; startActivity(android.content.Intent(this, MainActivity::class.java)); finish() },
+        { if (page != "triggers") go("triggers") },
+        { if (page != "usage") go("usage") },
+        { MainActivity.tab = "settings"; startActivity(android.content.Intent(this, MainActivity::class.java)); finish() })
 
     private fun go(page: String) = startActivity(android.content.Intent(this, PageActivity::class.java).putExtra("page", page))
 
