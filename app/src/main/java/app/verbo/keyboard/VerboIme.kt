@@ -103,9 +103,11 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         store = Store(this)
         fb = Feedback(this)
         Thread { try { dictionary.load(assets.open("words.txt")) } catch (e: Exception) { } }.start()
+        main.postDelayed(autoSync, Sync.EVERY_MS)
     }
 
     override fun onDestroy() {
+        main.removeCallbacks(autoSync)
         worker.shutdownNow()
         recognizer?.destroy()
         fb.release()
@@ -992,18 +994,14 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
 
     /** While paired with a dashboard, refresh skills and connections every so often in the background. */
     private fun syncIfStale() {
-        if (fb.saving) return // Battery Saver: no background network; "Sync now" in the app still works
-        if (store.deviceToken.isEmpty()) return
-        val age = System.currentTimeMillis() - store.lastSync
-        if (age < 60_000 || (store.pending.isEmpty() && age < Sync.STALE_MS)) return // phone changes go up within a minute
-        store.lastSync = System.currentTimeMillis() // don't retry on every field while offline
-        worker.execute {
-            try {
-                Sync.pull(store)
-                main.post { loadSettings(); buildChips() }
-            } catch (e: Exception) {
-                // Keep using the last synced settings.
-            }
+        if (fb.saving) return // Battery Saver: no background network; opening the app still syncs
+        Sync.auto(store) { loadSettings(); buildChips() }
+    }
+
+    private val autoSync = object : Runnable {
+        override fun run() {
+            syncIfStale()
+            main.postDelayed(this, Sync.EVERY_MS)
         }
     }
 

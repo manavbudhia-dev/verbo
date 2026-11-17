@@ -8,6 +8,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import java.net.InetAddress
@@ -175,5 +176,44 @@ class SyncTest {
         Sync.pull(store)
         assertEquals(listOf(Memory.Fact("Home", "Jalandhar")), store.memory)
         assertTrue(store.styleLine!!.contains("Hinglish"))
+    }
+
+    // ---------- the automatic refresh ----------
+
+    private fun webSkill() = JSONArray().put(JSONObject().put("emoji", "🧪").put("name", "From web").put("instruction", "Do it.").put("category", "write"))
+
+    private fun awaitSkill(name: String) {
+        val deadline = System.currentTimeMillis() + 5000
+        while (store.skills.none { it.name == name } && System.currentTimeMillis() < deadline) Thread.sleep(20)
+        assertTrue("the dashboard's skill arrived without a Sync tap", store.skills.any { it.name == name })
+    }
+
+    @Test
+    fun dashboardChangesArriveOnTheirOwn() {
+        remote.put("skills", webSkill())
+        store.lastSync = System.currentTimeMillis() - Sync.EVERY_MS - 1
+        var refreshed = false
+        Sync.auto(store) { refreshed = true }
+        awaitSkill("From web")
+        org.robolectric.shadows.ShadowLooper.idleMainLooper()
+        assertTrue("the caller is told on the main thread", refreshed)
+        assertTrue("a second call inside the same minute does nothing", !Sync.due(store))
+    }
+
+    @Test
+    fun openingTheAppRefreshesFromTheDashboardOnItsOwn() {
+        remote.put("skills", webSkill())
+        store.lastSync = System.currentTimeMillis() - Sync.EVERY_MS - 1
+        MainActivity.tab = "home"
+        val main = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+        awaitSkill("From web")
+        org.robolectric.shadows.ShadowLooper.idleMainLooper()
+        val texts = ArrayList<String>()
+        fun walk(v: android.view.View) {
+            if (v is android.widget.TextView) texts.add(v.text.toString())
+            if (v is android.view.ViewGroup) for (i in 0 until v.childCount) walk(v.getChildAt(i))
+        }
+        walk(main.findViewById(android.R.id.content))
+        assertTrue("Home shows the new skill straight away", "From web" in texts)
     }
 }

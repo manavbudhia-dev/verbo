@@ -10,7 +10,8 @@ class SyncException(message: String, val status: Int = 0) : Exception(message)
 
 /** Pairs this keyboard with a Verbo dashboard and pulls skills, connections and settings from it. Blocking. */
 object Sync {
-    const val STALE_MS = 10 * 60 * 1000L
+    /** How often the automatic two-way refresh may run: once a minute. */
+    const val EVERY_MS = 60_000L
 
     fun normalise(address: String): String {
         var url = address.trim().trimEnd('/')
@@ -88,6 +89,7 @@ object Sync {
         } else {
             store.applyRemote(request("GET", config, store.deviceToken, null))
         }
+        store.lastSync = System.currentTimeMillis()
     }
 
     private val timer = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "verbo-sync").apply { isDaemon = true } }
@@ -98,6 +100,23 @@ object Sync {
     fun soon(store: Store) {
         queued?.cancel(false)
         queued = timer.schedule({ try { pull(store) } catch (e: Exception) { } }, 1500, java.util.concurrent.TimeUnit.MILLISECONDS)
+    }
+
+    /** True when paired and a minute has passed since the last sync, so dashboard changes arrive on their own. */
+    fun due(store: Store): Boolean = store.deviceToken.isNotEmpty() && System.currentTimeMillis() - store.lastSync >= EVERY_MS
+
+    /** The automatic refresh: push phone changes, take the dashboard's copy, then call [done] on the main thread. */
+    fun auto(store: Store, done: () -> Unit = {}) {
+        if (!due(store)) return
+        store.lastSync = System.currentTimeMillis() // don't retry on every call while offline
+        timer.execute {
+            try {
+                pull(store)
+            } catch (e: Exception) {
+                // Keep using the last synced settings.
+            }
+            android.os.Handler(android.os.Looper.getMainLooper()).post(done)
+        }
     }
 
     /** Asks the dashboard to create a Google Meet room in the owner's Google account. Returns the meeting link. */

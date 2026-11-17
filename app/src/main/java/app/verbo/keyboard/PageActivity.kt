@@ -52,6 +52,10 @@ class PageActivity : Activity() {
         super.onResume()
         if (resumed && (page == "welcome" || page == "dashboard" || page == "keys" || page == "automate" || page == "memory")) { store = Store(this); render() }
         resumed = true
+        // Coming back from the browser (the dashboard, say): refresh on its own, except on screens mid-edit.
+        if (!page.contains("-new") && !page.contains("-edit") && page != "try") {
+            Sync.auto(store) { if (!isFinishing && !isDestroyed) render() }
+        }
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -1714,7 +1718,7 @@ class PageActivity : Activity() {
         if (store.deviceToken.isNotEmpty()) {
             val last = if (store.lastSync == 0L) "not yet" else DateUtils.getRelativeTimeSpanString(store.lastSync).toString()
             column.addView(ui.rows(ui.row(R.drawable.ic_cloud, "Paired with " + store.serverUrl.removePrefix("https://"), "Last sync: $last")))
-            note(column, "Skills, keys, connections and keyboard settings stay in step both ways. A change made here is sent to the dashboard first, so it is never replaced by an older copy.")
+            note(column, "Skills, keys, connections and keyboard settings stay in step both ways on their own — about once a minute while the keyboard is up, and whenever you open Verbo. A change made here is sent to the dashboard first, so it is never replaced by an older copy. Sync now is there for the moments you want it this second.")
             val buttons = LinearLayout(this)
             buttons.addView(ui.button("Sync now", R.drawable.ic_refresh_cw, filled = true) { background({ Sync.pull(store) }, "Synced") }, LinearLayout.LayoutParams(0, -2, 1f).apply { rightMargin = ui.dp(6) })
             buttons.addView(ui.button("Unpair", R.drawable.ic_x) { store.unpair(); render() }, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = ui.dp(6) })

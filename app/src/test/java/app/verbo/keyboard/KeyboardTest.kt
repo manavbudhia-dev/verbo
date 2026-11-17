@@ -880,6 +880,21 @@ class KeyboardTest {
     }
 
     @Test
+    fun theKeyboardSyncsItselfWhileItIsUp() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        store.serverUrl = "http://127.0.0.1:1" // nothing listens: the refresh must fail quietly
+        store.deviceToken = "token"
+        store.lastSync = 0
+        ime.onStartInputView(field.info, false)
+        assertTrue("opening a field refreshes without a tap", store.lastSync > 0)
+        val first = store.lastSync
+        store.lastSync = System.currentTimeMillis() - Sync.EVERY_MS - 1
+        org.robolectric.shadows.ShadowLooper.idleMainLooper(Sync.EVERY_MS + 1000, java.util.concurrent.TimeUnit.MILLISECONDS)
+        assertTrue("the minute tick refreshes again on its own", store.lastSync > first)
+        store.unpair()
+    }
+
+    @Test
     fun settingsShowsAdvancedSettingsInline() {
         MainActivity.tab = "settings"
         val main = Robolectric.buildActivity(MainActivity::class.java).setup().get()

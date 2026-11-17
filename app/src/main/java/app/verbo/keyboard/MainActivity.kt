@@ -46,6 +46,7 @@ class MainActivity : Activity() {
         if (built) build() // skills, keys or settings may have been changed on another screen
         built = true
         refreshSetup()
+        Sync.auto(store) { if (!isFinishing) build() } // dashboard changes arrive without a Sync tap
         // Back from system settings with the keyboard enabled: go straight to the chooser, no extra tap.
         if (wentToSettings && isEnabled() && !isSelected()) {
             window.decorView.postDelayed({ if (!isFinishing) (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showInputMethodPicker() }, 400)
