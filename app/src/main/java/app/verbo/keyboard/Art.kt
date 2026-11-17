@@ -86,4 +86,32 @@ object Art {
         "foreign" -> SkillArt(a, R.drawable.ic_zap, Color.parseColor("#A78BFA"), Color.parseColor("#7C3AED"))
         else -> SkillArt(a, R.drawable.ic_sparkles, Color.parseColor("#C084FC"), Color.parseColor("#9333EA"))
     }
+
+    fun api(a: Context) = SkillArt(a, R.drawable.ic_plug, Color.parseColor("#A78BFA"), Color.parseColor("#7C3AED"))
+    fun key(a: Context) = SkillArt(a, R.drawable.ic_keyboard, Color.parseColor("#38BDF8"), Color.parseColor("#2563EB"))
+    fun memory(a: Context) = SkillArt(a, R.drawable.ic_brain, Color.parseColor("#F472B6"), Color.parseColor("#DB2777"))
+}
+
+/** Each connection's own brand mark, its full colour, and a soft tile of that colour. */
+object Brand {
+    val notion = Triple(R.drawable.ic_brand_notion, Color.parseColor("#191919"), Color.parseColor("#EDEDEC"))
+    val slack = Triple(R.drawable.ic_brand_slack, Color.parseColor("#611F69"), Color.parseColor("#F5E9F7"))
+    val github = Triple(R.drawable.ic_brand_github, Color.parseColor("#181717"), Color.parseColor("#ECECEE"))
+    val calendly = Triple(R.drawable.ic_brand_calendly, Color.parseColor("#006BFF"), Color.parseColor("#E5EFFF"))
+    val todoist = Triple(R.drawable.ic_brand_todoist, Color.parseColor("#E44332"), Color.parseColor("#FDEAE8"))
+    val linear = Triple(R.drawable.ic_brand_linear, Color.parseColor("#5E6AD2"), Color.parseColor("#EBEDFB"))
+    val discord = Triple(R.drawable.ic_brand_discord, Color.parseColor("#5865F2"), Color.parseColor("#EBEDFE"))
+    val google = Triple(R.drawable.ic_brand_google, Color.parseColor("#4285F4"), Color.parseColor("#E8F0FE"))
+    val gmail = Triple(R.drawable.ic_brand_gmail, Color.parseColor("#EA4335"), Color.parseColor("#FCE8E6"))
+    val outlook = Triple(R.drawable.ic_brand_outlook, Color.parseColor("#0F6CBD"), Color.parseColor("#E6F0FA"))
+    val linkedin = Triple(R.drawable.ic_brand_linkedin, Color.parseColor("#0A66C2"), Color.parseColor("#E6F0FA"))
+    val whatsapp = Triple(R.drawable.ic_brand_whatsapp, Color.parseColor("#1FAF5A"), Color.parseColor("#E4F8EC"))
+    val telegram = Triple(R.drawable.ic_brand_telegram, Color.parseColor("#26A5E4"), Color.parseColor("#E4F4FC"))
+    val youtube = Triple(R.drawable.ic_brand_youtube, Color.parseColor("#FF0000"), Color.parseColor("#FDE6E6"))
+    val x = Triple(R.drawable.ic_brand_x, Color.parseColor("#000000"), Color.parseColor("#ECECEE"))
+    val calendar = Triple(R.drawable.ic_brand_calendar, Color.parseColor("#4285F4"), Color.parseColor("#E8F0FE"))
+    val search = Triple(R.drawable.ic_globe, Color.parseColor("#2563EB"), Color.parseColor("#E5EFFF"))
+    val weather = Triple(R.drawable.ic_sun, Color.parseColor("#D97706"), Color.parseColor("#FDF1DC"))
+    val places = Triple(R.drawable.ic_map_pin, Color.parseColor("#0D9488"), Color.parseColor("#DEF4F1"))
+    val api = Triple(R.drawable.ic_plug, Color.parseColor("#7C3AED"), Color.parseColor("#EFEBFD"))
 }

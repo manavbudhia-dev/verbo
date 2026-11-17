@@ -151,6 +151,34 @@ class Ui(val a: Activity) {
         return row
     }
 
+    /** A connection row with the app's own brand mark on a soft tile of its brand colour. */
+    fun brandRow(iconRes: Int, brand: Int, soft: Int, title: String, subtitle: String? = null, trailing: View? = null, onTap: (() -> Unit)? = null): LinearLayout {
+        val row = LinearLayout(a).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            minimumHeight = dp(64)
+        }
+        row.addView(LinearLayout(a).apply {
+            gravity = Gravity.CENTER
+            background = shape(soft, 13)
+            layoutParams = LinearLayout.LayoutParams(dp(46), dp(46))
+            addView(icon(iconRes, 26, brand))
+        })
+        val titles = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), 0, dp(8), 0) }
+        titles.addView(text(title, 16.5f, bold = true))
+        if (subtitle != null) titles.addView(text(subtitle, 13.5f, muted).apply { maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END; setPadding(0, dp(2), 0, 0) })
+        row.addView(titles, LinearLayout.LayoutParams(0, -2, 1f))
+        if (trailing != null) row.addView(trailing)
+        if (onTap != null) {
+            row.background = ripple(null)
+            row.setOnClickListener { onTap() }
+        }
+        return row
+    }
+
+    fun brandRow(b: Triple<Int, Int, Int>, title: String, subtitle: String? = null, trailing: View? = null, onTap: (() -> Unit)? = null) =
+        brandRow(b.first, b.second, b.third, title, subtitle, trailing, onTap)
+
     fun divider() = View(a).apply {
         setBackgroundColor(line)
         layoutParams = LinearLayout.LayoutParams(-1, dp(1)).apply { leftMargin = dp(56) }

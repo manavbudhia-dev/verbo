@@ -1018,18 +1018,28 @@ class PageActivity : Activity() {
     private fun automatePage(column: LinearLayout) {
         column.addView(ui.topBar("Automate", "Connect apps and APIs for actions"))
         note(column, "The assistant can use these while carrying out an action, for example \"add this to my Notion notes\" or \"what's the weather in Pune tomorrow\".")
+
+        column.addView(ui.section(R.drawable.ic_sparkles, "Built in"))
         column.addView(ui.rows(
-            ui.row(R.drawable.ic_globe, "Web search", "Look up fresh facts when needed", ui.toggle(store.webSearch) { store.webSearch = it }),
-            ui.row(R.drawable.ic_sun, "Weather", "Forecasts from Open-Meteo, no account", ui.toggle(store.weather) { store.weather = it }),
-            ui.row(R.drawable.ic_globe, "Places and maps", "Finds addresses and shows a map, from OpenStreetMap", ui.toggle(store.places) { store.places = it }),
+            ui.brandRow(Brand.search, "Web search", "Look up fresh facts when needed", ui.toggle(store.webSearch) { store.webSearch = it }),
+            ui.brandRow(Brand.weather, "Weather", "Forecasts from Open-Meteo, no account", ui.toggle(store.weather) { store.weather = it }),
+            ui.brandRow(Brand.places, "Places and maps", "Finds addresses and shows a map, from OpenStreetMap", ui.toggle(store.places) { store.places = it }),
         ))
+
         val ready = { ui.icon(R.drawable.ic_check, 20, Color.parseColor("#16A34A")) }
+        column.addView(ui.section(R.drawable.ic_pencil_line, "Write and open"))
+        note(column, "These write the text for you and open the app with it ready to send.")
         column.addView(ui.rows(
-            ui.row(R.drawable.ic_pencil_line, "Gmail and Outlook", if ("gmail" in store.googleServices) "Gmail is connected: emails are sent or drafted for you" else "Writes the email and opens it as a ready draft. Connect Google to send by itself", ready()),
-            ui.row(R.drawable.ic_pencil_line, "LinkedIn", "Writes a post and opens LinkedIn with it filled in. \"Who is\" finds people", ready()),
-            ui.row(R.drawable.ic_pencil_line, "WhatsApp and Telegram", "Writes the message and opens the app to pick a chat", ready()),
-            ui.row(R.drawable.ic_list, "Calendar, YouTube and X", "Opens an event, a search or a post with your text filled in", ready()),
+            ui.brandRow(Brand.gmail, "Gmail", if ("gmail" in store.googleServices) "Connected: sends or drafts email by itself" else "Writes the email and opens it as a ready draft", ready()),
+            ui.brandRow(Brand.outlook, "Outlook", "Writes the email and opens it as a ready draft", ready()),
+            ui.brandRow(Brand.linkedin, "LinkedIn", "Writes a post and opens LinkedIn with it filled in. \"Who is\" finds people", ready()),
+            ui.brandRow(Brand.whatsapp, "WhatsApp", "Writes the message and opens the app to pick a chat", ready()),
+            ui.brandRow(Brand.telegram, "Telegram", "Writes the message and opens the app to pick a chat", ready()),
+            ui.brandRow(Brand.calendar, "Calendar", "Opens an event with your text filled in", ready()),
+            ui.brandRow(Brand.youtube, "YouTube", "Opens a search with your text filled in", ready()),
+            ui.brandRow(Brand.x, "X", "Opens a post with your text filled in", ready()),
         ))
+
         val services = store.googleServices
         val all = services.containsAll(listOf("meet", "calendar", "gmail"))
         val meetState = when {
@@ -1038,26 +1048,41 @@ class PageActivity : Activity() {
             store.deviceToken.isEmpty() -> "Needs the web dashboard: pair this keyboard, then connect Google there once. Until then the shortcut offers an instant no-account link"
             else -> "Open your dashboard → Connections → Connect Google, then Sync now"
         }
-        column.addView(ui.rows(ui.row(R.drawable.ic_video, "Google: Meet, Calendar, Gmail", meetState,
+        column.addView(ui.section(R.drawable.ic_cloud, "Google"))
+        column.addView(ui.rows(ui.brandRow(Brand.google, "Meet, Calendar and Gmail", meetState,
             if (all) ready() else ui.chevron()) { if (!all) startActivity(android.content.Intent(this, PageActivity::class.java).putExtra("page", "dashboard")) }))
+
+        column.addView(ui.section(R.drawable.ic_link, "Connect with a token"))
+        note(column, "Paste a token once and the assistant can read and write in these apps for you.")
         column.addView(ui.rows(
-            ui.row(R.drawable.ic_square_terminal, "Notion", if (store.notionToken.isEmpty()) "Not connected" else "Connected", ui.chevron()) {
+            ui.brandRow(Brand.notion, "Notion", if (store.notionToken.isEmpty()) "Not connected" else "Connected", ui.chevron()) {
                 editToken("Notion", "Paste an internal integration token from notion.so/my-integrations, then share the pages you want with that integration.", store.notionToken) { store.notionToken = it }
             },
-            ui.row(R.drawable.ic_list, "Calendly", if (store.calendlyToken.isEmpty()) "Not connected" else "Connected", ui.chevron()) {
+            ui.brandRow(Brand.calendly, "Calendly", if (store.calendlyToken.isEmpty()) "Not connected" else "Connected", ui.chevron()) {
                 editToken("Calendly", "Paste a personal access token from Calendly → Integrations → API & webhooks.", store.calendlyToken) { store.calendlyToken = it }
             },
             *TOKEN_APPS.map { (field, title, help) ->
                 val token = store.token(field)
-                ui.row(R.drawable.ic_square_terminal, title, if (token.isEmpty()) "Not connected" else "Connected", ui.chevron()) {
+                ui.brandRow(brandFor(field), title, if (token.isEmpty()) "Not connected" else "Connected", ui.chevron()) {
                     editToken(title, help, token) { store.setToken(field, it) }
                 }
             }.toTypedArray(),
         ))
+
+        column.addView(ui.section(R.drawable.ic_plug, "Your APIs"))
         store.customApis.forEachIndexed { index, api ->
-            column.addView(ui.rows(ui.row(R.drawable.ic_plug, api.name, api.description.ifBlank { api.url }, ui.chevron()) { editApi(index) }))
+            column.addView(ui.rows(ui.brandRow(Brand.api, api.name, api.description.ifBlank { api.url }, ui.chevron()) { editApi(index) }))
         }
         column.addView(ui.button("Connect an API", R.drawable.ic_plus, filled = true) { editApi(-1) })
+    }
+
+    private fun brandFor(field: String) = when (field) {
+        "slackToken" -> Brand.slack
+        "githubToken" -> Brand.github
+        "todoistToken" -> Brand.todoist
+        "linearToken" -> Brand.linear
+        "discordWebhook" -> Brand.discord
+        else -> Brand.api
     }
 
     private fun editToken(title: String, help: String, current: String, save: (String) -> Unit) {
