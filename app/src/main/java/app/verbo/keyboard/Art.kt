@@ -9,13 +9,26 @@ import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Shader
 import android.graphics.drawable.Drawable
+import android.graphics.drawable.GradientDrawable
 
 /** Card artwork that belongs to the skill itself: its own two-hue gradient with the skill's icon drawn large and soft. */
 class SkillArt(a: Context, val iconRes: Int, from: Int, to: Int) : Drawable() {
+    private val app = a.applicationContext
     private val fromColor = from
     private val toColor = to
     private val glyph = a.getDrawable(iconRes)?.mutate()
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    /** The same artwork as a round orb: gradient ball with the glyph in soft white, for wheel slots and act cards. */
+    fun asOrb(): Drawable {
+        val ball = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            orientation = GradientDrawable.Orientation.TL_BR
+            colors = intArrayOf(fromColor, toColor)
+        }
+        val mark = app.getDrawable(iconRes)?.mutate()?.apply { setTint(Color.parseColor("#E6FFFFFF")) }
+        return android.graphics.drawable.LayerDrawable(arrayOf(ball, android.graphics.drawable.InsetDrawable(mark, 0.27f)))
+    }
 
     override fun draw(c: Canvas) {
         val b = bounds

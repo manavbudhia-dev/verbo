@@ -609,41 +609,79 @@ class KeyboardTest {
     }
 
     @Test
-    fun wheelAddReplacesWhenFull() {
+    fun wheelSheetAddsAShortcutIntoAnEmptySlot() {
         val store = Store(RuntimeEnvironment.getApplication())
+        store.wheel = listOf("ai")
         val a = wheelPage()
-        assertEquals("the wheel starts full", 6, store.wheel.size)
         byDesc(content(a), "Add to the wheel")!!.performClick()
-        pickDialogItem(0) // give up the leftmost slot
-        assertEquals(listOf("auto") + Store.DEFAULT_WHEEL.drop(1), store.wheel)
+        val sheet = org.robolectric.shadows.ShadowDialog.getLatestDialog()
+        clickLabel(sheet.findViewById(android.R.id.content), "Verbo tools")
+        clickLabel(sheet.findViewById(android.R.id.content), "Voice")
+        assertEquals(listOf("ai", "voice"), store.wheel)
     }
 
     @Test
-    fun wheelArrowsReorderAndXRemovesThenPlusAdds() {
+    fun wheelSheetGreysOutShortcutsAlreadyOnTheWheel() {
         val store = Store(RuntimeEnvironment.getApplication())
         val a = wheelPage()
-        byDesc(content(a), "Move right on the wheel")!!.performClick()
-        assertEquals(listOf("rewrite", "translate") + Store.DEFAULT_WHEEL.drop(2), store.wheel)
-        byDesc(content(a), "Move left on the wheel")!!.performClick()
-        assertEquals(Store.DEFAULT_WHEEL, store.wheel)
-        byDesc(content(a), "Remove from the wheel")!!.performClick()
-        assertEquals(Store.DEFAULT_WHEEL.drop(1), store.wheel)
-        byDesc(content(a), "Add to the wheel")!!.performClick()
-        assertEquals(6, store.wheel.size)
-        assertEquals("the removed tool is offered again and comes back", "translate", store.wheel.last())
+        byDesc(content(a), "Wheel slot 1: Translate")!!.performClick()
+        val sheet = org.robolectric.shadows.ShadowDialog.getLatestDialog()
+        clickLabel(sheet.findViewById(android.R.id.content), "Verbo tools")
+        clickLabel(sheet.findViewById(android.R.id.content), "Translate")
+        assertEquals("a greyed row changes nothing", Store.DEFAULT_WHEEL, store.wheel)
     }
 
     @Test
-    fun wheelRowTapChangesTheShortcut() {
+    fun wheelSlotTapOpensTheSheetAndChangesThatSlot() {
         val store = Store(RuntimeEnvironment.getApplication())
         val a = wheelPage()
-        clickLabel(content(a), "Translate")
-        pickDialogItem(Store.WHEEL_TOOLS.indexOfFirst { it.first == "rewrite" }) // Rewrite is already on the wheel: the two swap places
+        byDesc(content(a), "Wheel slot 1: Translate")!!.performClick()
+        val sheet = org.robolectric.shadows.ShadowDialog.getLatestDialog()
+        clickLabel(sheet.findViewById(android.R.id.content), "Verbo tools")
+        clickLabel(sheet.findViewById(android.R.id.content), "Rewrite") // already on the wheel: the two swap places
         assertEquals(listOf("rewrite", "translate") + Store.DEFAULT_WHEEL.drop(2), store.wheel)
-        clickLabel(content(a), "Rewrite")
-        pickDialogItem(Store.WHEEL_TOOLS.size) // the first skill, not on the wheel yet: it takes the slot
+        byDesc(content(a), "Wheel slot 1: Rewrite")!!.performClick()
+        val sheet2 = org.robolectric.shadows.ShadowDialog.getLatestDialog()
+        clickLabel(sheet2.findViewById(android.R.id.content), store.skills[0].name) // a skill from My Acts takes the slot
         assertEquals("skill:" + store.skills[0].name, store.wheel[0])
         assertEquals("translate", store.wheel[1])
+    }
+
+    @Test
+    fun wheelHoldDragReordersAndThePinkBarRemoves() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        val a = wheelPage()
+        fun centre(v: View): Pair<Float, Float> {
+            val at = IntArray(2)
+            v.getLocationOnScreen(at)
+            return Pair(at[0] + v.width / 2f, at[1] + v.height / 2f)
+        }
+        fun drag(from: View, to: View) {
+            from.performLongClick()
+            layout(content(a))
+            val (tx, ty) = centre(to)
+            val at = IntArray(2)
+            from.getLocationOnScreen(at)
+            touch(from, MotionEvent.ACTION_MOVE, listOf(Triple(0, tx - at[0], ty - at[1])))
+            touch(from, MotionEvent.ACTION_UP, listOf(Triple(0, tx - at[0], ty - at[1])))
+        }
+        drag(byDesc(content(a), "Wheel slot 1: Translate")!!, byDesc(content(a), "Wheel slot 3: Ask AI")!!)
+        assertEquals("held and dropped two slots along", listOf("rewrite", "ai", "translate") + Store.DEFAULT_WHEEL.drop(3), store.wheel)
+        fun find(v: View): TextView? = when {
+            v is TextView && v.text.toString() == "Drag here to remove" -> v
+            v is ViewGroup -> (0 until v.childCount).firstNotNullOfOrNull { find(v.getChildAt(it)) }
+            else -> null
+        }
+        val slot = byDesc(content(a), "Wheel slot 1: Rewrite")!!
+        slot.performLongClick()
+        layout(content(a))
+        val bar = find(content(a))!!
+        val (bx, by) = centre(bar)
+        val at = IntArray(2)
+        slot.getLocationOnScreen(at)
+        touch(slot, MotionEvent.ACTION_MOVE, listOf(Triple(0, bx - at[0], by - at[1])))
+        touch(slot, MotionEvent.ACTION_UP, listOf(Triple(0, bx - at[0], by - at[1])))
+        assertEquals("dropped on the pink bar", listOf("ai", "translate", "meet", "voice", "clips"), store.wheel)
     }
 
     private fun reloadWheel() {
@@ -712,18 +750,34 @@ class KeyboardTest {
     @Test
     fun wheelPageAddsAnAppWithItsBrandIcon() {
         val store = Store(RuntimeEnvironment.getApplication())
+        store.wheel = Store.DEFAULT_WHEEL.dropLast(1)
         val a = wheelPage()
-        fun find(v: View): TextView? = when {
-            v is TextView && v.text.toString() == "Notion" -> v
-            v is ViewGroup -> (0 until v.childCount).firstNotNullOfOrNull { find(v.getChildAt(it)) }
+        byDesc(content(a), "Add to the wheel")!!.performClick()
+        val sheet = org.robolectric.shadows.ShadowDialog.getLatestDialog()
+        clickLabel(sheet.findViewById(android.R.id.content), "Verbo tools")
+        clickLabel(sheet.findViewById(android.R.id.content), "Notion")
+        assertEquals("app:notion", store.wheel.last())
+        assertEquals(6, store.wheel.size)
+    }
+
+    @Test
+    fun actsPanelShowsPinnedCardsWithTheirNeeds() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        ime.showActs()
+        fun find(v: View, s: String): TextView? = when {
+            v is TextView && v.text.toString() == s -> v
+            v is ViewGroup -> (0 until v.childCount).firstNotNullOfOrNull { find(v.getChildAt(it), s) }
             else -> null
         }
-        var v: View? = find(content(a))
-        while (v != null && byDesc(v, "Add to the wheel") == null) v = v.parent as? View
-        byDesc(v!!, "Add to the wheel")!!.performClick()
-        pickDialogItem(0) // the wheel is full: give up the leftmost slot
-        assertEquals("app:notion", store.wheel[0])
-        assertEquals(6, store.wheel.size)
+        assertTrue("the panel is titled My Acts", find(root, "My Acts") != null)
+        assertTrue("the plan badge sits on the strip", find(root, "∞  Unlimited") != null)
+        assertTrue("copied-context acts say so", find(root, "Needs copied context") != null)
+        assertTrue("typed-text acts say so", find(root, "Needs text input") != null)
+        val name = store.skills[0].name
+        byDesc(root, "Pin $name")!!.performClick()
+        assertTrue("skill:$name" in store.pins)
+        byDesc(root, "Unpin $name")!!.performClick()
+        assertTrue("skill:$name" !in store.pins)
     }
 
     // ---------- the 360° compass ----------
@@ -1202,6 +1256,32 @@ class KeyboardTest {
             s.layout(0, 0, 1080, h)
             snap(s, "page-search")
         }
+
+        // The Add to Wheel sheet, and a hold-drag mid-flight with the pink remove bar.
+        store.wheel = listOf("ai")
+        val wa = Robolectric.buildActivity(PageActivity::class.java, android.content.Intent().putExtra("page", "wheel")).setup().get()
+        byDesc(content(wa), "Add to the wheel")!!.performClick()
+        val sheet = org.robolectric.shadows.ShadowDialog.getLatestDialog()
+        layout(sheet.window!!.decorView)
+        snap(sheet.window!!.decorView, "page-wheel-sheet")
+        sheet.dismiss()
+        store.wheel = Store.DEFAULT_WHEEL
+        val wb = Robolectric.buildActivity(PageActivity::class.java, android.content.Intent().putExtra("page", "wheel")).setup().get()
+        val slot = byDesc(content(wb), "Wheel slot 2: Rewrite")!!
+        slot.performLongClick()
+        layout(content(wb))
+        val target = byDesc(content(wb), "Wheel slot 4: Meeting link")!!
+        val at = IntArray(2)
+        slot.getLocationOnScreen(at)
+        val tt = IntArray(2)
+        target.getLocationOnScreen(tt)
+        val dx = tt[0] + target.width / 2f - at[0]
+        val dy = tt[1] + target.height / 2f - at[1]
+        touch(slot, MotionEvent.ACTION_MOVE, listOf(Triple(0, dx, dy)))
+        layout(wb.window.decorView)
+        snap(wb.window.decorView, "page-wheel-drag")
+        touch(slot, MotionEvent.ACTION_UP, listOf(Triple(0, dx, dy)))
+        store.wheel = Store.DEFAULT_WHEEL
     }
 }
 

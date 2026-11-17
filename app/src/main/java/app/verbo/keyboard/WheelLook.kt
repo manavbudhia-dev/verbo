@@ -83,10 +83,10 @@ object WheelLook {
         c.drawArc(arc, start, sweep, false, edge)
         val rx = cx + (fx - cx) * 0.58f
         val ry = cy + (fy - cy) * 0.58f
-        face.color = Color.WHITE
-        c.drawCircle(rx, ry, 15f * d, face)
-        edge.strokeWidth = 2f * d
-        c.drawCircle(rx, ry, 15f * d, edge)
+        // A hollow ring on the beam, so the light shows through it.
+        edge.color = blue
+        edge.strokeWidth = 2.5f * d
+        c.drawCircle(rx, ry, 12f * d, edge)
         edge.strokeWidth = d
     }
 

@@ -318,10 +318,8 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         val row = chipsRow ?: return
         row.removeAllViews()
         if (!assistantOn) return
-        val acts = chipView("⚡ Acts", p.fnKey, p.keyPressed, p.accent)
-        acts.typeface = Typeface.DEFAULT_BOLD
-        acts.setOnClickListener { feedback(KeyboardView.Type.MODE); showActs() }
-        row.addView(acts, chipParams())
+        row.addView(modeChip(R.drawable.ic_pencil_line, "Type", true) { hidePanel(); showTyping() }, chipParams())
+        row.addView(modeChip(R.drawable.ic_sparkle, "Act", false) { showActs() }, chipParams())
         val fresh = contextText == null && hasFreshClip()
         // Triggers: the copied message is matched on the phone; a chip offers each matching skill.
         val clip = if (store.triggersOn) contextText ?: (if (fresh) readClip() else null) else null
@@ -397,6 +395,41 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         maxLines = 1
         setPadding(dp(13), 0, dp(13), 0)
         background = pressable(color, pressed, 18)
+    }
+
+    /** The Type / Act mode pill: icon plus label, solid when it is the mode you are in. */
+    private fun modeChip(iconRes: Int, label: String, selected: Boolean, accented: Boolean = false, onTap: () -> Unit) = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER
+        setPadding(dp(12), 0, dp(14), 0)
+        val solid = if (accented) Color.argb(255,
+            (Color.red(p.key) * 0.84f + Color.red(p.accent) * 0.16f).toInt(),
+            (Color.green(p.key) * 0.84f + Color.green(p.accent) * 0.16f).toInt(),
+            (Color.blue(p.key) * 0.84f + Color.blue(p.accent) * 0.16f).toInt()) else p.key
+        background = pressable(if (selected) solid else p.fnKey, p.keyPressed, 17)
+        val tint = if (selected) (if (accented) p.accent else p.text) else p.muted
+        addView(ImageView(this@VerboIme).apply {
+            setImageResource(iconRes)
+            setColorFilter(tint)
+            layoutParams = LinearLayout.LayoutParams(dp(15), dp(15)).apply { rightMargin = dp(6) }
+        })
+        addView(TextView(this@VerboIme).apply {
+            text = label
+            setTextColor(tint)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+            typeface = Typeface.DEFAULT_BOLD
+        })
+        setOnClickListener { feedback(KeyboardView.Type.MODE); onTap() }
+    }
+
+    /** The round orb an act wears on its card. */
+    private fun actArt(name: String): android.graphics.drawable.Drawable {
+        if (name == "Ask AI") return SkillArt(this, R.drawable.ic_sparkles, Color.parseColor("#7DD3FC"), Color.parseColor("#2563EB")).asOrb()
+        val skill = skills.firstOrNull { it.name == name }
+        if (skill != null) return Art.skill(this, skill.name, skill.category).asOrb()
+        val act = Acts.BUILTIN.firstOrNull { it.name == name }
+        return (if (act?.needsCopied == true) SkillArt(this, R.drawable.ic_file_text, Color.parseColor("#4ADE80"), Color.parseColor("#16A34A"))
+        else SkillArt(this, R.drawable.ic_sparkles, Color.parseColor("#C084FC"), Color.parseColor("#9333EA"))).asOrb()
     }
 
     // ---------- feedback ----------
@@ -758,18 +791,20 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         return r.copy(openUri = other ?: if (PhoneCalendar.allowed(this)) null else r.links.firstOrNull())
     }
 
-    /** The acts, in place of the keys: the copied text on top, then every act as a card. "Type" goes back to the keys. */
-    internal fun showActs() = showPanel {
+    /** The acts, in place of the keys: Type/Act and the plan badge on top, then every act as a pinned card. */
+    internal fun showActs(): Unit = showPanel(dp(380)) {
         steps = null
-        val head = LinearLayout(this@VerboIme).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(2), 0, 0, dp(6)) }
-        val type = chipView("⌨  Type", p.key, p.keyPressed, p.text)
-        type.setOnClickListener { feedback(KeyboardView.Type.MODE); hidePanel(); showTyping() }
-        head.addView(type, LinearLayout.LayoutParams(-2, dp(34)))
-        val act = chipView("⚡ Act", p.accent, p.accentPressed, p.onAccent)
-        act.typeface = Typeface.DEFAULT_BOLD
-        head.addView(act, LinearLayout.LayoutParams(-2, dp(34)).apply { leftMargin = dp(6) })
+        val head = LinearLayout(this@VerboIme).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(2), 0, 0, dp(8)) }
+        head.addView(modeChip(R.drawable.ic_pencil_line, "Type", false) { hidePanel(); showTyping() }, LinearLayout.LayoutParams(-2, dp(34)))
+        head.addView(modeChip(R.drawable.ic_sparkle, "Act", true, true) { }, LinearLayout.LayoutParams(-2, dp(34)).apply { leftMargin = dp(6) })
         head.addView(View(this@VerboIme), LinearLayout.LayoutParams(0, 1, 1f))
-        head.addView(iconButton(R.drawable.ic_x, "Back to keyboard", p.muted) { hidePanel(); showTyping() }, LinearLayout.LayoutParams(dp(38), dp(38)))
+        head.addView(TextView(this@VerboIme).apply {
+            text = if (store.overLimit) "Limit reached" else "∞  Unlimited"
+            setTextColor(Color.parseColor(if (store.overLimit) "#EF4444" else "#F59E0B"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(0, 0, dp(6), 0)
+        })
         addView(head)
         val copied = contextText ?: if (hasFreshClip()) readClip() else null
         if (copied != null) addView(TextView(this@VerboIme).apply {
@@ -781,7 +816,15 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             setPadding(dp(12), dp(7), dp(12), dp(7))
             background = rounded(p.key, 12)
         }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
-        addView(TextView(this@VerboIme).apply { text = "My acts"; setTextColor(p.text); setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f); typeface = Typeface.DEFAULT_BOLD; setPadding(dp(4), 0, 0, dp(6)) })
+        val title = LinearLayout(this@VerboIme).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(4), 0, 0, dp(6)) }
+        title.addView(TextView(this@VerboIme).apply {
+            text = "My Acts"
+            setTextColor(p.text)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            typeface = Typeface.DEFAULT_BOLD
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        title.addView(iconButton(R.drawable.ic_clock, "Recent copied messages", p.muted) { showClips() }, LinearLayout.LayoutParams(dp(36), dp(36)))
+        addView(title)
         val fits = Acts.forContext(contextForActs())
         val all = (listOf(Triple("✨", "Ask AI", false)) +
             skills.map { Triple(it.emoji.ifEmpty { "⚡" }, it.name, Acts.needsCopied(it.instruction)) } +
@@ -791,22 +834,45 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         all.chunked(2).forEach { pair ->
             val row = LinearLayout(this@VerboIme)
             pair.forEach { (emoji, name, copiedNeeded) ->
+                val pinId = if (name == "Ask AI") "ai" else "skill:$name"
                 val cell = LinearLayout(this@VerboIme).apply {
                     orientation = LinearLayout.VERTICAL
                     setPadding(dp(12), dp(10), dp(10), dp(10))
-                    background = if (name in fits) GradientDrawable().apply { setColor(p.key); cornerRadius = dp(14).toFloat(); setStroke(dp(2), p.accent) } else pressable(p.key, p.keyPressed, 14)
+                    background = pressable(p.key, p.keyPressed, 14)
+                    val top = LinearLayout(this@VerboIme).apply { gravity = Gravity.CENTER_VERTICAL }
+                    top.addView(ImageView(this@VerboIme).apply {
+                        setImageDrawable(actArt(name))
+                        layoutParams = LinearLayout.LayoutParams(dp(34), dp(34))
+                    })
+                    top.addView(View(this@VerboIme), LinearLayout.LayoutParams(0, 1, 1f))
+                    val pinned = pinId in store.pins
+                    top.addView(ImageView(this@VerboIme).apply {
+                        setImageResource(R.drawable.ic_pin)
+                        setColorFilter(if (pinned) p.accent else Color.parseColor("#B9B9C6"))
+                        setPadding(dp(4), dp(4), dp(4), dp(4))
+                        layoutParams = LinearLayout.LayoutParams(dp(26), dp(26))
+                        contentDescription = if (pinned) "Unpin $name" else "Pin $name"
+                        setOnClickListener {
+                            feedback(KeyboardView.Type.MODE)
+                            val now = store.pins
+                            store.pins = if (pinned) now - pinId else now + pinId
+                            showActs()
+                        }
+                    })
+                    addView(top)
                     addView(TextView(this@VerboIme).apply {
-                        text = "$emoji  $name"
+                        text = name
                         setTextColor(p.text)
-                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
                         typeface = Typeface.DEFAULT_BOLD
                         maxLines = 1
                         ellipsize = TextUtils.TruncateAt.END
+                        setPadding(0, dp(8), 0, 0)
                     })
                     addView(TextView(this@VerboIme).apply {
                         val chain = skills.firstOrNull { it.name == name }?.instruction?.takeIf { Acts.isChain(it) }
-                        text = when { name in fits -> "Fits this text"; chain != null -> "Chain · ${Acts.chainSteps(chain).size} steps"; name == "Ask AI" -> "Needs text input"; copiedNeeded -> "Needs copied text"; else -> "Needs text input" }
-                        setTextColor(if (name in fits || copiedNeeded) p.accent else p.muted)
+                        text = when { name in fits -> "Fits this text"; chain != null -> "Chain · ${Acts.chainSteps(chain).size} steps"; copiedNeeded -> "Needs copied context"; else -> "Needs text input" }
+                        setTextColor(when { name in fits || chain != null -> p.accent; copiedNeeded -> Color.parseColor("#16A34A"); else -> Color.parseColor("#DB2777") })
                         setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
                         setPadding(0, dp(3), 0, 0)
                     })
@@ -821,7 +887,13 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             if (pair.size == 1) row.addView(View(this@VerboIme), LinearLayout.LayoutParams(0, 1, 1f).apply { setMargins(dp(3), dp(3), dp(3), dp(3)) })
             grid.addView(row)
         }
-        addView(android.widget.ScrollView(this@VerboIme).apply { addView(grid) }, LinearLayout.LayoutParams(-1, 0, 1f))
+        addView(android.widget.ScrollView(this@VerboIme).apply {
+            isVerticalScrollBarEnabled = true
+            addView(grid)
+        }, LinearLayout.LayoutParams(-1, 0, 1f))
+        val foot = LinearLayout(this@VerboIme).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(2), dp(4), 0, 0) }
+        foot.addView(iconButton(R.drawable.ic_globe, "Languages", p.muted) { showLanguages() }, LinearLayout.LayoutParams(dp(36), dp(36)))
+        addView(foot)
     }
 
     /** Runs a trigger's skill on the copied message and shows the answer as a card. */
@@ -1554,12 +1626,12 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
 
     // ---------- the panel that replaces the keys ----------
 
-    private fun showPanel(fill: LinearLayout.() -> Unit) {
+    private fun showPanel(minHeight: Int = dp(250), fill: LinearLayout.() -> Unit) {
         val box = panel ?: return
         box.removeAllViews()
         // Same height as the keys and strip it replaces, so the app above doesn't jump.
         val height = typingViews.sumOf { it.height }
-        box.layoutParams = box.layoutParams.apply { this.height = maxOf(height, dp(250)) }
+        box.layoutParams = box.layoutParams.apply { this.height = maxOf(height, minHeight) }
         box.gravity = Gravity.TOP
         box.fill()
         typingViews.forEach { it.visibility = View.GONE }

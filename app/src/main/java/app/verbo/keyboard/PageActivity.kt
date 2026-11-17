@@ -1891,9 +1891,6 @@ class PageActivity : Activity() {
     private fun wheelTitle(id: String) =
         store.skills.firstOrNull { "skill:" + it.name == id }?.let { (it.emoji + "  " + it.name).trim() } ?: wheelLabel(id)
 
-    private fun wheelOptions(): List<Pair<String, String>> =
-        Store.WHEEL_TOOLS + store.skills.map { ("skill:" + it.name) to (it.emoji + "  " + it.name).trim() } + Apps.ALL.map { Apps.id(it) to it.name }
-
     /** The wheel is full: pick which current shortcut gives up its slot to [newId]. */
     private fun replaceOnWheel(newId: String) {
         val now = store.wheel
@@ -1915,89 +1912,290 @@ class PageActivity : Activity() {
         else -> Apps.byId(id)?.brand?.first ?: R.drawable.ic_zap
     }
 
-    private fun smallButton(icon: Int, description: String, enabled: Boolean = true, onTap: () -> Unit) =
-        ui.icon(icon, 20, if (enabled) ui.ink else Color.parseColor("#B9B9C6")).apply {
-            setPadding(ui.dp(8), ui.dp(8), ui.dp(8), ui.dp(8))
-            layoutParams = LinearLayout.LayoutParams(ui.dp(38), ui.dp(38))
-            contentDescription = description
-            if (enabled) { background = ui.ripple(null, 19); setOnClickListener { onTap() } }
+    /** The round gradient orb a shortcut wears on the wheel, in the Add to Wheel sheet and on act cards. */
+    private fun wheelArt(id: String): android.graphics.drawable.Drawable {
+        val tool = when (id) {
+            "ai" -> SkillArt(this, R.drawable.ic_sparkles, Color.parseColor("#7DD3FC"), Color.parseColor("#2563EB"))
+            "translate" -> SkillArt(this, R.drawable.ic_globe, Color.parseColor("#22D3EE"), Color.parseColor("#0891B2"))
+            "auto" -> SkillArt(this, R.drawable.ic_auto_translate, Color.parseColor("#38BDF8"), Color.parseColor("#2563EB"))
+            "rewrite" -> SkillArt(this, R.drawable.ic_pencil_line, Color.parseColor("#60A5FA"), Color.parseColor("#2563EB"))
+            "meet" -> SkillArt(this, R.drawable.ic_video, Color.parseColor("#818CF8"), Color.parseColor("#4F46E5"))
+            "voice" -> SkillArt(this, R.drawable.ic_mic, Color.parseColor("#C084FC"), Color.parseColor("#7C3AED"))
+            "clips" -> SkillArt(this, R.drawable.ic_clipboard, Color.parseColor("#F472B6"), Color.parseColor("#DB2777"))
+            else -> null
         }
+        if (tool != null) return tool.asOrb()
+        val skill = store.skills.firstOrNull { "skill:" + it.name == id }
+        if (skill != null) return Art.skill(this, skill.name, skill.category).asOrb()
+        val act = Acts.BUILTIN.firstOrNull { "skill:" + it.name == id }
+        if (act != null) return (if (act.needsCopied) SkillArt(this, R.drawable.ic_file_text, Color.parseColor("#4ADE80"), Color.parseColor("#16A34A"))
+        else SkillArt(this, R.drawable.ic_sparkles, Color.parseColor("#C084FC"), Color.parseColor("#9333EA"))).asOrb()
+        val app = Apps.byId(id)
+        return if (app != null) SkillArt(this, app.brand.first, app.brand.second, app.brand.second).asOrb()
+        else SkillArt(this, R.drawable.ic_zap, Color.parseColor("#C084FC"), Color.parseColor("#9333EA")).asOrb()
+    }
+
+    private fun wheelItems(): List<String> {
+        val skills = store.skills
+        return store.wheel.filter { id ->
+            Store.WHEEL_TOOLS.any { it.first == id } || skills.any { "skill:" + it.name == id } ||
+                Acts.BUILTIN.any { "skill:" + it.name == id } || Apps.byId(id) != null
+        }
+    }
 
     private fun wheelPage(column: LinearLayout) {
-        column.addView(ui.topBar("Shortcut wheel", "Your favourite tools, one slide away"))
-        note(column, "Hold the wide bar and the wheel opens under your finger. Slide to a shortcut and let go to run it; let go in the middle to cancel.")
-        column.addView(ui.rows(ui.row(R.drawable.ic_circle_dashed, "Hold the bar for the wheel", "When off, holding the bar asks the assistant straight away", ui.toggle(store.wheelOn) { store.wheelOn = it })))
+        val bar = android.widget.FrameLayout(this)
+        bar.addView(ui.icon(R.drawable.ic_arrow_left, 20, ui.ink).apply {
+            background = ui.ripple(ui.shape(ui.card, 20), 20)
+            setPadding(ui.dp(10), ui.dp(10), ui.dp(10), ui.dp(10))
+            layoutParams = android.widget.FrameLayout.LayoutParams(ui.dp(40), ui.dp(40)).apply { setMargins(0, ui.dp(4), 0, 0) }
+            contentDescription = "Back"
+            setOnClickListener { finish() }
+        })
+        bar.addView(ui.text("Shortcut wheel", 17f, bold = true).apply { gravity = Gravity.CENTER },
+            android.widget.FrameLayout.LayoutParams(-1, -2, Gravity.CENTER))
+        column.addView(bar, LinearLayout.LayoutParams(-1, ui.dp(48)))
 
-        val skills = store.skills
-        // Skills that were renamed or deleted drop off the wheel.
-        val items = store.wheel.filter { id -> Store.WHEEL_TOOLS.any { it.first == id } || skills.any { "skill:" + it.name == id } || Apps.byId(id) != null }
-        fun set(next: List<String>) { store.wheel = next; render() }
+        column.addView(ui.text("How it works", 13f, ui.muted).apply { setPadding(ui.dp(2), ui.dp(14), 0, ui.dp(8)) })
+        val how = ui.cardBox().apply { setPadding(ui.dp(16), ui.dp(14), ui.dp(16), ui.dp(16)) }
+        how.addView(ui.text("Hold the space bar to open the wheel", 15f, bold = true))
+        how.addView(ui.text("Slide to choose, release to run", 13f, ui.muted).apply { setPadding(0, ui.dp(3), 0, ui.dp(12)) })
+        how.addView(KeyboardPreview(this), LinearLayout.LayoutParams(-1, ui.dp(170)))
+        column.addView(how)
 
-        column.addView(ui.section(R.drawable.ic_layers, "On the wheel (${items.size} of ${Store.MAX_WHEEL})"))
-        note(column, "Tap a shortcut to change it into another tool or skill. The arrows move it along the wheel, × removes it.")
-        if (items.isEmpty()) note(column, "Nothing yet. Add shortcuts from the lists below.")
-        else column.addView(ui.rows(*items.mapIndexed { i, id ->
-            val controls = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-            controls.addView(smallButton(R.drawable.ic_arrow_left, "Move left on the wheel", i > 0) {
-                set(items.toMutableList().apply { add(i - 1, removeAt(i)) })
+        column.addView(ui.text("Manage Wheel", 13f, ui.muted).apply { setPadding(ui.dp(2), ui.dp(16), 0, ui.dp(8)) })
+        val manage = ui.cardBox().apply { setPadding(ui.dp(14), ui.dp(14), ui.dp(14), ui.dp(12)) }
+        manage.addView(ui.text("Hold to reorder or remove", 15f, bold = true).apply { setPadding(ui.dp(2), 0, 0, ui.dp(14)) })
+        val items = wheelItems()
+        val slots = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        for (i in 0 until Store.MAX_WHEEL) {
+            val id = items.getOrNull(i)
+            val cell = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL }
+            val orb = SlotOrb(this).apply {
+                layoutParams = LinearLayout.LayoutParams(ui.dp(46), ui.dp(46))
+                if (id != null) {
+                    background = wheelArt(id)
+                    contentDescription = "Wheel slot ${i + 1}: ${wheelLabel(id)}"
+                    setOnClickListener { openWheelSheet(i) }
+                    setOnLongClickListener { startWheelDrag(i, this); true }
+                    drag = { e -> wheelDragTouch(this, e) }
+                } else {
+                    background = android.graphics.drawable.GradientDrawable().apply {
+                        shape = android.graphics.drawable.GradientDrawable.OVAL
+                        setColor(Color.TRANSPARENT)
+                        setStroke(ui.dp(1), Color.parseColor("#D9D9E2"), ui.dp(4).toFloat(), ui.dp(3).toFloat())
+                    }
+                    addView(ui.icon(R.drawable.ic_plus, 16, Color.parseColor("#B9B9C6")),
+                        android.widget.FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
+                    contentDescription = "Add to the wheel"
+                    setOnClickListener { openWheelSheet(null) }
+                }
+            }
+            cell.addView(orb)
+            cell.addView(ui.text(if (id != null) wheelLabel(id) else "", 10.5f, ui.muted).apply {
+                gravity = Gravity.CENTER
+                maxLines = 2
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                setPadding(0, ui.dp(6), 0, 0)
+                layoutParams = LinearLayout.LayoutParams(-1, -2)
             })
-            controls.addView(smallButton(R.drawable.ic_arrow_right, "Move right on the wheel", i < items.size - 1) {
-                set(items.toMutableList().apply { add(i + 1, removeAt(i)) })
-            })
-            controls.addView(smallButton(R.drawable.ic_x, "Remove from the wheel") { set(items - id) })
-            ui.row(wheelIcon(id), wheelTitle(id), if (i == 0) "Leftmost" else if (i == items.size - 1) "Rightmost" else null, controls) {
-                val options = wheelOptions()
-                AlertDialog.Builder(this).setTitle("Change ${wheelTitle(id)} to…")
-                    .setItems(options.map { it.second }.toTypedArray()) { _, which ->
-                        val nid = options[which].first
-                        if (nid == id) return@setItems
-                        val next = items.toMutableList()
-                        val at = next.indexOf(nid)
-                        if (at >= 0) next[at] = id
-                        next[i] = nid
-                        set(next)
-                    }.show()
-            }.also { row -> Apps.byId(id)?.let { (row.getChildAt(0) as android.widget.ImageView).setColorFilter(it.brand.second) } }
-        }.toTypedArray()))
-
-        fun addRows(ids: List<String>, subtitle: (String) -> String?) = ids.filter { it !in items }.map { id ->
-            ui.row(wheelIcon(id), wheelTitle(id), subtitle(id), smallButton(R.drawable.ic_plus, "Add to the wheel") {
-                if (items.size >= Store.MAX_WHEEL) replaceOnWheel(id) else set(items + id)
-            })
+            slots.addView(cell, LinearLayout.LayoutParams(0, -2, 1f))
         }
-        val tools = addRows(Store.WHEEL_TOOLS.map { it.first }) { id ->
-            when (id) {
-                "ai" -> "Treats what you typed as a request"
-                "translate" -> "Pick a language, or all of yours at once"
-                "auto" -> "Keep translating every message into a language you pick"
-                "rewrite" -> "Pick a style from your Edit skills"
-                "meet" -> "Drops a new meeting link into the message"
-                "voice" -> "Dictate or speak a request"
-                else -> "Paste saved snippets"
+        manage.addView(slots)
+        column.addView(manage)
+        column.addView(ui.rows(ui.row(R.drawable.ic_circle_dashed, "Hold the bar for the wheel", "When off, holding the bar asks the assistant straight away", ui.toggle(store.wheelOn) { store.wheelOn = it })))
+        column.addView(ui.button("New skill", R.drawable.ic_plus) { editSkill(-1, null) }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(8) })
+    }
+
+    // ---------- holding a slot: drag it along the wheel, or onto the pink bar to remove it ----------
+
+    private class WheelDrag(val id: String, val from: Int, val ghost: View, val bar: View,
+        val frame: android.widget.FrameLayout, val nav: View?, val slots: LinearLayout)
+
+    /** A wheel slot: taps and holds behave normally until a drag is in flight, then it follows the finger. */
+    private class SlotOrb(context: android.content.Context) : android.widget.FrameLayout(context) {
+        var drag: ((android.view.MotionEvent) -> Boolean)? = null
+        override fun onTouchEvent(e: android.view.MotionEvent): Boolean = drag?.invoke(e) ?: super.onTouchEvent(e)
+    }
+
+    private var wheelDrag: WheelDrag? = null
+
+    private fun startWheelDrag(index: Int, orb: View) {
+        if (wheelDrag != null) return
+        val id = wheelItems().getOrNull(index) ?: return
+        val frame = findViewById<android.view.ViewGroup>(android.R.id.content).getChildAt(0) as android.widget.FrameLayout
+        val nav = frame.getChildAt(1)
+        val size = ui.dp(52)
+        val ghost = android.widget.ImageView(this).apply {
+            setImageDrawable(wheelArt(id))
+            layoutParams = android.widget.FrameLayout.LayoutParams(size, size)
+        }
+        ghost.measure(View.MeasureSpec.makeMeasureSpec(size, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(size, View.MeasureSpec.EXACTLY))
+        ghost.layout(0, 0, size, size)
+        val bar = LinearLayout(this).apply {
+            gravity = Gravity.CENTER
+            setBackgroundColor(Color.parseColor("#FBE9EC"))
+            addView(ui.icon(R.drawable.ic_trash_2, 18, Color.parseColor("#DC2626")).apply { (layoutParams as LinearLayout.LayoutParams).rightMargin = ui.dp(8) })
+            addView(ui.text("Drag here to remove", 14f, Color.parseColor("#DC2626"), bold = true))
+        }
+        frame.addView(bar, android.widget.FrameLayout.LayoutParams(-1, ui.dp(52), Gravity.BOTTOM))
+        nav?.visibility = View.GONE
+        orb.alpha = 0.35f
+        (window.decorView as android.view.ViewGroup).overlay.add(ghost)
+        wheelDrag = WheelDrag(id, index, ghost, bar, frame, nav, orb.parent.parent as LinearLayout)
+    }
+
+    private fun slotAt(x: Float, y: Float, drag: WheelDrag): Int? {
+        for (i in 0 until drag.slots.childCount) {
+            val orb = (drag.slots.getChildAt(i) as LinearLayout).getChildAt(0)
+            val at = IntArray(2)
+            orb.getLocationOnScreen(at)
+            if (x >= at[0] - ui.dp(4) && x <= at[0] + orb.width + ui.dp(4) && y >= at[1] - ui.dp(24) && y <= at[1] + orb.height + ui.dp(30)) return i
+        }
+        return null
+    }
+
+    private fun overRemoveBar(y: Float, drag: WheelDrag): Boolean {
+        val at = IntArray(2)
+        drag.bar.getLocationOnScreen(at)
+        return y >= at[1]
+    }
+
+    private fun wheelDragTouch(v: View, e: android.view.MotionEvent): Boolean {
+        val drag = wheelDrag ?: return false
+        val at = IntArray(2)
+        v.getLocationOnScreen(at)
+        val x = at[0] + e.x
+        val y = at[1] + e.y
+        val decor = IntArray(2)
+        window.decorView.getLocationOnScreen(decor)
+        when (e.actionMasked) {
+            android.view.MotionEvent.ACTION_MOVE -> {
+                drag.ghost.translationX = x - decor[0] - drag.ghost.width / 2f
+                drag.ghost.translationY = y - decor[1] - drag.ghost.height / 2f
+                val over = slotAt(x, y, drag)
+                for (i in 0 until drag.slots.childCount) {
+                    val orb = (drag.slots.getChildAt(i) as LinearLayout).getChildAt(0)
+                    val scale = if (i == over && i != drag.from) 1.15f else 1f
+                    orb.scaleX = scale
+                    orb.scaleY = scale
+                }
+            }
+            android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                val over = slotAt(x, y, drag)
+                val items = wheelItems().toMutableList()
+                val next = when {
+                    e.actionMasked == android.view.MotionEvent.ACTION_CANCEL -> items
+                    overRemoveBar(y, drag) -> items.filter { it != drag.id }.toMutableList()
+                    over != null && over != drag.from -> items.apply { add(over, removeAt(drag.from)) }
+                    else -> items
+                }
+                (window.decorView as android.view.ViewGroup).overlay.remove(drag.ghost)
+                drag.frame.removeView(drag.bar)
+                drag.nav?.visibility = View.VISIBLE
+                wheelDrag = null
+                store.wheel = next
+                render()
             }
         }
-        val mine = addRows(skills.map { "skill:" + it.name }) { id -> skills.firstOrNull { "skill:" + it.name == id }?.instruction }
-        mine.forEach { row -> ((row.getChildAt(1) as LinearLayout).getChildAt(1) as? android.widget.TextView)?.apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END } }
-        val apps = Apps.ALL.filter { Apps.id(it) !in items }.map { app ->
-            ui.brandRow(app.brand, app.name, app.blurb, smallButton(R.drawable.ic_plus, "Add to the wheel") {
-                val id = Apps.id(app)
-                if (items.size >= Store.MAX_WHEEL) replaceOnWheel(id) else set(items + id)
-            })
+        return true
+    }
+
+    // ---------- the Add to Wheel sheet ----------
+
+    private fun openWheelSheet(changeIndex: Int?) {
+        val dialog = android.app.Dialog(this)
+        dialog.window?.apply {
+            setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
+            setGravity(Gravity.BOTTOM)
+            setLayout(-1, -2)
+            setDimAmount(0.45f)
         }
-        if (tools.isNotEmpty()) {
-            column.addView(ui.section(R.drawable.ic_circle_dashed, "Add a tool"))
-            column.addView(ui.rows(*tools.toTypedArray()))
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(ui.card)
+                val r = ui.dp(24).toFloat()
+                cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
+            }
+            setPadding(ui.dp(20), ui.dp(10), ui.dp(20), ui.dp(24))
         }
-        if (apps.isNotEmpty()) {
-            column.addView(ui.section(R.drawable.ic_box, "Add an app"))
-            note(column, "Keep the apps you use daily on the wheel. Each opens with its own icon and does its job in one slide.")
-            column.addView(ui.rows(*apps.toTypedArray()))
+        box.addView(View(this).apply { background = ui.shape(Color.parseColor("#C9C9D4"), 2) },
+            LinearLayout.LayoutParams(ui.dp(40), ui.dp(4)).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = ui.dp(16) })
+        box.addView(ui.text("Add to Wheel", 18f, bold = true))
+        box.addView(ui.text("Choose a new shortcut", 13f, ui.muted).apply { setPadding(0, ui.dp(3), 0, ui.dp(14)) })
+        val segment = LinearLayout(this).apply {
+            background = ui.shape(Color.parseColor("#ECECF1"), 22)
+            setPadding(ui.dp(4), ui.dp(4), ui.dp(4), ui.dp(4))
         }
-        if (mine.isNotEmpty()) {
-            column.addView(ui.section(R.drawable.ic_sparkles, "Add one of my skills"))
-            column.addView(ui.rows(*mine.toTypedArray()))
+        val list = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = ui.shape(ui.card, 14, ui.line)
         }
-        column.addView(ui.button("New skill", R.drawable.ic_plus) { editSkill(-1, null) }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = ui.dp(8) })
+        var tab = "acts"
+        fun paint() {
+            segment.removeAllViews()
+            listOf("acts" to "My Acts", "tools" to "Verbo tools").forEach { (key, label) ->
+                segment.addView(ui.text(label, 14f, if (tab == key) ui.ink else ui.muted, bold = tab == key).apply {
+                    gravity = Gravity.CENTER
+                    background = if (tab == key) ui.shape(ui.card, 18) else null
+                    setPadding(0, ui.dp(9), 0, ui.dp(9))
+                    setOnClickListener { tab = key; paint() }
+                }, LinearLayout.LayoutParams(0, -2, 1f))
+            }
+            list.removeAllViews()
+            val items = wheelItems()
+            val ids = if (tab == "acts")
+                store.skills.map { "skill:" + it.name } + Acts.BUILTIN.filter { b -> store.skills.none { it.name.equals(b.name, true) } }.map { "skill:" + it.name }
+            else Store.WHEEL_TOOLS.map { it.first } + Apps.ALL.map { Apps.id(it) }
+            ids.forEachIndexed { i, id ->
+                if (i > 0) list.addView(View(this).apply {
+                    setBackgroundColor(ui.line)
+                    layoutParams = LinearLayout.LayoutParams(-1, ui.dp(1)).apply { leftMargin = ui.dp(60) }
+                })
+                val on = id in items
+                val grey = on && changeIndex == null
+                list.addView(LinearLayout(this).apply {
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(ui.dp(14), ui.dp(12), ui.dp(14), ui.dp(12))
+                    background = ui.ripple(null, 14)
+                    addView(android.widget.ImageView(this@PageActivity).apply {
+                        setImageDrawable(wheelArt(id))
+                        layoutParams = LinearLayout.LayoutParams(ui.dp(34), ui.dp(34))
+                    })
+                    addView(ui.text(wheelLabel(id), 15f, if (grey) ui.muted else ui.ink, bold = true).apply {
+                        setPadding(ui.dp(12), 0, 0, 0)
+                        maxLines = 1
+                        ellipsize = android.text.TextUtils.TruncateAt.END
+                    }, LinearLayout.LayoutParams(0, -2, 1f))
+                    addView(ui.icon(R.drawable.ic_plus, 18, if (grey) Color.parseColor("#D9D9E2") else ui.muted))
+                    setOnClickListener {
+                        if (grey) { ui.toast("Already on the wheel"); return@setOnClickListener }
+                        val now = wheelItems().toMutableList()
+                        if (changeIndex != null) {
+                            val at = now.indexOf(id)
+                            if (at >= 0 && at != changeIndex) now[at] = now[changeIndex]
+                            if (at != changeIndex) now[changeIndex] = id
+                        } else if (now.size >= Store.MAX_WHEEL) {
+                            dialog.dismiss()
+                            replaceOnWheel(id)
+                            return@setOnClickListener
+                        } else now.add(id)
+                        store.wheel = now
+                        dialog.dismiss()
+                        render()
+                    }
+                })
+            }
+        }
+        paint()
+        box.addView(segment, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = ui.dp(14) })
+        box.addView(android.widget.ScrollView(this).apply {
+            isVerticalScrollBarEnabled = false
+            addView(list)
+        }, LinearLayout.LayoutParams(-1, ui.dp(320)))
+        dialog.setContentView(box)
+        dialog.show()
     }
 
     // ---------- skins ----------
