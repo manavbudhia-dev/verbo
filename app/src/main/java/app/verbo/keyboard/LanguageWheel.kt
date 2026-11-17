@@ -30,11 +30,14 @@ class LanguageWheel(a: Context) : View(a) {
     /** Every language the compass can spin through (wider than [languages]). */
     var all: List<String> = emptyList()
     var onCompassPick: (Int) -> Unit = {}
+    /** Each icon the compass locks onto, for a soft tick of feedback. */
+    var onTurn: () -> Unit = {}
 
     /** Open straight into the 360° compass (double-press space). */
     fun spin() {
         compass = true
-        compassRot = 0f
+        spin.reset()
+        compassFresh = true
         pick = -1
         invalidate()
     }
@@ -42,8 +45,12 @@ class LanguageWheel(a: Context) : View(a) {
     /** True while the 360° compass is showing instead of the fan. */
     val spinning: Boolean get() = compass
 
+    /** Where the compass currently sits, in degrees; always a whole icon once it locks. */
+    val compassRotation: Float get() = spin.rot
+
     private var compass = false
-    private var compassRot = 0f
+    private val spin = CompassSpin({ invalidate() }, { onTurn() })
+    private var compassFresh = false
     private var compassLastAngle = 0f
     private var wx = 0f
     private var wy = 0f
@@ -104,7 +111,7 @@ class LanguageWheel(a: Context) : View(a) {
     private val bezelHold = Runnable {
         if (compass || embedded || !onBezel(wx, wy)) return@Runnable
         compass = true
-        compassRot = 0f
+        spin.reset()
         compassLastAngle = screenAngle(wx, wy)
         pick = -1
         invalidate()
@@ -117,11 +124,15 @@ class LanguageWheel(a: Context) : View(a) {
                 wy = event.y
                 if (compass) {
                     val a = screenAngle(wx, wy)
-                    var delta = a - compassLastAngle
-                    if (delta > 180) delta -= 360 else if (delta < -180) delta += 360
-                    compassRot += delta
-                    compassLastAngle = a
-                    invalidate()
+                    if (compassFresh) {
+                        compassLastAngle = a
+                        compassFresh = false
+                    } else {
+                        var delta = a - compassLastAngle
+                        if (delta > 180) delta -= 360 else if (delta < -180) delta += 360
+                        spin.drag(delta)
+                        compassLastAngle = a
+                    }
                 } else {
                     handler.removeCallbacks(bezelHold)
                     if (!embedded && onBezel(wx, wy)) handler.postDelayed(bezelHold, 300)
@@ -131,7 +142,8 @@ class LanguageWheel(a: Context) : View(a) {
             MotionEvent.ACTION_UP -> {
                 handler.removeCallbacks(bezelHold)
                 if (compass) {
-                    val cand = WheelLook.compassCandidate(compassRot, WheelLook.COMPASS_SLOTS, all.size)
+                    spin.settle()
+                    val cand = WheelLook.compassCandidate(spin.rot, WheelLook.COMPASS_SLOTS, all.size)
                     val dist = kotlin.math.hypot(wx - ccx, wy - ccy)
                     compass = false
                     pick = -1
@@ -194,11 +206,12 @@ class LanguageWheel(a: Context) : View(a) {
     private fun drawCompass(c: Canvas) {
         val k = WheelLook.COMPASS_SLOTS
         val size = all.size
-        WheelLook.compassDial(c, ccx, ccy, cr, compassRot, d)
-        val cand = WheelLook.compassCandidate(compassRot, k, size)
+        val rot = spin.rot
+        WheelLook.compassDial(c, ccx, ccy, cr, rot, d)
+        val cand = WheelLook.compassCandidate(rot, k, size)
         if (size > 0) for (j in 0 until k) {
-            val lang = all[WheelLook.compassIndex(j, k, compassRot, size)]
-            val (x, y) = WheelLook.compassPos(ccx, ccy, cr, j, k, compassRot)
+            val lang = all[WheelLook.compassIndex(j, k, rot, size)]
+            val (x, y) = WheelLook.compassPos(ccx, ccy, cr, j, k, rot)
             val isCand = j == k / 2
             WheelLook.tile(c, x, y, dp(if (isCand) 19f else 17f), d)
             if (isCand) WheelLook.ring(c, x, y, dp(22f), blue, dp(2.5f))

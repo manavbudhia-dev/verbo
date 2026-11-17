@@ -790,6 +790,95 @@ class KeyboardTest {
         assertTrue("releasing runs the spun-to tool: the auto-translate picker", wheelIn(root)!!.autoMode)
     }
 
+    /** A point on the compass rim at [deg] degrees, for flicking the language dial. */
+    private fun compassAt(wheel: LanguageWheel, deg: Double): Triple<Int, Float, Float> {
+        val ccx = wheel.width / 2f
+        val ccy = wheel.height * 0.60f
+        val cr = minOf(wheel.width * 0.44f, wheel.height * 0.40f)
+        val a = Math.toRadians(deg)
+        return Triple(0, ccx + (cr * 0.9f * Math.cos(a)).toFloat(), ccy + (cr * 0.9f * Math.sin(a)).toFloat())
+    }
+
+    private fun showLanguages(auto: Boolean, compass: Boolean) {
+        val show = VerboIme::class.java.getDeclaredMethod("showLanguages", Boolean::class.javaPrimitiveType, Boolean::class.javaPrimitiveType)
+        show.isAccessible = true
+        show.invoke(ime, auto, compass)
+    }
+
+    @Test
+    fun compassTurnsOneIconPerFlickAndLocksOnIt() {
+        showLanguages(false, true)
+        val wheel = wheelIn(root)!!
+        layout(root)
+        assertTrue(wheel.spinning)
+        touch(wheel, MotionEvent.ACTION_MOVE, listOf(compassAt(wheel, 0.0)))
+        touch(wheel, MotionEvent.ACTION_MOVE, listOf(compassAt(wheel, 40.0)))
+        assertEquals("a flick queues a turn instead of jumping", 0f, wheel.compassRotation, 0.001f)
+        org.robolectric.shadows.ShadowLooper.idleMainLooper(120, java.util.concurrent.TimeUnit.MILLISECONDS)
+        assertTrue("the icon eases over slowly", wheel.compassRotation > 0f && wheel.compassRotation < 36f)
+        org.robolectric.shadows.ShadowLooper.idleMainLooper(600, java.util.concurrent.TimeUnit.MILLISECONDS)
+        assertEquals("one flick locks exactly one icon", 36f, wheel.compassRotation, 0.001f)
+        touch(wheel, MotionEvent.ACTION_MOVE, listOf(compassAt(wheel, 80.0)))
+        org.robolectric.shadows.ShadowLooper.idleMainLooper(700, java.util.concurrent.TimeUnit.MILLISECONDS)
+        assertEquals("a second flick locks the next icon", 72f, wheel.compassRotation, 0.001f)
+        touch(wheel, MotionEvent.ACTION_UP, listOf(compassAt(wheel, 80.0)))
+        assertEquals("releasing runs the locked language and closes the compass", null, wheelIn(root))
+    }
+
+    @Test
+    fun compassPickSavesTheLanguageOntoTheTranslateWheel() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        showLanguages(false, true)
+        val wheel = wheelIn(root)!!
+        layout(root)
+        touch(wheel, MotionEvent.ACTION_MOVE, listOf(compassAt(wheel, 0.0)))
+        touch(wheel, MotionEvent.ACTION_MOVE, listOf(compassAt(wheel, 180.0)))
+        touch(wheel, MotionEvent.ACTION_UP, listOf(compassAt(wheel, 180.0)))
+        assertEquals("the spun-to language is saved first", "Arabic", store.languages.first())
+        assertTrue("the old languages stay", store.languages.containsAll(Store.DEFAULT_LANGUAGES))
+        showLanguages(false, false)
+        val fan = wheelIn(root)!!
+        assertEquals("the translate wheel now leads with it", "Arabic", fan.languages.first())
+        assertEquals(5, fan.languages.size)
+    }
+
+    @Test
+    fun theWheelShowsFiveOrSixFlagsAsChosen() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        val a = Robolectric.buildActivity(PageActivity::class.java, android.content.Intent().putExtra("page", "languages")).setup().get()
+        byDesc(content(a), "Show 6 languages")!!.performClick()
+        assertEquals(6, store.wheelLanguageCount)
+        assertEquals("the settings wheel grows to six flags", 6, wheelIn(content(a))!!.languages.size)
+        byDesc(content(a), "Show 5 languages")!!.performClick()
+        assertEquals(5, store.wheelLanguageCount)
+        // The keyboard's translate wheel follows the same choice, padding spare slots with suggestions.
+        store.wheelLanguageCount = 6
+        showLanguages(false, false)
+        assertEquals("spare slots fill with suggestions up to six", 6, wheelIn(root)!!.languages.size)
+        store.wheelLanguageCount = 5
+    }
+
+    @Test
+    fun homeSearchJumpsStraightToAnyService() {
+        MainActivity.tab = "home"
+        val main = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+        clickLabel(content(main), "Search skills, actions, apps, settings…")
+        val intent = org.robolectric.Shadows.shadowOf(main).nextStartedActivity
+        assertEquals("search", intent.getStringExtra("page"))
+        val a = Robolectric.buildActivity(PageActivity::class.java, intent).setup().get()
+        val field = sheetFields(content(a) as ViewGroup).first()
+        field.setText("notion")
+        clickLabel(content(a), "Notion")
+        assertTrue("a skill of that name opens its editor", org.robolectric.Shadows.shadowOf(a).nextStartedActivity.getStringExtra("page")!!.startsWith("skill-edit:"))
+        field.setText("slack")
+        clickLabel(content(a), "Slack")
+        assertEquals("automate", org.robolectric.Shadows.shadowOf(a).nextStartedActivity.getStringExtra("page"))
+        field.setText("battery")
+        clickLabel(content(a), "Battery")
+        assertEquals("battery", org.robolectric.Shadows.shadowOf(a).nextStartedActivity.getStringExtra("page"))
+        MainActivity.tab = "home"
+    }
+
     @Test
     fun settingsShowsAdvancedSettingsInline() {
         MainActivity.tab = "settings"
@@ -1004,6 +1093,7 @@ class KeyboardTest {
         val cr = minOf(cmpKeys.width * 0.42f, cmpKeys.height * 0.40f)
         val sa = Math.toRadians(-18.0)
         touch(cmpKeys, MotionEvent.ACTION_MOVE, listOf(Triple(0, cmpKeys.width / 2f + (cr * 0.9f * Math.cos(sa)).toFloat(), cmpKeys.height * 0.56f + (cr * 0.9f * Math.sin(sa)).toFloat())))
+        org.robolectric.shadows.ShadowLooper.idleMainLooper(220, java.util.concurrent.TimeUnit.MILLISECONDS)
         layout(cmpRoot)
         snap(cmpRoot, "wheel-compass")
         val cmpCentre = Triple(0, cmpKeys.width / 2f, cmpKeys.height * 0.56f)
@@ -1085,6 +1175,17 @@ class KeyboardTest {
             s.measure(View.MeasureSpec.makeMeasureSpec(1080, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(h, View.MeasureSpec.EXACTLY))
             s.layout(0, 0, 1080, h)
             snap(s, "page-" + page.replace(":", "-"))
+        }
+        // The search page mid-query: one field that reaches apps, tools and settings alike.
+        run {
+            val a = Robolectric.buildActivity(PageActivity::class.java, android.content.Intent().putExtra("page", "search")).setup().get()
+            val s = content(a) as ViewGroup
+            sheetFields(s).first().setText("trans")
+            s.getChildAt(0).measure(View.MeasureSpec.makeMeasureSpec(1080, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
+            val h = maxOf(s.getChildAt(0).measuredHeight, 900)
+            s.measure(View.MeasureSpec.makeMeasureSpec(1080, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(h, View.MeasureSpec.EXACTLY))
+            s.layout(0, 0, 1080, h)
+            snap(s, "page-search")
         }
     }
 }

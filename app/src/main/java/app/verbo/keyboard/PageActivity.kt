@@ -76,6 +76,7 @@ class PageActivity : Activity() {
             page == "shortcuts" -> shortcutsPage(column)
             page == "privacy" -> privacyPage(column)
             page == "languages" || page == "translate" -> languagesPage(column)
+            page == "search" -> searchPage(column)
             page == "ai" -> aiPage(column)
             page == "typing" -> typingPage(column)
             page == "dashboard" -> dashboardPage(column)
@@ -1315,6 +1316,7 @@ class PageActivity : Activity() {
         page == "usage" || page == "dashboard" -> "activity"
         page == "triggers" || page == "chains" || page == "copysettings" -> "actions"
         page == "shelves" || page == "prompts" || page.startsWith("category:") || page.startsWith("skill-") -> "skills"
+        page == "search" -> "home"
         else -> "settings"
     }
 
@@ -1371,13 +1373,138 @@ class PageActivity : Activity() {
 
     // ---------- languages ----------
 
+    // ---------- search: one field that reaches every skill, action, app and setting ----------
+
+    private var searchQuery = ""
+    private var searchResults: LinearLayout? = null
+
+    private class Hit(val icon: Int, val title: String, val sub: String, val tint: Int = 0, val go: () -> Unit)
+
+    private fun searchIndex(): List<Hit> {
+        val hits = ArrayList<Hit>()
+        store.skills.forEachIndexed { i, s ->
+            hits += Hit(R.drawable.ic_sparkles, s.name, if (s.key.isNotEmpty()) "Skill · hold ${s.key.uppercase()} on the keyboard" else "Skill · tap to edit") { go("skill-edit:$i") }
+        }
+        store.triggers.forEachIndexed { i, t ->
+            hits += Hit(R.drawable.ic_zap, t.keyword, "Auto action · runs ${t.skill}") { go("trigger-edit:$i") }
+        }
+        Store.WHEEL_TOOLS.forEach { (id, name) ->
+            val translate = id == "translate" || id == "auto"
+            hits += Hit(wheelIcon(id), name, if (translate) "Translate wheel and saved languages" else "Shortcut wheel tool") { go(if (translate) "languages" else "wheel") }
+        }
+        Apps.ALL.forEach { app -> hits += Hit(app.brand.first, app.name, app.blurb, app.brand.second) { go("automate") } }
+        fun page(icon: Int, title: String, sub: String, target: String) { hits += Hit(icon, title, sub) { go(target) } }
+        page(R.drawable.ic_languages, "Languages", "Translate wheel, flags and auto-translate", "languages")
+        page(R.drawable.ic_layers, "Shortcut wheel", "The six shortcuts under the wide bar", "wheel")
+        page(R.drawable.ic_sparkles, "AI service", "API key, model and provider", "ai")
+        page(R.drawable.ic_box, "Connections", "Notion, Slack, GitHub and other apps", "automate")
+        page(R.drawable.ic_zap, "Auto actions", "Suggestions for copied text", "triggers")
+        page(R.drawable.ic_keyboard, "Key actions", "What holding a letter does, per app", "keys")
+        page(R.drawable.ic_sun, "Skins & theme", "Colours, key style and size", "look")
+        page(R.drawable.ic_pencil_line, "Typing", "Corrections, suggestions and shortcuts", "typing")
+        page(R.drawable.ic_battery_charging, "Battery", "Battery Saver behaviour and power use", "battery")
+        page(R.drawable.ic_shield, "Privacy", "Data, permissions and usage", "privacy")
+        page(R.drawable.ic_book_open, "Remember", "What Verbo knows about you", "memory")
+        page(R.drawable.ic_link, "Chains", "Several acts in a row, as one act", "chains")
+        page(R.drawable.ic_list, "Templates", "Ready-made daily actions for your apps", "templates")
+        page(R.drawable.ic_clipboard, "Text shortcuts", "Type ;key and a space", "textshortcuts")
+        page(R.drawable.ic_globe, "Usage", "What Verbo spends, and what runs free", "usage")
+        page(R.drawable.ic_video, "Web dashboard", "Manage skills and connections in a browser", "dashboard")
+        page(R.drawable.ic_plus, "Create a skill", "Describe it and the assistant designs it", "create")
+        page(R.drawable.ic_keyboard, "Try the keyboard", "A safe field to test in", "try")
+        page(R.drawable.ic_check, "Setup guide", "Enable and choose Verbo", "welcome")
+        page(R.drawable.ic_book_open, "Skill library", "Ready-made skills to add", "shelves")
+        page(R.drawable.ic_sliders_horizontal, "Sound & vibration", "Tap an option to hear or feel it", "feedback")
+        page(R.drawable.ic_chevron_right, "Copy settings", "What happens when you copy a message", "copysettings")
+        return hits
+    }
+
+    private fun searchPage(column: LinearLayout) {
+        column.addView(ui.topBar("Search", "Jump straight to any skill, action, app or setting"))
+        val results = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        searchResults = results
+        val bar = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            background = ui.shape(ui.card, 16, ui.line)
+            setPadding(ui.dp(14), ui.dp(4), ui.dp(14), ui.dp(4))
+        }
+        bar.addView(ui.icon(R.drawable.ic_search, 20, ui.muted))
+        val field = android.widget.EditText(this).apply {
+            hint = "Try “translate”, “Notion”, “battery”…"
+            setText(searchQuery)
+            setTextColor(ui.ink)
+            setHintTextColor(ui.muted)
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 15f)
+            background = null
+            setSingleLine()
+            setPadding(ui.dp(10), ui.dp(10), ui.dp(10), ui.dp(10))
+            addTextChangedListener(object : android.text.TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun afterTextChanged(s: android.text.Editable?) {
+                    searchQuery = s?.toString() ?: ""
+                    fillSearch()
+                }
+            })
+        }
+        bar.addView(field, LinearLayout.LayoutParams(0, -2, 1f))
+        column.addView(bar, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = ui.dp(12) })
+        column.addView(results)
+        fillSearch()
+        field.requestFocus()
+    }
+
+    private fun fillSearch() {
+        val box = searchResults ?: return
+        box.removeAllViews()
+        val q = searchQuery.trim().lowercase()
+        val all = searchIndex()
+        fun rows(hits: List<Hit>) {
+            box.addView(ui.rows(*hits.map { h ->
+                ui.row(h.icon, h.title, h.sub, ui.chevron(), onTap = h.go).also { row ->
+                    if (h.tint != 0) (row.getChildAt(0) as android.widget.ImageView).setColorFilter(h.tint)
+                }
+            }.toTypedArray()))
+        }
+        if (q.isEmpty()) {
+            box.addView(ui.section(R.drawable.ic_zap, "Quick jumps"))
+            val quick = listOf("Translate", "Auto-translate", "Shortcut wheel", "Create a skill", "Connections", "Skins & theme", "Battery", "Setup guide")
+            rows(all.filter { it.title in quick })
+            box.addView(ui.section(R.drawable.ic_list, "Everything"))
+            rows(all)
+            return
+        }
+        val hits = all.filter { it.title.lowercase().contains(q) || it.sub.lowercase().contains(q) }
+        if (hits.isEmpty()) {
+            note(box, "Nothing matches “$searchQuery”. Try a skill name, an app like Notion, or a setting like “battery”.")
+            return
+        }
+        rows(hits)
+    }
+
     private fun languagesPage(column: LinearLayout) {
         column.addView(ui.topBar("Languages", "Typing layout and translate languages"))
         column.addView(ui.rows(ui.row(R.drawable.ic_keyboard, "English (US)", "Typing layout · QWERTY", ui.icon(R.drawable.ic_check, 20, ui.iconTint))))
         note(column, "English is the only typing layout so far. Skills and voice still work in other languages: the assistant answers in the language you write in.")
         column.addView(ui.section(R.drawable.ic_languages, "Translate into"))
-        note(column, "Slide to a flag and let go to add or remove that language. Your languages come first, just like the keyboard's Translate wheel; spare slots suggest new ones.")
-        val shown = (store.languages + Store.ALL_LANGUAGES.filter { it !in store.languages }).take(5)
+        note(column, "Slide to a flag and let go to add or remove that language. Your languages come first, just like the keyboard's Translate wheel; spare slots suggest new ones. On the keyboard, double-press space to spin through every language — whatever you pick is saved here.")
+        val picker = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            background = ui.shape(ui.card, 12, ui.line)
+            setPadding(ui.dp(4), ui.dp(4), ui.dp(4), ui.dp(4))
+        }
+        for (n in listOf(5, 6)) {
+            val on = store.wheelLanguageCount == n
+            picker.addView(ui.text("$n", 14f, if (on) Color.WHITE else ui.ink, bold = true).apply {
+                gravity = Gravity.CENTER
+                background = ui.shape(if (on) ui.accent else Color.TRANSPARENT, 9)
+                setPadding(ui.dp(16), ui.dp(6), ui.dp(16), ui.dp(6))
+                contentDescription = "Show $n languages"
+                setOnClickListener { store.wheelLanguageCount = n; render() }
+            }, LinearLayout.LayoutParams(-2, -2).apply { if (n == 5) rightMargin = ui.dp(4) })
+        }
+        column.addView(ui.rows(ui.row(R.drawable.ic_languages, "Flags on the wheel", "How many languages the translate wheel shows", picker)))
+        val shown = (store.languages + Store.ALL_LANGUAGES.filter { it !in store.languages }).take(store.wheelLanguageCount)
         val wheelBox = android.widget.FrameLayout(this).apply {
             outlineProvider = object : android.view.ViewOutlineProvider() {
                 override fun getOutline(view: View, outline: android.graphics.Outline) {

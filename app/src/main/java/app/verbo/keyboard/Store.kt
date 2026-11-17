@@ -93,6 +93,10 @@ class Store(context: Context) {
     var languages: List<String>
         get() = str("languages", DEFAULT_LANGUAGES.joinToString("\n")).split("\n").filter { it in ALL_LANGUAGES }
         set(v) = put("languages", v.joinToString("\n"))
+    /** How many flags the translate wheel shows: 5 or 6, chosen on the Languages page. */
+    var wheelLanguageCount: Int
+        get() = (prefs?.getInt("wheel_language_count", 5) ?: 5).coerceIn(5, 6)
+        set(v) = putInt("wheel_language_count", v.coerceIn(5, 6))
     var clips: List<String>
         get() = try { JSONArray(str("clips", "[]")).let { a -> (0 until a.length()).map { a.getString(it) } } } catch (e: Exception) { emptyList() }
         set(v) = put("clips", JSONArray(v.take(30)).toString())
@@ -160,7 +164,7 @@ class Store(context: Context) {
             "autoCorrect" -> autoCorrect; "suggestions" -> suggestions; "wheelOn" -> wheelOn; "batterySaver" -> batterySaver; "keysOn" -> keysOn
             "agentMode" -> agentMode; "theme" -> theme; "keyShape" -> keyShape; "soundPack" -> soundPack; "hapticStrength" -> hapticStrength
             "heightPercent" -> heightPercent; "soundVolume" -> soundVolume; "customAccent" -> customAccent
-            "wheel" -> JSONArray(wheel); "languages" -> JSONArray(languages)
+            "wheel" -> JSONArray(wheel); "languages" -> JSONArray(languages); "wheelLanguageCount" -> wheelLanguageCount
             else -> JSONObject.NULL
         }
     }
@@ -433,7 +437,7 @@ class Store(context: Context) {
     fun exportJson(): String = JSONObject()
         .put("verbo", 1)
         .put("model", model).put("provider", provider).put("openaiModel", openaiModel).put("customBase", customBase).put("customModel", customModel).put("webSearch", webSearch).put("assistantOn", assistantOn).put("agentMode", agentMode)
-        .put("theme", theme).put("customAccent", customAccent).put("heightPercent", heightPercent)
+        .put("theme", theme).put("customAccent", customAccent).put("heightPercent", heightPercent).put("wheelLanguageCount", wheelLanguageCount)
         .put("keyShape", keyShape).put("numberRow", numberRow).put("sound", sound).put("haptic", haptic)
         .put("hapticStrength", hapticStrength).put("soundPack", soundPack).put("soundVolume", soundVolume).put("batterySaver", batterySaver).put("autoCorrect", autoCorrect).put("suggestions", suggestions)
         .put("weather", weather).put("skills", skillsJson(skills))
@@ -454,6 +458,7 @@ class Store(context: Context) {
         if (o.optString("theme") in THEMES) theme = o.getString("theme")
         if (o.has("customAccent")) customAccent = o.optInt("customAccent") or 0xFF000000.toInt()
         if (o.has("heightPercent")) heightPercent = o.optInt("heightPercent", 100)
+        if (o.has("wheelLanguageCount")) wheelLanguageCount = o.optInt("wheelLanguageCount", 5)
         if (o.optString("keyShape") in SHAPES) keyShape = o.getString("keyShape")
         if (o.has("numberRow")) numberRow = o.optBoolean("numberRow")
         if (o.has("sound")) sound = o.optBoolean("sound")
@@ -487,6 +492,7 @@ class Store(context: Context) {
             KeyboardField("soundVolume", "sound_volume", 'i', 5..100), KeyboardField("customAccent", "custom_accent", 'i'),
             KeyboardField("wheel", "wheel", 'l') { WHEEL_TOOLS.map { it.first } },
             KeyboardField("languages", "languages", 'l') { ALL_LANGUAGES },
+            KeyboardField("wheelLanguageCount", "wheel_language_count", 'i', 5..6),
         )
         /** App tokens beyond Notion and Calendly: dashboard field -> local preference key. */
         val APP_TOKENS = linkedMapOf(

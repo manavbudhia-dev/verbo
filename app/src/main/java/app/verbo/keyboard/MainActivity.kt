@@ -87,6 +87,15 @@ class MainActivity : Activity() {
 
     private fun buildHome(column: LinearLayout) {
         bigTitle(column, "Verbo", "Hold a lit key to run its skill. Hold the wide bar for the wheel.")
+        column.addView(LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            background = ui.ripple(ui.shape(ui.card, 16, ui.line), 16)
+            setPadding(ui.dp(14), ui.dp(13), ui.dp(14), ui.dp(13))
+            contentDescription = "Search Verbo"
+            setOnClickListener { open("search") }
+            addView(ui.icon(R.drawable.ic_search, 20, ui.muted))
+            addView(ui.text("Search skills, actions, apps, settings…", 15f, ui.muted).apply { setPadding(ui.dp(10), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
+        }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = ui.dp(12) })
         newSetupBox(column)
         aiStatus(column)
 

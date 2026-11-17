@@ -1284,25 +1284,35 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     /** [auto] = choosing the language to keep translating into, rather than translating once.
      *  [compass] = open straight into the 360° dial of every language, spun by its blue rim. */
     private fun showLanguages(auto: Boolean = false, compass: Boolean = false) {
-        val mine = store.languages.take(5)
+        val saved = store.languages
+        val mine = (saved + Store.ALL_LANGUAGES.filter { it !in saved }).take(store.wheelLanguageCount)
         showPanel {
             addView(LanguageWheel(this@VerboIme).apply {
                 languages = mine
                 all = Store.ALL_LANGUAGES
                 autoMode = auto
                 onPick = { i ->
+                    rememberLanguage(mine[i])
                     if (auto) { hidePanel(); setAuto(mine[i]) } else translateInto(listOf(mine[i]))
                 }
                 onCompassPick = { i ->
                     val lang = Store.ALL_LANGUAGES[i]
+                    rememberLanguage(lang)
                     if (auto) { hidePanel(); setAuto(lang) } else translateInto(listOf(lang))
                 }
+                onTurn = { feedback(KeyboardView.Type.MODE) }
                 onCancel = { hidePanel(); showTyping() }
                 onSpace = { currentInputConnection?.commitText(" ", 1) }
                 onMore = { showLanguageChoices(auto) }
                 if (compass) spin()
             }, LinearLayout.LayoutParams(-1, -1))
         }
+    }
+
+    /** A language picked on the wheel or compass joins the saved list, first, so it is there next time. */
+    private fun rememberLanguage(language: String) {
+        val now = store.languages
+        if (language !in now) store.languages = listOf(language) + now
     }
 
     private fun translateInto(languages: List<String>) {

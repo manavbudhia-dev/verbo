@@ -118,7 +118,7 @@ class KeyboardView(
     private var wheelPointer = -1
     private var wheelPick = -1
     private var compass = false
-    private var compassRot = 0f
+    private val spin = CompassSpin({ invalidate() }, { listener?.onPress(Type.MODE) })
     private var compassLastAngle = 0f
     private var bezelSince = 0L
     private var lastSpaceTap = 0L
@@ -127,6 +127,9 @@ class KeyboardView(
 
     /** True while the wheel has become the 360° compass (rim held and spun). */
     val compassOpen: Boolean get() = compass
+
+    /** Where the compass currently sits, in degrees; always a whole icon once it locks. */
+    val compassRotation: Float get() = spin.rot
 
     /** Letters that run a skill when held. They are marked with a small glow. */
     var bound: Set<Char> = emptySet()
@@ -377,7 +380,7 @@ class KeyboardView(
             wheelPointer = entry.key
             wheelPick = -1
             compass = false
-            compassRot = 0f
+            spin.reset()
             handler.removeCallbacks(bezelHold)
             listener?.onPress(Type.ENTER)
             invalidate()
@@ -409,7 +412,7 @@ class KeyboardView(
     private val bezelHold = Runnable {
         if (!wheelOpen || compass || !onBezel(wheelX, wheelY)) return@Runnable
         compass = true
-        compassRot = 0f
+        spin.reset()
         compassLastAngle = screenAngle(wheelX, wheelY)
         wheelPick = -1
         listener?.onPress(Type.MODE)
@@ -496,11 +499,12 @@ class KeyboardView(
         val cy = compassCy
         val r = compassR
         val size = wheelCatalog.size
-        WheelLook.compassDial(canvas, cx, cy, r, compassRot, d)
-        val cand = WheelLook.compassCandidate(compassRot, k, size)
+        val rot = spin.rot
+        WheelLook.compassDial(canvas, cx, cy, r, rot, d)
+        val cand = WheelLook.compassCandidate(rot, k, size)
         if (size > 0) for (j in 0 until k) {
-            val item = wheelCatalog[WheelLook.compassIndex(j, k, compassRot, size)]
-            val (x, y) = WheelLook.compassPos(cx, cy, r, j, k, compassRot)
+            val item = wheelCatalog[WheelLook.compassIndex(j, k, rot, size)]
+            val (x, y) = WheelLook.compassPos(cx, cy, r, j, k, rot)
             val isCand = j == k / 2
             WheelLook.tile(canvas, x, y, (if (isCand) 19f else 17f) * d, d)
             if (isCand) WheelLook.ring(canvas, x, y, 22f * d, WheelLook.blue, 2.5f * d)
@@ -557,7 +561,8 @@ class KeyboardView(
         if (wheelOpen && id == wheelPointer) {
             val wasCompass = compass
             val pick = wheelPick
-            val cand = WheelLook.compassCandidate(compassRot, WheelLook.COMPASS_SLOTS, wheelCatalogIds.size)
+            spin.settle()
+            val cand = WheelLook.compassCandidate(spin.rot, WheelLook.COMPASS_SLOTS, wheelCatalogIds.size)
             val dist = kotlin.math.hypot(wheelX - compassCx, wheelY - compassCy)
             wheelOpen = false
             wheelPick = -1
@@ -608,7 +613,7 @@ class KeyboardView(
                         val a = screenAngle(wheelX, wheelY)
                         var delta = a - compassLastAngle
                         if (delta > 180) delta -= 360 else if (delta < -180) delta += 360
-                        compassRot += delta
+                        spin.drag(delta)
                         compassLastAngle = a
                     } else {
                         enterCompassCheck()
@@ -641,6 +646,7 @@ class KeyboardView(
                 wheelOpen = false
                 wheelPick = -1
                 compass = false
+                spin.reset()
                 presses.clear()
                 handler.removeCallbacks(barHold)
                 handler.removeCallbacks(bezelHold)
@@ -655,6 +661,7 @@ class KeyboardView(
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
         handler.removeCallbacksAndMessages(null)
+        spin.reset()
         presses.clear()
     }
 }

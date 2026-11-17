@@ -209,3 +209,55 @@ object WheelLook {
         drawPill(c, pillRect(cx, pill, d, sp), pill, blue, d, sp)
     }
 }
+
+/** Detented compass rotation: half a slot of finger travel turns one icon with a slow eased spin that locks on it. */
+class CompassSpin(private val redraw: () -> Unit, private val onLock: () -> Unit = {}) {
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+    var rot = 0f
+        private set
+    private var from = 0f
+    private var target = 0f
+    private var start = 0L
+    private var drag = 0f
+    private var turning = false
+    private val step = 360f / WheelLook.COMPASS_SLOTS
+
+    private val tick = object : Runnable {
+        override fun run() {
+            val t = ((android.os.SystemClock.uptimeMillis() - start).toFloat() / DURATION).coerceIn(0f, 1f)
+            val e = 1f - (1f - t) * (1f - t) * (1f - t)
+            rot = from + (target - from) * e
+            redraw()
+            if (t < 1f) handler.postDelayed(this, 16) else { turning = false; rot = target; onLock() }
+        }
+    }
+
+    fun reset() {
+        handler.removeCallbacks(tick)
+        rot = 0f; from = 0f; target = 0f; drag = 0f; turning = false
+    }
+
+    /** Feed a wrapped finger-angle delta in degrees; each half-slot of travel queues one icon's turn. */
+    fun drag(delta: Float) {
+        drag += delta
+        var dir = 0
+        while (drag >= step / 2) { drag -= step; dir++ }
+        while (drag <= -step / 2) { drag += step; dir-- }
+        if (dir != 0) {
+            target += dir * step
+            from = rot
+            start = android.os.SystemClock.uptimeMillis()
+            if (!turning) { turning = true; handler.post(tick) }
+        }
+    }
+
+    /** Release: lock onto the icon the spin was heading to. */
+    fun settle() {
+        handler.removeCallbacks(tick)
+        if (turning) { rot = target; turning = false; redraw() }
+    }
+
+    companion object {
+        const val DURATION = 500L
+    }
+}
