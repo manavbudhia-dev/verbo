@@ -213,6 +213,9 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         wheelIds = if (barActive && store.wheelOn) store.wheel else emptyList()
         baseWheel = wheelIds
         keys?.wheelItems = wheelIds.map { wheelItem(it, false) }
+        val catalogIds = Store.WHEEL_TOOLS.map { it.first } + skills.map { "skill:" + it.name } + Apps.ALL.map { Apps.id(it) }
+        keys?.wheelCatalogIds = catalogIds
+        keys?.wheelCatalog = catalogIds.map { wheelItem(it, false) }
         keys?.barLabel = if (!barActive) "" else if (wheelIds.isEmpty()) "hold to act" else "hold for wheel"
         keymap = store.keymap
         keys?.bound = if (assistantOn && store.keysOn) KeyAction.bound(keymap, skills, currentInputEditorInfo?.packageName) else emptySet()
@@ -585,6 +588,19 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         val id = wheelIds.getOrNull(index) ?: return
         feedback(KeyboardView.Type.ENTER)
         runShortcut(id)
+    }
+
+    /** The compass was spun and released: run whichever catalog entry landed under the needle. */
+    override fun onWheelCatalog(index: Int) {
+        val id = keys?.wheelCatalogIds?.getOrNull(index) ?: return
+        feedback(KeyboardView.Type.ENTER)
+        runShortcut(id)
+    }
+
+    /** Space tapped twice: the language compass, spun by its blue rim. */
+    override fun onSpaceDouble() {
+        feedback(KeyboardView.Type.ENTER)
+        showLanguages(compass = true)
     }
 
     /** A wheel slot or a held key: a tool id, "act:Name", "skill:Name", "app:key" or "text:words". */
@@ -1265,19 +1281,26 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         }
     }
 
-    /** [auto] = choosing the language to keep translating into, rather than translating once. */
-    private fun showLanguages(auto: Boolean = false) {
+    /** [auto] = choosing the language to keep translating into, rather than translating once.
+     *  [compass] = open straight into the 360° dial of every language, spun by its blue rim. */
+    private fun showLanguages(auto: Boolean = false, compass: Boolean = false) {
         val mine = store.languages.take(5)
         showPanel {
             addView(LanguageWheel(this@VerboIme).apply {
                 languages = mine
+                all = Store.ALL_LANGUAGES
                 autoMode = auto
                 onPick = { i ->
                     if (auto) { hidePanel(); setAuto(mine[i]) } else translateInto(listOf(mine[i]))
                 }
+                onCompassPick = { i ->
+                    val lang = Store.ALL_LANGUAGES[i]
+                    if (auto) { hidePanel(); setAuto(lang) } else translateInto(listOf(lang))
+                }
                 onCancel = { hidePanel(); showTyping() }
                 onSpace = { currentInputConnection?.commitText(" ", 1) }
                 onMore = { showLanguageChoices(auto) }
+                if (compass) spin()
             }, LinearLayout.LayoutParams(-1, -1))
         }
     }

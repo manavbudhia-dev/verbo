@@ -450,9 +450,9 @@ class KeyboardTest {
         field.info.packageName = "com.chat"
         type("hello")
         layout(root)
-        val show = VerboIme::class.java.getDeclaredMethod("showLanguages", Boolean::class.javaPrimitiveType)
+        val show = VerboIme::class.java.getDeclaredMethod("showLanguages", Boolean::class.javaPrimitiveType, Boolean::class.javaPrimitiveType)
         show.isAccessible = true
-        show.invoke(ime, true)
+        show.invoke(ime, true, false)
         val wheel = wheelIn(root)!!
         layout(root)
         assertTrue("the auto picker is the same wheel", wheel.autoMode)
@@ -726,6 +726,70 @@ class KeyboardTest {
         assertEquals(6, store.wheel.size)
     }
 
+    // ---------- the 360° compass ----------
+
+    private fun spaceTap(keys: KeyboardView) {
+        val bar = Triple(0, keys.width * 0.5f, keys.height * 0.88f)
+        touch(keys, MotionEvent.ACTION_DOWN, listOf(bar))
+        touch(keys, MotionEvent.ACTION_UP, listOf(bar))
+    }
+
+    @Test
+    fun doubleSpaceOpensTheLanguageCompassAndCentreCancels() {
+        val keys = ime.keys!!
+        layout(root)
+        spaceTap(keys)
+        assertEquals("one space is just a space", null, wheelIn(root))
+        spaceTap(keys)
+        val wheel = wheelIn(root)!!
+        assertTrue("the second quick space opens the spinning compass", wheel.spinning)
+        layout(root)
+        val centre = Triple(0, wheel.width / 2f, wheel.height * 0.56f)
+        touch(wheel, MotionEvent.ACTION_MOVE, listOf(centre))
+        touch(wheel, MotionEvent.ACTION_UP, listOf(centre))
+        assertEquals("releasing in the middle cancels back to the keys", View.VISIBLE, keys.visibility)
+    }
+
+    @Test
+    fun languageFanBezelHoldBecomesTheCompass() {
+        val keys = ime.keys!!
+        layout(root)
+        val show = VerboIme::class.java.getDeclaredMethod("showLanguages", Boolean::class.javaPrimitiveType, Boolean::class.javaPrimitiveType)
+        show.isAccessible = true
+        show.invoke(ime, false, false)
+        val wheel = wheelIn(root)!!
+        layout(root)
+        assertTrue("the fan starts flat", !wheel.spinning)
+        val d = wheel.resources.displayMetrics.density
+        val cy = wheel.height - 40f * d
+        val r = minOf(wheel.width * 0.46f, cy - 36f * d)
+        touch(wheel, MotionEvent.ACTION_MOVE, listOf(Triple(0, wheel.width / 2f, cy - r * 1.05f)))
+        org.robolectric.shadows.ShadowLooper.idleMainLooper(400, java.util.concurrent.TimeUnit.MILLISECONDS)
+        assertTrue("holding the blue rim spins the fan into the compass", wheel.spinning)
+        val centre = Triple(0, wheel.width / 2f, wheel.height * 0.56f)
+        touch(wheel, MotionEvent.ACTION_MOVE, listOf(centre))
+        touch(wheel, MotionEvent.ACTION_UP, listOf(centre))
+        assertEquals(View.VISIBLE, keys.visibility)
+    }
+
+    @Test
+    fun shortcutWheelRimHoldSpinsTheCompassAndReleaseRunsTheTool() {
+        val keys = ime.keys!!
+        layout(root)
+        holdBar(keys)
+        val wr = minOf(keys.width * 0.47f, keys.height * 0.80f)
+        touch(keys, MotionEvent.ACTION_MOVE, listOf(Triple(0, keys.width / 2f, keys.height - wr * 1.05f)))
+        org.robolectric.shadows.ShadowLooper.idleMainLooper(400, java.util.concurrent.TimeUnit.MILLISECONDS)
+        assertTrue("holding the blue rim turns the wheel into the compass", keys.compassOpen)
+        // Spin two slots (72°) so "auto", catalog index 2, lands under the needle.
+        val cr = minOf(keys.width * 0.42f, keys.height * 0.40f)
+        val a = Math.toRadians(-18.0)
+        val spin = Triple(0, keys.width / 2f + (cr * 0.9f * Math.cos(a)).toFloat(), keys.height * 0.56f + (cr * 0.9f * Math.sin(a)).toFloat())
+        touch(keys, MotionEvent.ACTION_MOVE, listOf(spin))
+        touch(keys, MotionEvent.ACTION_UP, listOf(spin))
+        assertTrue("releasing runs the spun-to tool: the auto-translate picker", wheelIn(root)!!.autoMode)
+    }
+
     @Test
     fun settingsShowsAdvancedSettingsInline() {
         MainActivity.tab = "settings"
@@ -929,6 +993,35 @@ class KeyboardTest {
         touch(appKeys, MotionEvent.ACTION_UP, listOf(Triple(0, appKeys.width * 0.5f, appKeys.height * 0.97f)))
         store.wheel = Store.DEFAULT_WHEEL
         ime.onStartInputView(field.info, false)
+        // The shortcut wheel spun into its 360° compass by holding the blue rim.
+        val cmpKeys = ime.keys!!
+        val cmpRoot = cmpKeys.parent as View
+        layout(cmpRoot)
+        holdBar(cmpKeys)
+        val wr = minOf(cmpKeys.width * 0.47f, cmpKeys.height * 0.80f)
+        touch(cmpKeys, MotionEvent.ACTION_MOVE, listOf(Triple(0, cmpKeys.width / 2f, cmpKeys.height - wr * 1.05f)))
+        org.robolectric.shadows.ShadowLooper.idleMainLooper(400, java.util.concurrent.TimeUnit.MILLISECONDS)
+        val cr = minOf(cmpKeys.width * 0.42f, cmpKeys.height * 0.40f)
+        val sa = Math.toRadians(-18.0)
+        touch(cmpKeys, MotionEvent.ACTION_MOVE, listOf(Triple(0, cmpKeys.width / 2f + (cr * 0.9f * Math.cos(sa)).toFloat(), cmpKeys.height * 0.56f + (cr * 0.9f * Math.sin(sa)).toFloat())))
+        layout(cmpRoot)
+        snap(cmpRoot, "wheel-compass")
+        val cmpCentre = Triple(0, cmpKeys.width / 2f, cmpKeys.height * 0.56f)
+        touch(cmpKeys, MotionEvent.ACTION_MOVE, listOf(cmpCentre))
+        touch(cmpKeys, MotionEvent.ACTION_UP, listOf(cmpCentre))
+        // Double-press space: the language compass of every language.
+        spaceTap(cmpKeys)
+        spaceTap(cmpKeys)
+        val lw = wheelIn(cmpRoot)!!
+        layout(cmpRoot)
+        snap(cmpRoot, "panel-languages-compass")
+        val lwCentre = Triple(0, lw.width / 2f, lw.height * 0.56f)
+        touch(lw, MotionEvent.ACTION_MOVE, listOf(lwCentre))
+        touch(lw, MotionEvent.ACTION_UP, listOf(lwCentre))
+        // The double-press typed one space; reset the field so the banner check below is exact.
+        field.text.clear()
+        field.text.append(kept)
+        android.text.Selection.setSelection(field.text, kept.length)
         store.theme = "system"
         store.theme = "system"
 

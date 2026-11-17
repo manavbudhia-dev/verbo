@@ -137,4 +137,75 @@ object WheelLook {
         letters.typeface = if (bold) Typeface.DEFAULT_BOLD else Typeface.create("sans-serif", Typeface.NORMAL)
         c.drawText(s, x, y - (letters.descent() + letters.ascent()) / 2, letters)
     }
+
+    // ---------- the compass: a full 360° dial spun by its blue rim ----------
+
+    /** Visible slots around the compass; the catalog scrolls through them as the rim turns. */
+    const val COMPASS_SLOTS = 10
+
+    fun compassStep(k: Int) = 360f / k
+
+    /** Which catalog entry sits under the top needle at this rotation. */
+    fun compassCandidate(rot: Float, k: Int, size: Int): Int {
+        if (size == 0) return -1
+        val c = Math.round(rot / compassStep(k))
+        return ((c % size) + size) % size
+    }
+
+    /** The catalog entry shown in visible slot [j] at this rotation. */
+    fun compassIndex(j: Int, k: Int, rot: Float, size: Int): Int {
+        val c = Math.round(rot / compassStep(k))
+        return (((c + j - k / 2) % size) + size) % size
+    }
+
+    /** Where visible slot [j] sits: a ring that turns continuously with the rim. */
+    fun compassPos(cx: Float, cy: Float, r: Float, j: Int, k: Int, rot: Float): Pair<Float, Float> {
+        val step = compassStep(k)
+        val frac = rot - Math.round(rot / step) * step
+        val ang = Math.toRadians((90 + (j - k / 2f) * step - frac).toDouble())
+        return Pair(cx + (r * 0.72f * kotlin.math.cos(ang)).toFloat(), cy - (r * 0.72f * kotlin.math.sin(ang)).toFloat())
+    }
+
+    /** The dial body: full-circle wash, the blue compass frame, and ticks that turn with the rim. */
+    fun compassDial(c: Canvas, cx: Float, cy: Float, r: Float, rot: Float, d: Float) {
+        face.shader = RadialGradient(cx, cy, r, intArrayOf(Color.parseColor("#F5F3FA"), Color.parseColor("#E7E5F3"), Color.parseColor("#DEE9F4")), floatArrayOf(0f, 0.55f, 1f), Shader.TileMode.CLAMP)
+        c.drawCircle(cx, cy, r, face)
+        face.shader = null
+        edge.color = blue
+        edge.strokeWidth = 3f * d
+        c.drawCircle(cx, cy, r, edge)
+        edge.color = Color.parseColor("#6FA8DC")
+        edge.strokeWidth = d
+        var a = 0f
+        while (a < 360f) {
+            val rad = Math.toRadians((a + rot).toDouble())
+            val cos = kotlin.math.cos(rad).toFloat()
+            val sin = kotlin.math.sin(rad).toFloat()
+            c.drawLine(cx + r * cos, cy - r * sin, cx + (r - 6f * d) * cos, cy - (r - 6f * d) * sin, edge)
+            a += 4f
+        }
+        edge.strokeWidth = d
+    }
+
+    /** Over the tiles: the fixed top needle, the blue selection arc, centre glow and the pill. */
+    fun compassTop(c: Canvas, cx: Float, cy: Float, r: Float, k: Int, d: Float, sp: Float, pill: String, centerText: String) {
+        val arc = RectF(cx - r, cy - r, cx + r, cy + r)
+        val step = compassStep(k)
+        edge.color = blue
+        edge.strokeWidth = 4.5f * d
+        c.drawArc(arc, -90f - step / 2, step, false, edge)
+        face.color = blue
+        val needle = Path().apply {
+            moveTo(cx - 6f * d, cy - r - 3f * d)
+            lineTo(cx + 6f * d, cy - r - 3f * d)
+            lineTo(cx, cy - r + 11f * d)
+            close()
+        }
+        c.drawPath(needle, face)
+        face.shader = RadialGradient(cx, cy, 55f * d, intArrayOf(Color.parseColor("#CCFFFFFF"), Color.parseColor("#00FFFFFF")), null, Shader.TileMode.CLAMP)
+        c.drawCircle(cx, cy, 55f * d, face)
+        face.shader = null
+        drawText(c, centerText, cx, cy, 13f * sp, faint)
+        drawPill(c, pillRect(cx, pill, d, sp), pill, blue, d, sp)
+    }
 }
