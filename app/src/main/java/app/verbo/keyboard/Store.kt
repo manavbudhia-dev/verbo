@@ -233,7 +233,7 @@ class Store(context: Context) {
                 'i' -> if (v is Number) e.putInt(f.pref, v.toInt().let { n -> f.range?.let { n.coerceIn(it) } ?: n })
                 'l' -> if (v is JSONArray) {
                     val ok = f.allowed()
-                    var items = (0 until v.length()).map { v.optString(it) }.filter { it in ok || (f.name == "wheel" && it.startsWith("skill:")) }
+                    var items = (0 until v.length()).map { v.optString(it) }.filter { it in ok || (f.name == "wheel" && (it.startsWith("skill:") || it.startsWith("app:"))) }
                     if (f.name == "wheel") items = items.take(MAX_WHEEL)
                     e.putString(f.pref, items.joinToString("\n"))
                 }
@@ -513,7 +513,7 @@ class Store(context: Context) {
         const val MAX_HEIGHT = 130
         const val MAX_WHEEL = 6
         val WHEEL_TOOLS = listOf(
-            "ai" to "Ask AI", "translate" to "Translate", "rewrite" to "Rewrite", "meet" to "Meeting link", "voice" to "Voice", "clips" to "Clips",
+            "ai" to "Ask AI", "translate" to "Translate", "auto" to "Auto-translate", "rewrite" to "Rewrite", "meet" to "Meeting link", "voice" to "Voice", "clips" to "Clips",
         )
         val DEFAULT_WHEEL = listOf("translate", "rewrite", "ai", "meet", "voice", "clips")
         val DEFAULT_LANGUAGES = listOf("English", "Hindi", "Spanish", "French", "Chinese (Simplified)")

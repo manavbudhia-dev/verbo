@@ -1754,13 +1754,14 @@ class PageActivity : Activity() {
 
     // ---------- wheel ----------
 
-    private fun wheelLabel(id: String) = Store.WHEEL_TOOLS.firstOrNull { it.first == id }?.second ?: id.removePrefix("skill:")
+    private fun wheelLabel(id: String) = Store.WHEEL_TOOLS.firstOrNull { it.first == id }?.second
+        ?: Apps.byId(id)?.name ?: id.removePrefix("skill:")
 
     private fun wheelTitle(id: String) =
         store.skills.firstOrNull { "skill:" + it.name == id }?.let { (it.emoji + "  " + it.name).trim() } ?: wheelLabel(id)
 
     private fun wheelOptions(): List<Pair<String, String>> =
-        Store.WHEEL_TOOLS + store.skills.map { ("skill:" + it.name) to (it.emoji + "  " + it.name).trim() }
+        Store.WHEEL_TOOLS + store.skills.map { ("skill:" + it.name) to (it.emoji + "  " + it.name).trim() } + Apps.ALL.map { Apps.id(it) to it.name }
 
     /** The wheel is full: pick which current shortcut gives up its slot to [newId]. */
     private fun replaceOnWheel(newId: String) {
@@ -1775,11 +1776,12 @@ class PageActivity : Activity() {
     private fun wheelIcon(id: String) = when (id) {
         "ai" -> R.drawable.ic_sparkles
         "translate" -> R.drawable.ic_languages
+        "auto" -> R.drawable.ic_auto_translate
         "rewrite" -> R.drawable.ic_pencil_line
         "meet" -> R.drawable.ic_video
         "voice" -> R.drawable.ic_mic
         "clips" -> R.drawable.ic_clipboard
-        else -> R.drawable.ic_zap
+        else -> Apps.byId(id)?.brand?.first ?: R.drawable.ic_zap
     }
 
     private fun smallButton(icon: Int, description: String, enabled: Boolean = true, onTap: () -> Unit) =
@@ -1797,7 +1799,7 @@ class PageActivity : Activity() {
 
         val skills = store.skills
         // Skills that were renamed or deleted drop off the wheel.
-        val items = store.wheel.filter { id -> Store.WHEEL_TOOLS.any { it.first == id } || skills.any { "skill:" + it.name == id } }
+        val items = store.wheel.filter { id -> Store.WHEEL_TOOLS.any { it.first == id } || skills.any { "skill:" + it.name == id } || Apps.byId(id) != null }
         fun set(next: List<String>) { store.wheel = next; render() }
 
         column.addView(ui.section(R.drawable.ic_layers, "On the wheel (${items.size} of ${Store.MAX_WHEEL})"))
@@ -1824,7 +1826,7 @@ class PageActivity : Activity() {
                         next[i] = nid
                         set(next)
                     }.show()
-            }
+            }.also { row -> Apps.byId(id)?.let { (row.getChildAt(0) as android.widget.ImageView).setColorFilter(it.brand.second) } }
         }.toTypedArray()))
 
         fun addRows(ids: List<String>, subtitle: (String) -> String?) = ids.filter { it !in items }.map { id ->
@@ -1836,6 +1838,7 @@ class PageActivity : Activity() {
             when (id) {
                 "ai" -> "Treats what you typed as a request"
                 "translate" -> "Pick a language, or all of yours at once"
+                "auto" -> "Keep translating every message into a language you pick"
                 "rewrite" -> "Pick a style from your Edit skills"
                 "meet" -> "Drops a new meeting link into the message"
                 "voice" -> "Dictate or speak a request"
@@ -1844,9 +1847,20 @@ class PageActivity : Activity() {
         }
         val mine = addRows(skills.map { "skill:" + it.name }) { id -> skills.firstOrNull { "skill:" + it.name == id }?.instruction }
         mine.forEach { row -> ((row.getChildAt(1) as LinearLayout).getChildAt(1) as? android.widget.TextView)?.apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END } }
+        val apps = Apps.ALL.filter { Apps.id(it) !in items }.map { app ->
+            ui.brandRow(app.brand, app.name, app.blurb, smallButton(R.drawable.ic_plus, "Add to the wheel") {
+                val id = Apps.id(app)
+                if (items.size >= Store.MAX_WHEEL) replaceOnWheel(id) else set(items + id)
+            })
+        }
         if (tools.isNotEmpty()) {
             column.addView(ui.section(R.drawable.ic_circle_dashed, "Add a tool"))
             column.addView(ui.rows(*tools.toTypedArray()))
+        }
+        if (apps.isNotEmpty()) {
+            column.addView(ui.section(R.drawable.ic_box, "Add an app"))
+            note(column, "Keep the apps you use daily on the wheel. Each opens with its own icon and does its job in one slide.")
+            column.addView(ui.rows(*apps.toTypedArray()))
         }
         if (mine.isNotEmpty()) {
             column.addView(ui.section(R.drawable.ic_sparkles, "Add one of my skills"))

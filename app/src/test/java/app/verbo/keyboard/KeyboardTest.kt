@@ -615,7 +615,7 @@ class KeyboardTest {
         assertEquals("the wheel starts full", 6, store.wheel.size)
         byDesc(content(a), "Add to the wheel")!!.performClick()
         pickDialogItem(0) // give up the leftmost slot
-        assertEquals(listOf("skill:" + store.skills[0].name) + Store.DEFAULT_WHEEL.drop(1), store.wheel)
+        assertEquals(listOf("auto") + Store.DEFAULT_WHEEL.drop(1), store.wheel)
     }
 
     @Test
@@ -638,12 +638,92 @@ class KeyboardTest {
         val store = Store(RuntimeEnvironment.getApplication())
         val a = wheelPage()
         clickLabel(content(a), "Translate")
-        pickDialogItem(2) // Rewrite is already on the wheel: the two swap places
+        pickDialogItem(Store.WHEEL_TOOLS.indexOfFirst { it.first == "rewrite" }) // Rewrite is already on the wheel: the two swap places
         assertEquals(listOf("rewrite", "translate") + Store.DEFAULT_WHEEL.drop(2), store.wheel)
         clickLabel(content(a), "Rewrite")
-        pickDialogItem(6) // the first skill, not on the wheel yet: it takes the slot
+        pickDialogItem(Store.WHEEL_TOOLS.size) // the first skill, not on the wheel yet: it takes the slot
         assertEquals("skill:" + store.skills[0].name, store.wheel[0])
         assertEquals("translate", store.wheel[1])
+    }
+
+    private fun reloadWheel() {
+        val load = VerboIme::class.java.getDeclaredMethod("loadSettings")
+        load.isAccessible = true
+        load.invoke(ime)
+    }
+
+    @Test
+    fun autoWheelSlotOpensTheAutoPicker() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        store.wheel = listOf("auto") + Store.DEFAULT_WHEEL.dropLast(1)
+        reloadWheel()
+        type("hello")
+        val keys = ime.keys!!
+        layout(root)
+        holdBar(keys)
+        val left = Triple(0, keys.width * 0.14f, keys.height * 0.80f)
+        touch(keys, MotionEvent.ACTION_MOVE, listOf(left))
+        touch(keys, MotionEvent.ACTION_UP, listOf(left))
+        assertTrue("the auto slot opens the same flag picker in auto mode", wheelIn(root)!!.autoMode)
+        store.wheel = Store.DEFAULT_WHEEL
+    }
+
+    @Test
+    fun appWheelSlotSharesToWhatsApp() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        val pm = RuntimeEnvironment.getApplication().packageManager
+        val send = android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain").setPackage("com.whatsapp")
+        val ri = android.content.pm.ResolveInfo().apply { activityInfo = android.content.pm.ActivityInfo().apply { packageName = "com.whatsapp"; name = "Share" } }
+        org.robolectric.Shadows.shadowOf(pm).addResolveInfoForIntent(send, ri)
+        store.wheel = listOf("app:whatsapp") + Store.DEFAULT_WHEEL.dropLast(1)
+        reloadWheel()
+        type("hello")
+        val keys = ime.keys!!
+        layout(root)
+        holdBar(keys)
+        val left = Triple(0, keys.width * 0.14f, keys.height * 0.80f)
+        touch(keys, MotionEvent.ACTION_MOVE, listOf(left))
+        touch(keys, MotionEvent.ACTION_UP, listOf(left))
+        val sent = org.robolectric.Shadows.shadowOf(RuntimeEnvironment.getApplication()).nextStartedActivity
+        assertEquals(android.content.Intent.ACTION_SEND, sent.action)
+        assertEquals("com.whatsapp", sent.`package`)
+        assertEquals("hello", sent.getStringExtra(android.content.Intent.EXTRA_TEXT))
+        store.wheel = Store.DEFAULT_WHEEL
+    }
+
+    @Test
+    fun appWheelSlotWithoutTheAppFallsBackToTheWeb() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        store.wheel = listOf("app:whatsapp") + Store.DEFAULT_WHEEL.dropLast(1)
+        reloadWheel()
+        type("hello")
+        val keys = ime.keys!!
+        layout(root)
+        holdBar(keys)
+        val left = Triple(0, keys.width * 0.14f, keys.height * 0.80f)
+        touch(keys, MotionEvent.ACTION_MOVE, listOf(left))
+        touch(keys, MotionEvent.ACTION_UP, listOf(left))
+        val sent = org.robolectric.Shadows.shadowOf(RuntimeEnvironment.getApplication()).nextStartedActivity
+        assertEquals(android.content.Intent.ACTION_VIEW, sent.action)
+        assertTrue("opens WhatsApp on the web with the text", sent.dataString!!.startsWith("https://wa.me/?text=hello"))
+        store.wheel = Store.DEFAULT_WHEEL
+    }
+
+    @Test
+    fun wheelPageAddsAnAppWithItsBrandIcon() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        val a = wheelPage()
+        fun find(v: View): TextView? = when {
+            v is TextView && v.text.toString() == "Notion" -> v
+            v is ViewGroup -> (0 until v.childCount).firstNotNullOfOrNull { find(v.getChildAt(it)) }
+            else -> null
+        }
+        var v: View? = find(content(a))
+        while (v != null && byDesc(v, "Add to the wheel") == null) v = v.parent as? View
+        byDesc(v!!, "Add to the wheel")!!.performClick()
+        pickDialogItem(0) // the wheel is full: give up the leftmost slot
+        assertEquals("app:notion", store.wheel[0])
+        assertEquals(6, store.wheel.size)
     }
 
     @Test
@@ -835,6 +915,20 @@ class KeyboardTest {
         ime.hidePanel()
         clipboard.setPrimaryClip(android.content.ClipData.newPlainText("m", ""))
         field.text.append(kept)
+        // A wheel carrying the auto-translate tool and daily apps in their own brand colours.
+        store.wheel = listOf("auto", "app:notion", "app:linkedin", "app:whatsapp", "translate", "ai")
+        ime.onStartInputView(field.info, false)
+        val appRoot = ime.keys!!.parent as View
+        val appKeys = ime.keys!!
+        layout(appRoot)
+        holdBar(appKeys)
+        val rr = minOf(appKeys.width * 0.47f, appKeys.height * 0.80f) * 0.70f
+        touch(appKeys, MotionEvent.ACTION_MOVE, listOf(Triple(0, appKeys.width / 2f + rr * 0.2588f, appKeys.height - rr * 0.9659f)))
+        layout(appRoot)
+        snap(appRoot, "wheel-apps")
+        touch(appKeys, MotionEvent.ACTION_UP, listOf(Triple(0, appKeys.width * 0.5f, appKeys.height * 0.97f)))
+        store.wheel = Store.DEFAULT_WHEEL
+        ime.onStartInputView(field.info, false)
         store.theme = "system"
         store.theme = "system"
 

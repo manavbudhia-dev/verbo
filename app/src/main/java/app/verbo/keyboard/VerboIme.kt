@@ -272,14 +272,20 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     private fun wheelItem(id: String, suggested: Boolean): KeyboardView.WheelItem = when (id) {
         "ai" -> KeyboardView.WheelItem("Ask AI", R.drawable.ic_sparkles, suggested = suggested)
         "translate" -> KeyboardView.WheelItem("Translate", R.drawable.ic_languages, suggested = suggested)
+        "auto" -> KeyboardView.WheelItem("Auto-translate", R.drawable.ic_auto_translate, suggested = suggested)
         "rewrite" -> KeyboardView.WheelItem("Rewrite", R.drawable.ic_pencil_line, suggested = suggested)
         "voice" -> KeyboardView.WheelItem("Voice", R.drawable.ic_mic, suggested = suggested)
         "clips" -> KeyboardView.WheelItem("Clips", R.drawable.ic_clipboard, suggested = suggested)
         "meet" -> KeyboardView.WheelItem("Meeting link", R.drawable.ic_video, suggested = suggested)
         else -> {
+            val app = Apps.byId(id)
             val name = id.substringAfter(":")
             val emoji = skills.firstOrNull { it.name == name }?.emoji?.ifEmpty { null } ?: Acts.BUILTIN.firstOrNull { it.name == name }?.emoji
-            if (emoji != null) KeyboardView.WheelItem(name, 0, emoji, suggested) else KeyboardView.WheelItem(name, R.drawable.ic_zap, suggested = suggested)
+            when {
+                app != null -> KeyboardView.WheelItem(app.name, app.brand.first, suggested = suggested, tint = app.brand.second)
+                emoji != null -> KeyboardView.WheelItem(name, 0, emoji, suggested)
+                else -> KeyboardView.WheelItem(name, R.drawable.ic_zap, suggested = suggested)
+            }
         }
     }
 
@@ -581,18 +587,51 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         runShortcut(id)
     }
 
-    /** A wheel slot or a held key: a tool id, "act:Name", "skill:Name" or "text:words". */
+    /** A wheel slot or a held key: a tool id, "act:Name", "skill:Name", "app:key" or "text:words". */
     private fun runShortcut(id: String) {
         when (id) {
             "ai" -> runAction(null)
             "translate" -> showLanguages()
+            "auto" -> showLanguages(auto = true)
             "rewrite" -> showRewrite()
             "voice" -> startVoice(false)
             "clips" -> showClips()
             "meet" -> makeMeetLink()
             else -> if (id.startsWith("text:")) currentInputConnection?.commitText(id.removePrefix("text:"), 1)
             else if (id.startsWith("tool:")) runShortcut(id.removePrefix("tool:"))
+            else if (id.startsWith("app:")) Apps.byKey(id.removePrefix("app:"))?.let { runApp(it) } ?: showStatus("That app is no longer available")
             else if (id.startsWith("act:")) runAct(id.removePrefix("act:")) else skills.firstOrNull { it.name == id.removePrefix("skill:") }?.let { runAction(it) } ?: showStatus("That skill no longer exists")
+        }
+    }
+
+    /** An app slot on the wheel: run its skill, share to it, open it filled in, or use its connected tools. */
+    internal fun runApp(app: Apps.App) {
+        app.skill?.let { runAct(it); return }
+        val text = contextForActs()
+        when (app.key) {
+            "whatsapp", "telegram", "x" -> {
+                if (text.isBlank()) { showStatus("Type something first to send it to ${app.name}"); return }
+                val pkg = when (app.key) { "whatsapp" -> "com.whatsapp"; "telegram" -> "org.telegram.messenger"; else -> "com.twitter.android" }
+                val send = Intent(Intent.ACTION_SEND).setType("text/plain").setPackage(pkg)
+                    .putExtra(Intent.EXTRA_TEXT, text).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                val installed = try { packageManager.resolveActivity(send, 0) != null } catch (e: Exception) { false }
+                if (installed) { try { startActivity(send); return } catch (e: Exception) { } }
+                val web = when (app.key) {
+                    "whatsapp" -> "https://wa.me/?text=" + Uri.encode(text)
+                    "telegram" -> "https://t.me/share/url?url=&text=" + Uri.encode(text)
+                    else -> "https://twitter.com/intent/tweet?text=" + Uri.encode(text)
+                }
+                openLink(web)
+            }
+            "youtube" -> openLink("https://www.youtube.com/results?search_query=" + Uri.encode(text))
+            "calendar" -> openLink("https://calendar.google.com/calendar/render?action=TEMPLATE&text=" + Uri.encode(text))
+            else -> {
+                if (Apps.token(app, store).isEmpty()) {
+                    showStatus("Connect ${app.name} in Verbo to use it here", "Connect" to { openPage("automate") })
+                    return
+                }
+                runTask("${app.name}…", app.task, card = true, retry = { runApp(app) })
+            }
         }
     }
 

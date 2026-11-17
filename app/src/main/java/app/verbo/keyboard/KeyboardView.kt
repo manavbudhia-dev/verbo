@@ -97,7 +97,7 @@ class KeyboardView(
     val letterWidth: Float get() = rows.flatten().firstOrNull { it.type == Type.CHAR }?.rect?.width() ?: (width / 10f)
 
     /** One shortcut on the wheel: an icon, or an emoji when [icon] is 0. */
-    class WheelItem(val label: String, val icon: Int, val emoji: String = "", val suggested: Boolean = false)
+    class WheelItem(val label: String, val icon: Int, val emoji: String = "", val suggested: Boolean = false, val tint: Int = 0)
 
     var listener: Listener? = null
     var mode = Mode.LETTERS
@@ -401,7 +401,7 @@ class KeyboardView(
             val (x, y) = wheelCenter(i)
             WheelLook.tile(canvas, x, y, (if (i == wheelPick) 26f else 24f) * d, d)
             if (item.suggested && i != wheelPick) WheelLook.ring(canvas, x, y, 29f * d, WheelLook.blue, 2.5f * d)
-            val tint = if (i == wheelPick) WheelLook.blue else WheelLook.ink
+            val tint = if (item.tint != 0) item.tint else if (i == wheelPick) WheelLook.blue else WheelLook.ink
             if (item.icon != 0) {
                 val half = 11 * d
                 icon(item.icon).apply {
