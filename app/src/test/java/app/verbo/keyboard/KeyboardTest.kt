@@ -444,6 +444,54 @@ class KeyboardTest {
     }
 
     @Test
+    fun autoTranslateWheelKeepsTranslatingIntoTheReleasedFlag() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        field.info.packageName = "com.chat"
+        type("hello")
+        layout(root)
+        val show = VerboIme::class.java.getDeclaredMethod("showLanguages", Boolean::class.javaPrimitiveType)
+        show.isAccessible = true
+        show.invoke(ime, true)
+        val wheel = wheelIn(root)!!
+        layout(root)
+        assertTrue("the auto picker is the same wheel", wheel.autoMode)
+        val flag = Triple(0, wheel.width * 0.30f, wheel.height - 403f)
+        touch(wheel, MotionEvent.ACTION_MOVE, listOf(flag))
+        touch(wheel, MotionEvent.ACTION_UP, listOf(flag))
+        assertEquals(Store.DEFAULT_LANGUAGES[1], store.autoTranslate(field.info.packageName))
+        assertEquals("choosing returns to the keys", null, wheelIn(root))
+        store.setAutoTranslate(field.info.packageName, null)
+    }
+
+    @Test
+    fun languagesPageWheelRemovesAndAddsBackALanguage() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        val a = Robolectric.buildActivity(PageActivity::class.java, android.content.Intent().putExtra("page", "languages")).setup().get()
+        fun page(): ViewGroup = (content(a) as ViewGroup).also { it.layout(0, 0, 1080, maxOf(it.getChildAt(0).measuredHeight, 900)) }
+        fun flag(w: LanguageWheel, i: Int): Triple<Int, Float, Float> {
+            val d = w.resources.displayMetrics.density
+            val cx = w.width / 2f
+            val cy = w.height - 14f * d
+            val r = minOf(w.width * 0.46f, cy - 36f * d)
+            val ang = Math.toRadians((180 - (i + 0.5f) * (180f / w.languages.size)).toDouble())
+            return Triple(0, cx + (r * 0.74f * Math.cos(ang)).toFloat(), cy - (r * 0.74f * Math.sin(ang)).toFloat())
+        }
+        val wheel = wheelIn(page())!!
+        assertTrue("the settings page carries the same wheel", wheel.embedded)
+        assertTrue(wheel.languages.containsAll(Store.DEFAULT_LANGUAGES))
+        val name = Store.DEFAULT_LANGUAGES[1]
+        touch(wheel, MotionEvent.ACTION_MOVE, listOf(flag(wheel, 1)))
+        touch(wheel, MotionEvent.ACTION_UP, listOf(flag(wheel, 1)))
+        assertTrue("releasing on a flag of mine removes it", name !in store.languages)
+        val wheel2 = wheelIn(page())!!
+        val back = wheel2.languages.indexOf(name)
+        assertTrue("the freed slot suggests the removed language", back >= 0)
+        touch(wheel2, MotionEvent.ACTION_MOVE, listOf(flag(wheel2, back)))
+        touch(wheel2, MotionEvent.ACTION_UP, listOf(flag(wheel2, back)))
+        assertTrue("releasing on a suggestion adds it back", name in store.languages)
+    }
+
+    @Test
     fun meetingLinkWithoutGoogleOffersAnInstantLink() {
         val keys = ime.keys!!
         layout(root)

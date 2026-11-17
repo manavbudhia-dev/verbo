@@ -1297,7 +1297,27 @@ class PageActivity : Activity() {
         column.addView(ui.rows(ui.row(R.drawable.ic_keyboard, "English (US)", "Typing layout · QWERTY", ui.icon(R.drawable.ic_check, 20, ui.iconTint))))
         note(column, "English is the only typing layout so far. Skills and voice still work in other languages: the assistant answers in the language you write in.")
         column.addView(ui.section(R.drawable.ic_languages, "Translate into"))
-        note(column, "Your languages appear at the top of the Translate list, with one button to translate into all of them at once.")
+        note(column, "Slide to a flag and let go to add or remove that language. Your languages come first, just like the keyboard's Translate wheel; spare slots suggest new ones.")
+        val shown = (store.languages + Store.ALL_LANGUAGES.filter { it !in store.languages }).take(5)
+        val wheelBox = android.widget.FrameLayout(this).apply {
+            outlineProvider = object : android.view.ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: android.graphics.Outline) {
+                    outline.setRoundRect(0, 0, view.width, view.height, ui.dp(20).toFloat())
+                }
+            }
+            clipToOutline = true
+        }
+        wheelBox.addView(LanguageWheel(this).apply {
+            embedded = true
+            languages = shown
+            onPick = { i ->
+                val name = shown[i]
+                val now = store.languages
+                store.languages = if (name in now) now - name else (now + name).distinct()
+                render()
+            }
+        }, android.widget.FrameLayout.LayoutParams(-1, ui.dp(250)))
+        column.addView(wheelBox, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = ui.dp(12) })
         val mine = store.languages
         column.addView(ui.rows(*Store.ALL_LANGUAGES.map { name ->
             ui.row(R.drawable.ic_languages, name, trailing = ui.toggle(name in mine) { on ->

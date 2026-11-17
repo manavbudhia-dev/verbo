@@ -1224,15 +1224,17 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
 
     /** [auto] = choosing the language to keep translating into, rather than translating once. */
     private fun showLanguages(auto: Boolean = false) {
-        if (auto) return showLanguageChoices(true)
         val mine = store.languages.take(5)
         showPanel {
             addView(LanguageWheel(this@VerboIme).apply {
                 languages = mine
-                onPick = { i -> translateInto(listOf(mine[i])) }
+                autoMode = auto
+                onPick = { i ->
+                    if (auto) { hidePanel(); setAuto(mine[i]) } else translateInto(listOf(mine[i]))
+                }
                 onCancel = { hidePanel(); showTyping() }
                 onSpace = { currentInputConnection?.commitText(" ", 1) }
-                onMore = { showLanguageChoices(false) }
+                onMore = { showLanguageChoices(auto) }
             }, LinearLayout.LayoutParams(-1, -1))
         }
     }
@@ -1252,7 +1254,9 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         }
         val choices = ArrayList<Pair<String, () -> Unit>>()
         val current = autoLang
-        if (!auto) {
+        if (auto) {
+            if (current != null) choices += "Stop auto-translate ($current)" to { hidePanel(); setAuto(null) }
+        } else {
             if (current != null) choices += "Stop auto-translate ($current)" to { hidePanel(); setAuto(null) }
             else choices += "Auto-translate every message…" to { showLanguages(auto = true) }
             if (mine.size > 1) choices += "All ${mine.size} of my languages" to { go(mine) }

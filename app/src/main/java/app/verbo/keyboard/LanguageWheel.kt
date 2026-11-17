@@ -26,6 +26,10 @@ class LanguageWheel(a: Context) : View(a) {
     var onCancel: () -> Unit = {}
     var onSpace: () -> Unit = {}
     var onMore: () -> Unit = {}
+    /** Choosing the language to keep translating into, rather than translating once. */
+    var autoMode = false
+    /** Living inside a settings page: no space bar, no Cancel, tighter bottom edge. */
+    var embedded = false
 
     private val d = resources.displayMetrics.density
     private val sp = resources.displayMetrics.scaledDensity
@@ -36,10 +40,15 @@ class LanguageWheel(a: Context) : View(a) {
     private val blue = Color.parseColor("#2E9BF9")
 
     private val cx get() = width / 2f
-    private val cy get() = height - dp(40f)
+    private val cy get() = height - dp(if (embedded) 14f else 40f)
     private val r get() = minOf(width * 0.46f, cy - dp(36f))
 
-    private fun pillText() = if (pick >= 0) languages[pick] else "Translate into"
+    private fun pillText() = when {
+        pick >= 0 -> languages[pick]
+        embedded -> "Your languages"
+        autoMode -> "Auto-translate into"
+        else -> "Translate into"
+    }
     private fun pillRect(): RectF {
         letters.typeface = Typeface.DEFAULT_BOLD
         letters.textSize = 14 * sp
@@ -72,9 +81,9 @@ class LanguageWheel(a: Context) : View(a) {
                 pick = -1
                 when {
                     pillRect().contains(event.x, event.y) -> onMore()
-                    spaceRect().contains(event.x, event.y) -> onSpace()
+                    !embedded && spaceRect().contains(event.x, event.y) -> onSpace()
                     i >= 0 -> onPick(i)
-                    else -> onCancel()
+                    !embedded -> onCancel()
                 }
             }
         }
@@ -155,10 +164,12 @@ class LanguageWheel(a: Context) : View(a) {
         face.shader = RadialGradient(cx, cy, dp(55f), intArrayOf(Color.parseColor("#CCFFFFFF"), Color.parseColor("#00FFFFFF")), null, Shader.TileMode.CLAMP)
         c.drawArc(RectF(cx - dp(55f), cy - dp(55f), cx + dp(55f), cy + dp(55f)), 180f, 180f, true, face)
         face.shader = null
-        letters.color = Color.parseColor("#98A2B3")
-        letters.textSize = 13 * sp
-        letters.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
-        c.drawText("Cancel", cx, cy - dp(14f) - (letters.descent() + letters.ascent()) / 2, letters)
+        if (!embedded) {
+            letters.color = Color.parseColor("#98A2B3")
+            letters.textSize = 13 * sp
+            letters.typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+            c.drawText("Cancel", cx, cy - dp(14f) - (letters.descent() + letters.ascent()) / 2, letters)
+        }
         val pill = pillRect()
         face.color = Color.parseColor("#14000000")
         c.drawRoundRect(RectF(pill.left, pill.top + dp(1f), pill.right, pill.bottom + dp(1f)), dp(10f), dp(10f), face)
@@ -168,13 +179,15 @@ class LanguageWheel(a: Context) : View(a) {
         letters.textSize = 14 * sp
         letters.typeface = Typeface.DEFAULT_BOLD
         c.drawText(pillText(), cx, pill.centerY() - (letters.descent() + letters.ascent()) / 2, letters)
-        val space = spaceRect()
-        face.color = Color.parseColor("#CFE2F4")
-        c.drawRoundRect(space, dp(8f), dp(8f), face)
-        edge.color = Color.parseColor("#86B7E4")
-        edge.strokeWidth = dp(1f)
-        c.drawRoundRect(space, dp(8f), dp(8f), edge)
-        letters.color = blue
-        c.drawText("space", cx, space.centerY() - (letters.descent() + letters.ascent()) / 2, letters)
+        if (!embedded) {
+            val space = spaceRect()
+            face.color = Color.parseColor("#CFE2F4")
+            c.drawRoundRect(space, dp(8f), dp(8f), face)
+            edge.color = Color.parseColor("#86B7E4")
+            edge.strokeWidth = dp(1f)
+            c.drawRoundRect(space, dp(8f), dp(8f), edge)
+            letters.color = blue
+            c.drawText("space", cx, space.centerY() - (letters.descent() + letters.ascent()) / 2, letters)
+        }
     }
 }
