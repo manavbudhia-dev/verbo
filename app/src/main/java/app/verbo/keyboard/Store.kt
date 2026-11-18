@@ -269,6 +269,23 @@ class Store(context: Context) {
     // connections
     var weather: Boolean get() = bool("weather", true); set(v) = put("weather", v)
     var notionToken: String get() = str("notion_token"); set(v) = put("notion_token", v.trim())
+    /** Where saves land: a page or database id shared with the integration. Chosen on this phone, not synced. */
+    var notionParent: String get() = str("notion_parent"); set(v) = put("notion_parent", v.trim())
+    var notionParentIsDb: Boolean get() = bool("notion_parent_db", false); set(v) = put("notion_parent_db", v)
+    /** The last thing shared into Verbo (WhatsApp & co.), waiting for the keyboard to act on it. */
+    var inboxText: String get() = str("inbox_text"); set(v) = put("inbox_text", v)
+    var inboxFile: String get() = str("inbox_file"); set(v) = put("inbox_file", v)
+    var inboxName: String get() = str("inbox_name"); set(v) = put("inbox_name", v)
+    var inboxMime: String get() = str("inbox_mime"); set(v) = put("inbox_mime", v)
+    var inboxFrom: String get() = str("inbox_from"); set(v) = put("inbox_from", v)
+    var inboxAt: Long get() = prefs?.getLong("inbox_at", 0L) ?: 0L
+        set(v) { prefs?.edit()?.putLong("inbox_at", v)?.apply() }
+    val inboxFresh: Boolean get() = inboxAt > 0 && System.currentTimeMillis() - inboxAt < 30 * 60 * 1000L &&
+        (inboxText.isNotBlank() || inboxFile.isNotBlank())
+    fun clearInbox() {
+        prefs?.edit()?.remove("inbox_text")?.remove("inbox_file")?.remove("inbox_name")?.remove("inbox_mime")
+            ?.remove("inbox_from")?.remove("inbox_at")?.apply()
+    }
     var calendlyToken: String get() = str("calendly_token"); set(v) = put("calendly_token", v.trim())
     /** Slack, GitHub, Todoist, Linear and Discord, by dashboard field name (see [APP_TOKENS]). */
     fun token(field: String): String = APP_TOKENS[field]?.let { str(it) } ?: ""
@@ -423,7 +440,7 @@ class Store(context: Context) {
     }
 
     fun tools(): List<ToolSpec> = Connections.tools(weather, notionToken, calendlyToken, customApis, places, APP_TOKENS.keys.associateWith { token(it) },
-        googleServices) { action, args -> Sync.google(this, action, args) }
+        googleServices, notionParent, notionParentIsDb) { action, args -> Sync.google(this, action, args) }
 
     var skills: List<Skill>
         get() {

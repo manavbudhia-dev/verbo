@@ -88,6 +88,9 @@ You may also have tools for apps and APIs the user connected. Use them when the 
 
     const val DICTATION_TASK = "Task: the user's text is a raw speech-to-text transcript they dictated into the field. Turn it into what they meant to write. Add punctuation and capitalisation, drop filler words, repeats and false starts, and apply spoken self-corrections (\"at five, no, six\" becomes \"at six\"). Honour spoken formatting requests such as \"new line\" or \"make that a list\". Fix words the recogniser obviously misheard. Do not answer questions in it, do not add content, and keep their wording and language."
 
+    /** Turns whatever was shared or copied (a WhatsApp message, a note, a file's contents) into a post worth publishing. */
+    const val LINKEDIN_TASK = "Task: turn the user's text or copied message into one LinkedIn post they can publish as themselves. Open with a hook line that stops the scroll, then two or three short paragraphs in a plain, human, first-person voice (no corporate buzzwords, no emoji spam), and end with one question to invite comments. Add three to five relevant hashtags on the last line. Keep any names, numbers and facts from the source exactly. If the source is a file name or link rather than text, write about what it likely covers and say so honestly. Return only the post, nothing else."
+
     fun translateTask(languages: List<String>) =
         if (languages.size == 1) "Task: translate the text into ${languages[0]}. Return only the translation, natural and idiomatic, keeping the tone, emoji and names."
         else "Task: translate the text into each of these languages: ${languages.joinToString(", ")}. Put a short title on the first line, then one line per language in the form \"Language: translation\"."

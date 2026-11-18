@@ -10,6 +10,8 @@
         <intent><action android:name="android.speech.RecognitionService" /></intent>
         <!-- Listing apps to pick from when a held key should act only in one app. -->
         <intent><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent>
+        <!-- Seeing whether LinkedIn (or another app) can take a drafted post straight from the share sheet. -->
+        <intent><action android:name="android.intent.action.SEND" /><data android:mimeType="text/plain" /></intent>
     </queries>
     <application android:label="Verbo" android:icon="@mipmap/ic_launcher" android:theme="@style/AppTheme" android:allowBackup="false">
         <activity android:name=".MainActivity" android:exported="true" android:windowSoftInputMode="adjustResize">
@@ -19,6 +21,25 @@
             </intent-filter>
         </activity>
         <activity android:name=".PageActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
+        <!-- WhatsApp & co. hand Verbo a message or file here; it waits in the keyboard's inbox. -->
+        <activity android:name=".ShareActivity" android:exported="true" android:launchMode="singleTop" android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="video/*" />
+                <data android:mimeType="audio/*" />
+                <data android:mimeType="application/*" />
+                <data android:mimeType="text/*" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+        </activity>
         <!-- "Continue with Google": the dashboard hands the browser back here with a one-time code. -->
         <activity android:name=".AuthActivity" android:exported="true" android:excludeFromRecents="true" android:launchMode="singleTask"
             android:theme="@android:style/Theme.Translucent.NoTitleBar">

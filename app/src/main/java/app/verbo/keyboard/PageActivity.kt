@@ -68,6 +68,7 @@ class PageActivity : Activity() {
         if (page == "chain-new" || page.startsWith("chain-edit:")) { chainPage(); return }
         if (page == "trigger-new" || page.startsWith("trigger-edit:")) { triggerPage(); return }
         if (page == "api-new" || page.startsWith("api-edit:")) { apiPage(); return }
+        if (page == "notion") { notionPage(); return }
         if (page == "key-new" || page.startsWith("key-edit:")) { keyPage(); return }
         if (page == "memory-new" || page.startsWith("memory-edit:")) { memorySheet(); return }
         if (page == "triggers") { triggersPage(); return }
@@ -1073,8 +1074,8 @@ class PageActivity : Activity() {
         column.addView(ui.section(R.drawable.ic_link, "Connect with a token"))
         note(column, "Paste a token once and the assistant can read and write in these apps for you.")
         column.addView(ui.rows(
-            ui.brandRow(Brand.notion, "Notion", if (store.notionToken.isEmpty()) "Not connected" else "Connected", ui.chevron()) {
-                editToken("Notion", "Paste an internal integration token from notion.so/my-integrations, then share the pages you want with that integration.", store.notionToken) { store.notionToken = it }
+            ui.brandRow(Brand.notion, "Notion", if (store.notionToken.isEmpty()) "Not connected" else if (store.notionParent.isBlank()) "Connected · pick where saves land" else "Connected · saves to your page", ui.chevron()) {
+                go("notion")
             },
             ui.brandRow(Brand.calendly, "Calendly", if (store.calendlyToken.isEmpty()) "Not connected" else "Connected", ui.chevron()) {
                 editToken("Calendly", "Paste a personal access token from Calendly → Integrations → API & webhooks.", store.calendlyToken) { store.calendlyToken = it }
@@ -1112,6 +1113,38 @@ class PageActivity : Activity() {
             .setPositiveButton("Save") { _, _ -> save(field.text.toString()); render() }
             .setNeutralButton("Disconnect") { _, _ -> save(""); render() }
             .setNegativeButton("Cancel", null).show()
+    }
+
+    /** Notion connect sheet: token, the page or database saves land in, and a live connection test. */
+    private fun notionPage() = sheet(
+        SkillArt(this, R.drawable.ic_brand_notion, Color.parseColor("#9CA3AF"), Color.parseColor("#191919")),
+        R.drawable.ic_brand_notion, "Notion", "Where Verbo saves what you share",
+    ) { column ->
+        column.addView(ui.text("Paste an internal integration token from notion.so/my-integrations. Then open the page or database you want in Notion and share it with that integration (••• → Connections).", 13.5f, ui.muted))
+        val tokenRow = look.fieldRow(R.drawable.ic_shield, "Integration token", store.notionToken, secret = true)
+        column.addView(tokenRow)
+        val parentRow = look.fieldRow(R.drawable.ic_file_text, "Page or database id to save under (optional)", store.notionParent)
+        column.addView(parentRow)
+        column.addView(ui.text("Leave the id empty and Verbo picks an Inbox / Notes page for you. The id is the long code in the page's link.", 12.5f, ui.muted))
+        var isDb = store.notionParentIsDb
+        column.addView(look.checkRow(isDb, "That id is a database, not a page") { isDb = it })
+        val state = look.text("", 13.5f, look.muted).apply { setPadding(look.dp(2), look.dp(10), 0, 0) }
+        column.addView(state)
+        column.addView(ui.button("Test connection", R.drawable.ic_check) {
+            val token = look.editText(tokenRow).text.toString().trim()
+            if (token.isEmpty()) { state.text = "Paste a token first."; return@button }
+            state.text = "Testing…"
+            Thread {
+                val outcome = try { Connections.notionTest(token) } catch (e: Exception) { "Couldn't connect: ${e.message?.take(100)}" }
+                runOnUiThread { state.text = outcome }
+            }.start()
+        })
+        column.addView(ui.button("Save", R.drawable.ic_check, filled = true) {
+            store.notionToken = look.editText(tokenRow).text.toString()
+            store.notionParent = look.editText(parentRow).text.toString()
+            store.notionParentIsDb = isDb
+            finish()
+        })
     }
 
     /** The shared bottom-sheet scaffold: gradient art header, back button, grabber, icon-and-title head, then [fill] adds the fields. */
@@ -1343,6 +1376,7 @@ class PageActivity : Activity() {
             ui.row(R.drawable.ic_keyboard, "Hold a marked letter", "Runs the skill bound to that key; set the letter when editing a skill"),
             ui.row(R.drawable.ic_message_square, "Use copied text", "Copy a message, then tap this chip above the keys to give it to the assistant as context"),
             ui.row(R.drawable.ic_mic, "Tap Verbo to speak", "Tap the mascot in the request panel and just talk — Verbo waits for a real pause before it answers, so it never cuts you off mid-sentence. Ask Verbo runs it as a request; Just type puts the words in the field. Hold the Voice pill to dictate"),
+            ui.row(R.drawable.ic_brand_whatsapp, "Share from WhatsApp to Notion", "In WhatsApp tap a message or file → Share → Verbo. Back in WhatsApp, open the keyboard and tap the 📥 chip: Save to Notion files it under your chosen page, or Draft a LinkedIn post turns it into a post you can share"),
             ui.row(R.drawable.ic_keyboard, "Space twice", "Ends the sentence with a full stop"),
             ui.row(R.drawable.ic_delete, "Backspace after a correction", "Puts back the word you typed"),
         ))

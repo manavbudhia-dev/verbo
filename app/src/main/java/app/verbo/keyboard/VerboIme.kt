@@ -370,6 +370,12 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         if (!assistantOn) return
         row.addView(modeChip(R.drawable.ic_pencil_line, "Type", true) { hidePanel(); showTyping() }, chipParams())
         row.addView(modeChip(R.drawable.ic_sparkle, "Act", false) { showActs() }, chipParams())
+        // A share from WhatsApp & co. is waiting: one tap to save it to Notion or turn it into a post.
+        if (store.inboxFresh) {
+            val inbox = chipView("📥 From " + store.inboxFrom, p.accent, p.accentPressed, p.onAccent)
+            inbox.setOnClickListener { feedback(KeyboardView.Type.MODE); showInboxPanel() }
+            row.addView(inbox, chipParams())
+        }
         val fresh = contextText == null && hasFreshClip()
         // Triggers: the copied message is matched on the phone; a chip offers each matching skill.
         val clip = if (store.triggersOn) contextText ?: (if (fresh) readClip() else null) else null
@@ -1451,6 +1457,147 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     }
 
     /** Runs [task] (null = "do what the text says") on the field's text, with the copied context if one is attached. */
+    /** The share inbox: what WhatsApp handed Verbo, one tap from Notion or a LinkedIn post. */
+    internal fun showInboxPanel() = showPanel(dp(360)) {
+        background = paper(false)
+        addView(botTop({ hidePanel(); showTyping() }))
+        addView(TextView(this@VerboIme).apply {
+            text = "Shared to Verbo"
+            setTextColor(p.text)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+        }, LinearLayout.LayoutParams(-1, -2))
+        addView(TextView(this@VerboIme).apply {
+            text = "From ${store.inboxFrom} · save it or post it"
+            setTextColor(p.muted)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+            gravity = Gravity.CENTER
+        }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2) })
+        val card = LinearLayout(this@VerboIme).apply {
+            orientation = LinearLayout.VERTICAL
+            background = rounded(Color.WHITE, 16)
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+        }
+        if (store.inboxFile.isNotBlank()) {
+            val f = java.io.File(store.inboxFile)
+            val row = LinearLayout(this@VerboIme).apply { gravity = Gravity.CENTER_VERTICAL }
+            row.addView(ImageView(this@VerboIme).apply {
+                setImageResource(if (store.inboxMime.startsWith("image/")) R.drawable.ic_image else R.drawable.ic_file_text)
+                setColorFilter(p.accent)
+            }, LinearLayout.LayoutParams(dp(22), dp(22)))
+            row.addView(TextView(this@VerboIme).apply {
+                text = "${store.inboxName.ifBlank { "Shared file" }} · ${String.format("%.1f", f.length() / 1024.0 / 1024.0)} MB"
+                setTextColor(p.text)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                typeface = Typeface.DEFAULT_BOLD
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                setPadding(dp(10), 0, 0, 0)
+            }, LinearLayout.LayoutParams(0, -2, 1f))
+            card.addView(row)
+        }
+        if (store.inboxText.isNotBlank()) {
+            card.addView(TextView(this@VerboIme).apply {
+                text = store.inboxText
+                setTextColor(p.text)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                maxLines = 4
+                ellipsize = TextUtils.TruncateAt.END
+                setPadding(0, if (card.childCount > 0) dp(10) else 0, 0, 0)
+            })
+        }
+        addView(card, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(20), dp(12), dp(20), 0) })
+        addView(View(this@VerboIme), LinearLayout.LayoutParams(1, 0, 0.4f))
+        val save = chipView("Save to Notion", p.accent, p.accentPressed, p.onAccent)
+        save.typeface = Typeface.DEFAULT_BOLD
+        save.setOnClickListener { feedback(KeyboardView.Type.MODE); saveInboxToNotion() }
+        addView(save, LinearLayout.LayoutParams(-1, dp(46)).apply { setMargins(dp(20), dp(10), dp(20), 0) })
+        val post = chipView("Draft a LinkedIn post", p.key, p.keyPressed, p.text)
+        post.typeface = Typeface.DEFAULT_BOLD
+        post.setOnClickListener { feedback(KeyboardView.Type.MODE); draftInboxLinkedIn() }
+        addView(post, LinearLayout.LayoutParams(-1, dp(46)).apply { setMargins(dp(20), dp(8), dp(20), 0) })
+        val foot = LinearLayout(this@VerboIme).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(20), dp(8), dp(20), 0) }
+        if (store.inboxText.isNotBlank()) {
+            val put = chipView("Insert text", p.key, p.keyPressed, p.text)
+            put.setOnClickListener { feedback(KeyboardView.Type.MODE); val t = store.inboxText; hidePanel(); insert(t) }
+            foot.addView(put, LinearLayout.LayoutParams(0, dp(40), 1f).apply { rightMargin = dp(8) })
+        }
+        val drop = chipView("Dismiss", Color.TRANSPARENT, p.keyPressed, p.muted)
+        drop.setOnClickListener { feedback(KeyboardView.Type.MODE); store.clearInbox(); hidePanel(); showTyping(); buildChips() }
+        foot.addView(drop, LinearLayout.LayoutParams(0, dp(40), 1f))
+        addView(foot)
+        addView(botGlobe())
+    }
+
+    /** Sends the shared message/file to the user's Notion destination; no AI key needed, only the Notion token. */
+    private fun saveInboxToNotion() {
+        if (busy) return
+        if (store.notionToken.isBlank()) {
+            hidePanel()
+            showStatus("Connect Notion to save pages", "Set up" to { openPage("notion") })
+            return
+        }
+        val token = generation
+        val notionToken = store.notionToken
+        val parent = store.notionParent
+        val isDb = store.notionParentIsDb
+        val text = store.inboxText
+        val name = store.inboxName
+        val from = store.inboxFrom
+        val mime = store.inboxMime
+        val file = store.inboxFile.takeIf { it.isNotBlank() }?.let { java.io.File(it) }
+        val title = (text.lines().firstOrNull { it.isNotBlank() } ?: name.ifBlank { "Shared from $from" }).take(70)
+        val content = text.ifBlank { "Shared from $from: $name" }
+        busy = true
+        showLoading("Saving to Notion") { busy = false; hidePanel(); showTyping() }
+        worker.execute {
+            val outcome = try {
+                Connections.notionSave(notionToken, parent, isDb, title, content, file, mime)
+            } catch (e: Exception) {
+                "Notion didn't accept it: ${e.message?.take(120)}"
+            }
+            main.post {
+                if (token != generation) return@post
+                busy = false
+                hidePanel()
+                if (outcome.startsWith("http")) {
+                    store.clearInbox()
+                    buildChips()
+                    showStatus("Saved to Notion", "Open" to { openLink(outcome) })
+                } else showStatus(outcome, "Set up" to { openPage("notion") })
+            }
+        }
+    }
+
+    /** Turns the share into a publishable LinkedIn post; the result bar offers Edit, Apply and the composer. */
+    private fun draftInboxLinkedIn() {
+        if (busy) return
+        if (store.activeKey.isBlank()) {
+            hidePanel()
+            showStatus("Add your ${store.providerName} API key to draft posts", "Set up" to { openApp() })
+            return
+        }
+        val token = generation
+        val input = store.inboxText.ifBlank { "A file shared from ${store.inboxFrom}: ${store.inboxName}" }
+        val engine = Engine(store)
+        busy = true
+        showLoading("Drafting your post") { busy = false; hidePanel(); showTyping() }
+        worker.execute {
+            val result = try {
+                engine.run(Ai.LINKEDIN_TASK, input, web = false, tools = emptyList(), label = "LinkedIn post")
+            } catch (e: Exception) {
+                ActionResult("The draft failed: ${e.message?.take(120)}", null)
+            }
+            main.post {
+                if (token != generation) return@post
+                busy = false
+                val share = "https://www.linkedin.com/feed/?shareActive=true&text=" + Uri.encode(result.text)
+                showResult(result.copy(openUri = share), { chosen -> insert(chosen.text) }, null)
+            }
+        }
+    }
+
     private fun runTask(label: String, task: String?, card: Boolean, then: (ActionResult) -> ActionResult = { it }, retry: () -> Unit) {
         if (busy) return
         if (isPasswordField()) {
@@ -2351,10 +2498,28 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
 
     private fun openLink(uri: String) {
         PhoneCalendar.parseTemplate(uri)?.let { saveEvent(uri, it); return }
+        val parsed = Uri.parse(uri)
+        if (parsed.host == "www.linkedin.com" && parsed.getQueryParameter("shareActive") == "true") {
+            shareLinkedIn(parsed.getQueryParameter("text").orEmpty())
+            return
+        }
         try {
-            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(uri)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            startActivity(Intent(Intent.ACTION_VIEW, parsed).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         } catch (e: Exception) {
             showStatus("No app can open that")
+        }
+    }
+
+    /** A drafted post goes to the LinkedIn app when it is installed, otherwise to the web composer. */
+    private fun shareLinkedIn(text: String) {
+        val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
+        val linked = packageManager.queryIntentActivities(send, 0).firstOrNull { it.activityInfo.packageName == "com.linkedin.android" }
+        try {
+            if (linked != null) startActivity(send.setPackage("com.linkedin.android").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            else startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(
+                "https://www.linkedin.com/feed/?shareActive=true&text=" + Uri.encode(text))).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (e: Exception) {
+            showStatus("No app can open LinkedIn")
         }
     }
 

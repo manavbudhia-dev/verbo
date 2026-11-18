@@ -38,6 +38,7 @@ class ConnectionsTest {
         Connections.githubBase = "$base/github"
         Connections.todoistBase = "$base/todoist"
         Connections.linearUrl = "$base/linear"
+        Connections.notionBase = "$base/notion"
     }
 
     @After
@@ -47,22 +48,40 @@ class ConnectionsTest {
         Connections.githubBase = "https://api.github.com"
         Connections.todoistBase = "https://api.todoist.com/api/v1"
         Connections.linearUrl = "https://api.linear.app/graphql"
+        Connections.notionBase = "https://api.notion.com/v1"
     }
 
     private fun serve(socket: Socket) {
-        val input = socket.getInputStream().bufferedReader()
-        val first = input.readLine() ?: return
+        val input = java.io.BufferedInputStream(socket.getInputStream())
+        fun line(): String? {
+            val sb = StringBuilder()
+            while (true) {
+                val b = input.read()
+                if (b < 0) return null
+                if (b == '\n'.code) break
+                if (b != '\r'.code) sb.append(b.toChar())
+            }
+            return sb.toString()
+        }
+        val first = line() ?: return
         val headers = HashMap<String, String>()
         var length = 0
         while (true) {
-            val line = input.readLine() ?: return
+            val line = line() ?: return
             if (line.isEmpty()) break
             headers[line.substringBefore(':').lowercase()] = line.substringAfter(':').trim()
             if (line.startsWith("Content-Length:", ignoreCase = true)) length = line.substringAfter(':').trim().toInt()
         }
-        val raw = CharArray(length).also { var read = 0; while (read < length) read += input.read(it, read, length - read) }
+        // Content-Length counts bytes, not characters: a body with non-ASCII text must be read as bytes.
+        val raw = ByteArray(length)
+        var read = 0
+        while (read < length) {
+            val n = input.read(raw, read, length - read)
+            if (n < 0) break
+            read += n
+        }
         val path = first.split(' ')[1]
-        val req = Req(first.substringBefore(' '), path, headers, String(raw))
+        val req = Req(first.substringBefore(' '), path, headers, String(raw, Charsets.UTF_8))
         val out = synchronized(this) {
             requests += req
             // A Linear call is told apart by what it asks for.
@@ -168,5 +187,79 @@ class ConnectionsTest {
         assertTrue(all.keys.containsAll(listOf("google_calendar_create", "gmail_send", "gmail_create_draft", "gmail_search")))
         assertEquals("ok:gmail_draft", all["gmail_create_draft"]!!.run(mapOf("subject" to "Hi", "body" to "x")))
         assertEquals("calendar_create" to mapOf("title" to "Lunch"), all["google_calendar_create"]!!.run(mapOf("title" to "Lunch")).let { calls.last() })
+    }
+
+    @Test
+    fun notionSaveLandsUnderTheChosenPage() {
+        replies["/notion/pages"] = """{"url":"https://notion.so/My-Page-abc"}"""
+        val url = Connections.notionSave("ntn_x", "parent-1", false, "Invoice from Acme", "Amount due: 500\nPay by Friday")
+        assertEquals("https://notion.so/My-Page-abc", url)
+        val req = requests.single()
+        assertEquals("POST", req.method)
+        assertEquals("/notion/pages", req.path)
+        assertEquals("Bearer ntn_x", req.headers["authorization"])
+        assertEquals("2022-06-28", req.headers["notion-version"])
+        val body = JSONObject(req.body)
+        assertEquals("parent-1", body.getJSONObject("parent").getString("page_id"))
+        assertEquals("Invoice from Acme", body.getJSONObject("properties").getJSONObject("title").getJSONArray("title").getJSONObject(0).getJSONObject("text").getString("content"))
+        assertEquals(2, body.getJSONArray("children").length())
+    }
+
+    @Test
+    fun notionSaveCanTargetADatabase() {
+        replies["/notion/pages"] = """{"url":"https://notion.so/db-row"}"""
+        Connections.notionSave("ntn_x", "db-7", true, "New lead", "Met at the expo")
+        assertEquals("db-7", JSONObject(requests.single().body).getJSONObject("parent").getString("database_id"))
+    }
+
+    @Test
+    fun notionSaveFindsAnInboxPageWhenNoDestinationIsSet() {
+        replies["/notion/search"] = """{"results":[{"object":"page","id":"inbox-1","properties":[{"type":"title","title":[{"plain_text":"Inbox"}]}],"url":"https://notion.so/inbox"}]}"""
+        replies["/notion/pages"] = """{"url":"https://notion.so/saved"}"""
+        Connections.notionSave("ntn_x", "", false, "Note", "body")
+        assertEquals(listOf("/notion/search", "/notion/pages"), requests.map { it.path })
+        assertEquals("inbox-1", JSONObject(requests[1].body).getJSONObject("parent").getString("page_id"))
+    }
+
+    @Test
+    fun notionSaveUploadsTheSharedFile() {
+        val file = java.io.File.createTempFile("verbo-share", ".pdf").apply { writeText("%PDF-1.4 test"); deleteOnExit() }
+        replies["/notion/file_uploads"] = """{"id":"up-1","upload_url":"$base/notion/send/up-1"}"""
+        replies["/notion/send/up-1"] = """{"id":"up-1","status":"uploaded"}"""
+        replies["/notion/pages"] = """{"url":"https://notion.so/with-file"}"""
+        val url = Connections.notionSave("ntn_x", "p1", false, "Report", "See attached", file, "application/pdf")
+        assertEquals("https://notion.so/with-file", url)
+        assertEquals(listOf("/notion/file_uploads", "/notion/send/up-1", "/notion/pages"), requests.map { it.path })
+        assertTrue(requests[1].headers["content-type"]!!.startsWith("multipart/form-data"))
+        assertTrue(requests[1].body.contains("filename=\""))
+        val block = JSONObject(requests[2].body).getJSONArray("children").getJSONObject(1)
+        assertEquals("file", block.getString("type"))
+        assertEquals("up-1", block.getJSONObject("file").getJSONObject("file_upload").getString("id"))
+    }
+
+    @Test
+    fun notionBigFileStaysOnThePhoneAndIsNamed() {
+        val file = java.io.File.createTempFile("verbo-big", ".zip").apply {
+            deleteOnExit()
+            java.io.RandomAccessFile(this, "rw").use { it.setLength(6L * 1024 * 1024) }
+        }
+        replies["/notion/pages"] = """{"url":"https://notion.so/note"}"""
+        Connections.notionSave("ntn_x", "p1", false, "Big zip", "body", file, "application/zip")
+        assertEquals(listOf("/notion/pages"), requests.map { it.path })
+        assertTrue(requests.single().body.contains("5 MB"))
+    }
+
+    @Test
+    fun notionTestNamesTheIntegration() {
+        replies["/notion/users/me"] = """{"name":"Verbo Bot"}"""
+        assertEquals("Connected as Verbo Bot", Connections.notionTest("ntn_x"))
+    }
+
+    @Test
+    fun notionToolSavesUnderTheStoredDestination() {
+        replies["/notion/pages"] = """{"url":"https://notion.so/x"}"""
+        val t = Connections.tools(false, "ntn_x", "", emptyList(), false, emptyMap(), emptySet(), "stored-9", false).associateBy { it.name }
+        t["notion_create_page"]!!.run(mapOf("title" to "T", "content" to "c"))
+        assertEquals("stored-9", JSONObject(requests.single().body).getJSONObject("parent").getString("page_id"))
     }
 }

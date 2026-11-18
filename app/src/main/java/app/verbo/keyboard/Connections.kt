@@ -20,10 +20,12 @@ object Connections {
     internal var githubBase = "https://api.github.com"
     internal var todoistBase = "https://api.todoist.com/api/v1"
     internal var linearUrl = "https://api.linear.app/graphql"
+    internal var notionBase = "https://api.notion.com/v1"
 
     /** [tokens] holds the other app tokens by dashboard field name: slackToken, githubToken, todoistToken, linearToken, discordWebhook. */
     fun tools(weather: Boolean, notionToken: String, calendlyToken: String, apis: List<CustomApi>, places: Boolean = true,
               tokens: Map<String, String> = emptyMap(), googleServices: Set<String> = emptySet(),
+              notionParent: String = "", notionParentIsDb: Boolean = false,
               google: ((String, Map<String, String>) -> String)? = null): List<ToolSpec> {
         val out = ArrayList<ToolSpec>()
         if (places) out += ToolSpec(
@@ -47,10 +49,15 @@ object Connections {
                 listOf("page_id" to "Id from notion_search"), listOf("page_id"),
             ) { notionRead(notionToken, it["page_id"].orEmpty()) }
             out += ToolSpec(
-                "notion_create_page", "Create a new Notion page under an existing page. Find the parent with notion_search first.",
-                listOf("parent_page_id" to "Id of the page to create it under", "title" to "Page title", "content" to "Body text; each line becomes a paragraph"),
-                listOf("parent_page_id", "title"),
-            ) { notionCreate(notionToken, it["parent_page_id"].orEmpty(), it["title"].orEmpty(), it["content"].orEmpty()) }
+                "notion_create_page", "Save a note to the user's Notion. It lands under their chosen destination automatically; pass parent_page_id only if they name a different page. Pass file_path to attach a file already on the phone.",
+                listOf("parent_page_id" to "Optional id of another page to save under", "title" to "Page title", "content" to "Body text; each line becomes a paragraph", "file_path" to "Optional absolute path of a file on the phone to attach"),
+                listOf("title"),
+            ) {
+                val path = it["file_path"].orEmpty()
+                val file = if (path.isNotBlank()) java.io.File(path).takeIf { f -> f.isFile } else null
+                notionSave(notionToken, it["parent_page_id"].orEmpty().ifBlank { notionParent }, notionParentIsDb,
+                    it["title"].orEmpty(), it["content"].orEmpty(), file, mimeOf(path))
+            }
         }
 
         if (calendlyToken.isNotBlank()) out += ToolSpec(
@@ -207,11 +214,18 @@ object Connections {
 
     private fun notionHeaders(token: String) = mapOf("Authorization" to "Bearer $token", "Notion-Version" to "2022-06-28")
 
+    private fun mimeOf(path: String) = when (path.substringAfterLast('.', "").lowercase()) {
+        "jpg", "jpeg" -> "image/jpeg"; "png" -> "image/png"; "gif" -> "image/gif"; "webp" -> "image/webp"
+        "pdf" -> "application/pdf"; "txt", "md" -> "text/plain"; "mp3" -> "audio/mpeg"; "mp4" -> "video/mp4"
+        "doc" -> "application/msword"; "docx" -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        else -> ""
+    }
+
     private fun plain(rich: JsonNode) = rich.joinToString("") { it.path("plain_text").asText() }
 
     private fun notionSearch(token: String, query: String): String {
         val body = json.writeValueAsString(mapOf("query" to query, "page_size" to 10))
-        val res = json.readTree(http("POST", "https://api.notion.com/v1/search", notionHeaders(token), body))
+        val res = json.readTree(http("POST", "$notionBase/search", notionHeaders(token), body))
         val lines = res.path("results").map { item ->
             val title = if (item.path("object").asText() == "database") plain(item.path("title"))
             else item.path("properties").firstOrNull { it.path("type").asText() == "title" }?.let { plain(it.path("title")) } ?: ""
@@ -221,24 +235,90 @@ object Connections {
     }
 
     private fun notionRead(token: String, pageId: String): String {
-        val res = json.readTree(http("GET", "https://api.notion.com/v1/blocks/${enc(pageId)}/children?page_size=100", notionHeaders(token), null))
+        val res = json.readTree(http("GET", "$notionBase/blocks/${enc(pageId)}/children?page_size=100", notionHeaders(token), null))
         val text = res.path("results").joinToString("\n") { block -> plain(block.path(block.path("type").asText()).path("rich_text")) }
         val more = if (res.path("has_more").asBoolean()) "\n[The page continues beyond the first 100 blocks.]" else ""
         return clip(text.ifBlank { "(The page has no text.)" }) + more
     }
 
-    private fun notionCreate(token: String, parent: String, title: String, content: String): String {
-        val children = content.lines().filter { it.isNotBlank() }.flatMap { it.chunked(1900) }.take(100).map { line ->
-            mapOf("object" to "block", "type" to "paragraph",
+    /** Confirms a token works and names the integration, so the connect sheet can show a live tick. */
+    fun notionTest(token: String): String {
+        val me = json.readTree(http("GET", "$notionBase/users/me", notionHeaders(token), null))
+        val name = me.path("name").asText().ifBlank { "the integration" }
+        return "Connected as $name"
+    }
+
+    /** Notion's free workspaces accept uploads up to 5 MB; bigger files stay on the phone and are named in the page. */
+    private const val NOTION_MAX_UPLOAD = 5L * 1024 * 1024
+
+    /**
+     * Saves a note (and optionally a shared file) into the user's Notion. [parent] may be a page or a
+     * database id; when blank we look for a sensible inbox page first. Returns the new page's URL.
+     */
+    fun notionSave(token: String, parent: String, parentIsDb: Boolean, title: String, content: String,
+                   file: java.io.File? = null, mime: String = ""): String {
+        var dest = parent.trim()
+        var isDb = parentIsDb
+        if (dest.isEmpty()) {
+            val found = json.readTree(http("POST", "$notionBase/search", notionHeaders(token),
+                json.writeValueAsString(mapOf("query" to "", "page_size" to 20))))
+            val pick = found.path("results").firstOrNull { item ->
+                val t = if (item.path("object").asText() == "database") plain(item.path("title"))
+                else item.path("properties").firstOrNull { it.path("type").asText() == "title" }?.let { plain(it.path("title")) } ?: ""
+                Regex("inbox|notes|saved|reading", RegexOption.IGNORE_CASE).containsMatchIn(t)
+            } ?: found.path("results").firstOrNull()
+            if (pick != null) {
+                dest = pick.path("id").asText()
+                isDb = pick.path("object").asText() == "database"
+            }
+        }
+        if (dest.isEmpty()) return "No Notion page is shared with the integration yet. Share a page with it in Notion, then try again."
+
+        val children = ArrayList<Map<String, Any>>()
+        content.lines().filter { it.isNotBlank() }.flatMap { it.chunked(1900) }.take(90).forEach { line ->
+            children += mapOf("object" to "block", "type" to "paragraph",
                 "paragraph" to mapOf("rich_text" to listOf(mapOf("type" to "text", "text" to mapOf("content" to line)))))
         }
-        val body = json.writeValueAsString(mapOf(
-            "parent" to mapOf("page_id" to parent),
-            "properties" to mapOf("title" to mapOf("title" to listOf(mapOf("text" to mapOf("content" to title))))),
-            "children" to children,
-        ))
-        val res = json.readTree(http("POST", "https://api.notion.com/v1/pages", notionHeaders(token), body))
-        return "Created: ${res.path("url").asText()}"
+        if (file != null && file.isFile) {
+            val mb = file.length() / (1024.0 * 1024.0)
+            if (file.length() <= NOTION_MAX_UPLOAD) {
+                val uploadId = notionUpload(token, file, mime.ifBlank { "application/octet-stream" })
+                if (uploadId != null) {
+                    val kind = if (mime.startsWith("image/")) "image" else "file"
+                    children += mapOf("object" to "block", "type" to kind,
+                        kind to mapOf("file_upload" to mapOf("id" to uploadId)))
+                }
+            } else {
+                children += mapOf("object" to "block", "type" to "paragraph",
+                    "paragraph" to mapOf("rich_text" to listOf(mapOf("type" to "text", "text" to mapOf("content" to
+                        "Attached on the phone: ${file.name} (${String.format("%.1f", mb)} MB) — over Notion's 5 MB upload limit.")))))
+            }
+        }
+        val parentMap = if (isDb) mapOf("database_id" to dest) else mapOf("page_id" to dest)
+        val props = mapOf("title" to mapOf("title" to listOf(mapOf("text" to mapOf("content" to title)))))
+        val body = json.writeValueAsString(mapOf("parent" to parentMap, "properties" to props, "children" to children))
+        val res = json.readTree(http("POST", "$notionBase/pages", notionHeaders(token), body))
+        return res.path("url").asText().ifBlank { "Saved to Notion" }
+    }
+
+    /** Notion's two-step upload: open an upload slot, then send the bytes as multipart/form-data. */
+    private fun notionUpload(token: String, file: java.io.File, mime: String): String? {
+        val opened = json.readTree(http("POST", "$notionBase/file_uploads", notionHeaders(token),
+            json.writeValueAsString(mapOf("filename" to file.name, "content_type" to mime))))
+        val id = opened.path("id").asText()
+        val url = opened.path("upload_url").asText()
+        if (id.isEmpty() || url.isEmpty()) return null
+        val boundary = "----VerboBoundary${System.nanoTime()}"
+        val head = ("--$boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"${file.name}\"\r\n" +
+            "Content-Type: $mime\r\n\r\n").toByteArray()
+        val tail = "\r\n--$boundary--\r\n".toByteArray()
+        val bytes = file.readBytes()
+        val body = ByteArray(head.size + bytes.size + tail.size)
+        System.arraycopy(head, 0, body, 0, head.size)
+        System.arraycopy(bytes, 0, body, head.size, bytes.size)
+        System.arraycopy(tail, 0, body, head.size + bytes.size, tail.size)
+        httpRaw("POST", url, notionHeaders(token), body, "multipart/form-data; boundary=$boundary")
+        return id
     }
 
     // ---------- Calendly ----------
@@ -395,7 +475,10 @@ object Connections {
     private fun clip(s: String) = if (s.length <= MAX_BODY) s
     else s.take(MAX_BODY) + "\n[Response cut off here: ${s.length - MAX_BODY} more characters were not shown.]"
 
-    private fun http(method: String, url: String, headers: Map<String, String>, body: String?): String {
+    private fun http(method: String, url: String, headers: Map<String, String>, body: String?): String =
+        httpRaw(method, url, headers, body?.toByteArray(), if (body != null) "application/json" else null)
+
+    private fun httpRaw(method: String, url: String, headers: Map<String, String>, body: ByteArray?, contentType: String?): String {
         val conn = URL(url).openConnection() as HttpURLConnection
         try {
             conn.requestMethod = method
@@ -407,8 +490,8 @@ object Connections {
             headers.forEach { (k, v) -> conn.setRequestProperty(k, v) }
             if (body != null) {
                 conn.doOutput = true
-                conn.setRequestProperty("Content-Type", "application/json")
-                conn.outputStream.use { it.write(body.toByteArray()) }
+                if (contentType != null) conn.setRequestProperty("Content-Type", contentType)
+                conn.outputStream.use { it.write(body) }
             }
             val code = conn.responseCode
             val stream = if (code in 200..299) conn.inputStream else conn.errorStream

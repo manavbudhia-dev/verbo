@@ -894,6 +894,121 @@ class KeyboardTest {
     }
 
     @Test
+    fun aWhatsAppShareWaitsInTheKeyboardInbox() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        store.welcomed = true
+        store.clearInbox()
+        val file = File.createTempFile("invoice", ".pdf").apply { writeText("%PDF-1.4 invoice"); deleteOnExit() }
+        val intent = android.content.Intent(RuntimeEnvironment.getApplication(), ShareActivity::class.java).apply {
+            action = android.content.Intent.ACTION_SEND
+            type = "application/pdf"
+            putExtra(android.content.Intent.EXTRA_STREAM, android.net.Uri.fromFile(file))
+            putExtra(android.content.Intent.EXTRA_TEXT, "Invoice for March — please file")
+            putExtra(android.content.Intent.EXTRA_REFERRER, android.net.Uri.parse("android-app://com.whatsapp"))
+        }
+        val activity = Robolectric.buildActivity(ShareActivity::class.java, intent).setup().get()
+        assertEquals("the message came through", "Invoice for March — please file", store.inboxText)
+        assertTrue("the file was copied into app storage", store.inboxFile.isNotBlank() && File(store.inboxFile).exists())
+        assertTrue("the file keeps its name", store.inboxName.endsWith(".pdf"))
+        assertEquals("WhatsApp", store.inboxFrom)
+        assertTrue("the share is fresh", store.inboxFresh)
+        val screen = activity.findViewById<View>(android.R.id.content)
+        assertTrue("the share screen offers Notion", findText(screen, "Save to Notion") != null)
+        assertTrue("the share screen offers LinkedIn", findText(screen, "Draft a LinkedIn post") != null)
+        // Back in WhatsApp, the keyboard shows the inbox chip and opens the panel.
+        ime.onStartInputView(field.info, false)
+        layout(root)
+        assertTrue("the inbox chip appears", findText(root, "📥 From WhatsApp") != null)
+        clickLabel(root, "📥 From WhatsApp")
+        assertTrue("the panel names the share", findText(root, "Shared to Verbo") != null)
+        assertTrue("the file is previewed", findText(root, "Save to Notion") != null)
+        store.notionToken = ""
+        clickLabel(root, "Save to Notion")
+        assertTrue("without a token it asks to connect", findText(root, "Connect Notion to save pages") != null)
+        clickLabel(root, "📥 From WhatsApp")
+        clickLabel(root, "Dismiss")
+        assertTrue("dismissing empties the inbox", !store.inboxFresh)
+        assertTrue("the chip goes away", findText(root, "📥 From WhatsApp") == null)
+    }
+
+    @Test
+    fun savingTheInboxToNotionFilesItUnderTheChosenPage() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        store.welcomed = true
+        store.notionToken = "ntn_x"
+        store.notionParent = "page-42"
+        store.inboxText = "Invoice for March — please file"
+        store.inboxFile = ""
+        store.inboxName = ""
+        store.inboxFrom = "WhatsApp"
+        store.inboxAt = System.currentTimeMillis()
+        val paths = ArrayList<String>()
+        val server = java.net.ServerSocket(0, 50, java.net.InetAddress.getByName("127.0.0.1"))
+        val base = "http://127.0.0.1:${server.localPort}"
+        Thread {
+            while (!server.isClosed) {
+                val socket = try { server.accept() } catch (e: Exception) { break }
+                socket.use { sock ->
+                    val input = java.io.BufferedInputStream(sock.getInputStream())
+                    fun line(): String? {
+                        val sb = StringBuilder()
+                        while (true) {
+                            val b = input.read()
+                            if (b < 0) return null
+                            if (b == '\n'.code) break
+                            if (b != '\r'.code) sb.append(b.toChar())
+                        }
+                        return sb.toString()
+                    }
+                    val first = line() ?: return@use
+                    var length = 0
+                    while (true) {
+                        val line = line() ?: break
+                        if (line.isEmpty()) break
+                        if (line.startsWith("Content-Length:", ignoreCase = true)) length = line.substringAfter(':').trim().toInt()
+                    }
+                    val raw = ByteArray(length)
+                    var read = 0
+                    while (read < length) {
+                        val n = input.read(raw, read, length - read)
+                        if (n < 0) break
+                        read += n
+                    }
+                    val path = first.split(' ')[1]
+                    synchronized(paths) { paths += path }
+                    val out = when {
+                        path.startsWith("/notion/pages") -> """{"url":"https://notion.so/saved-1"}"""
+                        path.startsWith("/notion/file_uploads") -> """{"id":"up-9","upload_url":"$base/notion/send/up-9"}"""
+                        else -> "{}"
+                    }
+                    val bytes = out.toByteArray()
+                    sock.getOutputStream().apply {
+                        write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n".toByteArray())
+                        write(bytes); flush()
+                    }
+                }
+            }
+        }.apply { isDaemon = true }.start()
+        Connections.notionBase = "$base/notion"
+        try {
+            ime.showInboxPanel()
+            layout(root)
+            clickLabel(root, "Save to Notion")
+            val deadline = System.currentTimeMillis() + 8000
+            while (!ime.statusMessage.contains("Saved to Notion") && System.currentTimeMillis() < deadline) {
+                org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+                Thread.sleep(20)
+            }
+            assertTrue("the save is reported", ime.statusMessage.contains("Saved to Notion"))
+            assertTrue("the page was created", paths.any { it.startsWith("/notion/pages") })
+            assertTrue("the inbox is emptied once filed", !store.inboxFresh)
+        } finally {
+            server.close()
+            Connections.notionBase = "https://api.notion.com/v1"
+        }
+    }
+
+    @Test
     fun botWorkingPanelStopsAndResultBarApplies() {
         var stopped = false
         ime.showLoading("Thinking") { stopped = true }
@@ -1284,6 +1399,27 @@ class KeyboardTest {
         ime.showResult(ActionResult("Thanks so much for the invite! I'd love to come — count me in for Saturday. Looking forward to it. 🎉", null), {}, null)
         layout(agentRoot)
         snap(agentRoot, "bot-result")
+        // A WhatsApp share waiting in the inbox, and the screen the share itself lands on.
+        store.inboxText = "Invoice for March — please file"
+        store.inboxName = "invoice-march.pdf"
+        store.inboxMime = "application/pdf"
+        store.inboxFrom = "WhatsApp"
+        store.inboxFile = ""
+        store.inboxAt = System.currentTimeMillis()
+        ime.showInboxPanel()
+        layout(agentRoot)
+        snap(agentRoot, "panel-inbox")
+        val shareIntent = android.content.Intent(RuntimeEnvironment.getApplication(), ShareActivity::class.java).apply {
+            action = android.content.Intent.ACTION_SEND
+            type = "text/plain"
+            putExtra(android.content.Intent.EXTRA_TEXT, "Can we move Thursday's call to 3pm?")
+            putExtra(android.content.Intent.EXTRA_REFERRER, android.net.Uri.parse("android-app://com.whatsapp"))
+        }
+        val share = Robolectric.buildActivity(ShareActivity::class.java, shareIntent).setup().get()
+        val shareRoot = content(share)
+        layout(shareRoot)
+        snap(shareRoot, "share-screen")
+        store.clearInbox()
         ime.hidePanel()
         clipboard.setPrimaryClip(android.content.ClipData.newPlainText("m", ""))
         field.text.append(kept)
