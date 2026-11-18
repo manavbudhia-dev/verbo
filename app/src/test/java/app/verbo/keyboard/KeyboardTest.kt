@@ -1420,12 +1420,13 @@ class KeyboardTest {
         // The wheel, mid-gesture, with the finger over Translate (leftmost).
         val wheelKeys = ime.keys!!
         holdBar(wheelKeys)
-        touch(wheelKeys, MotionEvent.ACTION_MOVE, listOf(Triple(0, wheelKeys.width * 0.5f, wheelKeys.height * 0.25f)))
+        // Points stay inside the tiles' band: sliding along the blue rim itself turns the ring.
+        touch(wheelKeys, MotionEvent.ACTION_MOVE, listOf(Triple(0, wheelKeys.width * 0.5f, wheelKeys.height * 0.40f)))
         snap(agentRoot, "wheel")
-        touch(wheelKeys, MotionEvent.ACTION_MOVE, listOf(Triple(0, wheelKeys.width * 0.14f, wheelKeys.height * 0.80f)))
+        touch(wheelKeys, MotionEvent.ACTION_MOVE, listOf(Triple(0, wheelKeys.width * 0.20f, wheelKeys.height * 0.80f)))
         val turned = wheelKeys.wheelRotation
         val entry = wheelKeys.wheelEntryAt(0)
-        touch(wheelKeys, MotionEvent.ACTION_UP, listOf(Triple(0, wheelKeys.width * 0.14f, wheelKeys.height * 0.80f)))
+        touch(wheelKeys, MotionEvent.ACTION_UP, listOf(Triple(0, wheelKeys.width * 0.20f, wheelKeys.height * 0.80f)))
         layout(agentRoot)
         snap(agentRoot, "panel-languages")
         // Mid-gesture on the light wheel: finger over the second flag, then release on Cancel.
