@@ -17,10 +17,11 @@ import android.view.View
 import android.view.animation.LinearInterpolator
 
 /**
- * Verbo, the keyboard agent: a violet speech-bubble robot with a dark visor, glowing cyan eyes, rosy
- * cheeks and a little antenna whose tip glows. It bobs and blinks while attached to a window; each mood
- * has its own face. In [Mood.LISTEN] the eyes become a sound meter that follows the live mic [energy]
- * and a halo breathes around it; in [Mood.WORK] the eyes become loading dots.
+ * Verbo, the keyboard mascot: a glossy gumdrop that runs from orange through pink into teal, with a
+ * two-lobed tuft on top, a cream face, big sparkly eyes, rosy cheeks and a little "!" of excitement.
+ * It bobs and blinks while attached to a window; each mood has its own face. In [Mood.LISTEN] a halo
+ * breathes and the excitement marks on both sides pulse with the live mic [energy]; in [Mood.WORK]
+ * three dots take turns above its head.
  */
 class BotView(context: Context) : View(context) {
     enum class Mood { HELLO, IDLE, LISTEN, WORK, COOL }
@@ -28,7 +29,7 @@ class BotView(context: Context) : View(context) {
     var mood = Mood.IDLE
         set(v) { field = v; invalidate() }
 
-    /** Live microphone loudness, 0 (silence) to 1 (loud). Drives the listening meter and halo. */
+    /** Live microphone loudness, 0 (silence) to 1 (loud). Drives the listening halo and marks. */
     var energy = 0f
         set(v) { field = v.coerceIn(0f, 1f); invalidate() }
 
@@ -42,8 +43,17 @@ class BotView(context: Context) : View(context) {
         addUpdateListener { phase = it.animatedFraction; invalidate() }
     }
 
-    private val cyan = Color.parseColor("#67E8F9")
-    private val cyanDeep = Color.parseColor("#22D3EE")
+    private fun col(hex: String) = Color.parseColor(hex)
+    private val body = Path().apply {
+        moveTo(98f, 166f)
+        cubicTo(46f, 166f, 24f, 150f, 26f, 116f)
+        cubicTo(28f, 76f, 62f, 42f, 98f, 42f)
+        cubicTo(134f, 42f, 168f, 76f, 170f, 116f)
+        cubicTo(172f, 150f, 150f, 166f, 98f, 166f)
+        close()
+    }
+    private val sideColors = intArrayOf(col("#FF5F55"), col("#FF4A7E"), col("#EE4583"), col("#2BE0C8"), col("#0DB2AC"))
+    private val sideStops = floatArrayOf(0f, 0.45f, 0.70f, 0.78f, 1f)
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
@@ -55,9 +65,9 @@ class BotView(context: Context) : View(context) {
         super.onDetachedFromWindow()
     }
 
+    /** A four-pointed sparkle. */
     private fun star(c: Canvas, cx: Float, cy: Float, s: Float, color: Int) {
         paint.shader = null
-        paint.alpha = 255
         paint.color = color
         val p = Path()
         p.moveTo(cx, cy - s)
@@ -68,169 +78,176 @@ class BotView(context: Context) : View(context) {
         c.drawPath(p, paint)
     }
 
-    /** A glowing cyan shape: a soft blurred copy under a crisp one. */
-    private fun glowing(c: Canvas, draw: (Paint) -> Unit) {
-        paint.shader = null
-        paint.color = cyanDeep
-        paint.alpha = 90
-        paint.maskFilter = glow
-        draw(paint)
-        paint.maskFilter = null
-        paint.alpha = 255
-        paint.color = cyan
-        draw(paint)
+    private fun oval(c: Canvas, cx: Float, cy: Float, rx: Float, ry: Float, deg: Float = 0f) {
+        if (deg != 0f) { c.save(); c.rotate(deg, cx, cy) }
+        c.drawOval(RectF(cx - rx, cy - ry, cx + rx, cy + ry), paint)
+        if (deg != 0f) c.restore()
     }
 
-    private val glow = android.graphics.BlurMaskFilter(5f, android.graphics.BlurMaskFilter.Blur.NORMAL)
-
     override fun onDraw(c: Canvas) {
-        // Drawn on a 200-unit design grid: the figure spans about 140 x 170 units around (100, 97).
-        val k = minOf(width, height) / 180f
+        // Drawn on a 200-unit design grid: the figure spans about 155 x 165 units around (100, 92).
+        val k = minOf(width, height) / 170f
         if (k <= 0f) return
         val pulse = 0.5f + 0.5f * Math.sin(phase * 2 * Math.PI).toFloat()
         val bob = Math.sin(phase * 2 * Math.PI).toFloat() * 3f
         c.save()
-        c.translate(width / 2f - 100f * k, height / 2f - 97f * k)
+        c.translate(width / 2f - 100f * k, height / 2f - 92f * k)
         c.scale(k, k)
 
-        // Ground shadow, shrinking a little as the bot rises.
+        // Ground shadow, shrinking a little as it rises.
         paint.shader = null
-        paint.color = Color.argb(34, 49, 46, 129)
-        c.drawOval(RectF(52f + bob, 176f, 148f - bob, 188f), paint)
+        paint.color = Color.argb(40, 122, 42, 85)
+        c.drawOval(RectF(46f + bob, 166f, 150f - bob, 176f), paint)
 
         c.translate(0f, bob)
 
-        // Listening halo: a breathing ring that swells with the live mic level.
+        // Listening halo: soft pink and teal rings that swell with the voice.
         if (mood == Mood.LISTEN) {
             val grow = 4f + 14f * pulse * (0.4f + energy)
-            stroke.color = Color.argb((70 + 150 * energy).toInt().coerceIn(0, 255), 34, 211, 238)
             stroke.strokeWidth = 4f
-            c.drawCircle(100f, 98f, 84f + grow, stroke)
-            stroke.color = Color.argb((30 + 80 * energy).toInt().coerceIn(0, 255), 34, 211, 238)
-            c.drawCircle(100f, 98f, 96f + grow * 1.4f, stroke)
+            stroke.color = Color.argb((70 + 150 * energy).toInt().coerceIn(0, 255), 255, 74, 126)
+            c.drawCircle(98f, 104f, 82f + grow, stroke)
+            stroke.color = Color.argb((40 + 100 * energy).toInt().coerceIn(0, 255), 43, 224, 200)
+            c.drawCircle(98f, 104f, 94f + grow * 1.4f, stroke)
         }
 
-        // Antenna with a glowing tip.
-        stroke.color = Color.parseColor("#7C3AED")
-        stroke.strokeWidth = 5f
-        c.drawLine(100f, 44f, 100f, 24f, stroke)
-        val tipGlow = if (mood == Mood.LISTEN || mood == Mood.WORK) 0.6f + 0.4f * pulse else 0.35f + 0.25f * pulse
-        paint.color = Color.argb((tipGlow * 120).toInt(), 250, 204, 21)
-        c.drawCircle(100f, 20f, 13f, paint)
-        paint.color = Color.WHITE // a gradient still takes the paint's alpha: keep it opaque
-        paint.shader = RadialGradient(97f, 17f, 9f, Color.parseColor("#FEF9C3"), Color.parseColor("#FACC15"), Shader.TileMode.CLAMP)
-        c.drawCircle(100f, 20f, 8f, paint)
-        paint.shader = null
-
-        // Speech-bubble body with a tail at the bottom left.
-        val body = Path().apply {
-            moveTo(76f, 40f)
-            lineTo(124f, 40f)
-            arcTo(RectF(78f, 40f, 170f, 132f), 270f, 90f)
-            lineTo(170f, 112f)
-            arcTo(RectF(78f, 66f, 170f, 158f), 0f, 90f)
-            lineTo(86f, 158f)
-            lineTo(62f, 176f)
-            quadTo(59f, 167f, 64f, 155f)
-            arcTo(RectF(30f, 66f, 122f, 158f), 108f, 72f)
-            lineTo(30f, 86f)
-            arcTo(RectF(30f, 40f, 122f, 132f), 180f, 90f)
-            close()
-        }
+        // The tuft: a tall glossy lobe and a rounder pink one, behind the body.
         paint.color = Color.WHITE
-        paint.shader = LinearGradient(30f, 40f, 170f, 176f,
-            intArrayOf(Color.parseColor("#A78BFA"), Color.parseColor("#7C3AED"), Color.parseColor("#4F46E5")), floatArrayOf(0f, 0.55f, 1f), Shader.TileMode.CLAMP)
+        paint.shader = LinearGradient(96f, 8f, 128f, 60f, intArrayOf(col("#FFB03A"), col("#FF6A55"), col("#FF3F7F")), null, Shader.TileMode.CLAMP)
+        oval(c, 112f, 34f, 17f, 27f, 40f)
+        paint.shader = null
+        paint.color = col("#FF4F86")
+        oval(c, 136f, 46f, 17f, 11f, 8f)
+
+        // Body: orange on top, pink round the left and bottom, teal down the right.
+        paint.color = Color.WHITE
+        paint.shader = LinearGradient(26f, 0f, 170f, 0f, sideColors, sideStops, Shader.TileMode.CLAMP)
+        c.drawPath(body, paint)
+        paint.shader = LinearGradient(0f, 42f, 0f, 166f, intArrayOf(col("#FFA03A"), Color.argb(215, 255, 138, 64), Color.argb(0, 255, 127, 69)),
+            floatArrayOf(0f, 0.22f, 0.5f), Shader.TileMode.CLAMP)
+        c.drawPath(body, paint)
+        paint.shader = LinearGradient(0f, 42f, 0f, 166f, intArrayOf(Color.argb(0, 194, 31, 107), Color.argb(0, 194, 31, 107), Color.argb(140, 194, 31, 107)),
+            floatArrayOf(0f, 0.6f, 1f), Shader.TileMode.CLAMP)
         c.drawPath(body, paint)
         paint.shader = null
+        // Where the tuft melts into the body.
+        paint.color = Color.argb(220, 255, 90, 130)
+        c.drawPath(Path().apply { moveTo(84f, 52f); cubicTo(96f, 40f, 130f, 40f, 148f, 54f); cubicTo(138f, 62f, 104f, 64f, 84f, 52f); close() }, paint)
 
-        // Gloss on the top left of the bubble.
-        paint.color = Color.argb(90, 255, 255, 255)
-        c.save(); c.rotate(-18f, 70f, 54f)
-        c.drawOval(RectF(44f, 46f, 96f, 62f), paint); c.restore()
+        // Gloss.
+        paint.color = Color.argb(190, 255, 255, 255)
+        oval(c, 104f, 25f, 4.5f, 11f, 40f)
+        oval(c, 62f, 64f, 13f, 5f, -38f)
+        paint.color = Color.argb(170, 255, 255, 255)
+        oval(c, 50f, 79f, 4f, 3f, -38f)
 
-        // The visor, with a faint reflection band.
+        // Face: a soft rim, then the cream plate.
+        paint.color = Color.argb(90, 214, 58, 110)
+        oval(c, 97f, 113f, 60f, 42f)
         paint.color = Color.WHITE
-        paint.shader = LinearGradient(0f, 64f, 0f, 128f, Color.parseColor("#2E2A6B"), Color.parseColor("#151236"), Shader.TileMode.CLAMP)
-        c.drawRoundRect(RectF(46f, 64f, 154f, 128f), 32f, 32f, paint)
+        paint.shader = RadialGradient(97f, 100f, 62f, intArrayOf(col("#FFFBF8"), col("#FCEDE8"), col("#F6D9D6")), floatArrayOf(0f, 0.8f, 1f), Shader.TileMode.CLAMP)
+        oval(c, 97f, 112f, 58f, 40f)
         paint.shader = null
-        paint.color = Color.argb(18, 255, 255, 255)
-        c.drawRoundRect(RectF(52f, 67f, 148f, 77f), 5f, 5f, paint)
 
-        // Rosy cheeks.
-        paint.color = Color.argb(140, 249, 168, 212)
-        c.drawOval(RectF(51f, 114f, 65f, 122f), paint)
-        c.drawOval(RectF(135f, 114f, 149f, 122f), paint)
+        // Cheeks with two little blush strokes.
+        paint.color = col("#FF8FA6")
+        oval(c, 58f, 123f, 11f, 7.5f)
+        oval(c, 138f, 123f, 11f, 7.5f)
+        stroke.color = Color.argb(230, 255, 255, 255)
+        stroke.strokeWidth = 1.6f
+        for (x in floatArrayOf(54f, 58f, 135f, 139f)) c.drawLine(x, 125f, x + 2f, 120f, stroke)
 
-        val blink = if (phase > 0.46f && phase < 0.51f) 0.12f else 1f
-        fun pillEyes(open: Float) = glowing(c) { pt ->
-            val h = 28f * open
-            c.drawRoundRect(RectF(70f, 94f - h / 2, 88f, 94f + h / 2), 9f, 9f, pt)
-            c.drawRoundRect(RectF(112f, 94f - h / 2, 130f, 94f + h / 2), 9f, 9f, pt)
+        val ink = col("#2A1220")
+        val blink = if (phase > 0.46f && phase < 0.51f) 0.1f else 1f
+        fun eye(cx: Float, open: Float, lookUp: Float = 0f, sparkle: Boolean = true) {
+            if (open < 0.3f) {
+                stroke.color = ink
+                stroke.strokeWidth = 4f
+                c.drawArc(RectF(cx - 12f, 99f, cx + 12f, 111f), 20f, 140f, false, stroke)
+                return
+            }
+            paint.color = Color.WHITE
+            paint.shader = RadialGradient(cx, 110f, 18f, intArrayOf(col("#5A2E3E"), col("#2A1220"), col("#1A0A14")), floatArrayOf(0f, 0.7f, 1f), Shader.TileMode.CLAMP)
+            oval(c, cx, 105f, 16f, 16f * open)
+            paint.shader = null
+            paint.color = Color.WHITE
+            c.drawCircle(cx + 5f, 97f - lookUp, 6.5f, paint)
+            if (sparkle) star(c, cx - 6f, 110f - lookUp, 3.5f + 0.8f * pulse, Color.WHITE)
         }
-        fun smile() {
-            stroke.color = cyan
-            stroke.strokeWidth = 4f
-            c.drawArc(RectF(92f, 106f, 108f, 120f), 25f, 130f, false, stroke)
+        fun openMouth(scale: Float) {
+            c.save(); c.scale(scale, scale, 98f, 112f)
+            paint.color = col("#8E2238")
+            c.drawPath(Path().apply { moveTo(88f, 110f); quadTo(98f, 107f, 108f, 110f); quadTo(107f, 128f, 98f, 128f); quadTo(89f, 128f, 88f, 110f); close() }, paint)
+            paint.color = col("#FF6B86")
+            c.drawPath(Path().apply { moveTo(91f, 119f); quadTo(98f, 114f, 105f, 119f); quadTo(103.5f, 127f, 98f, 127f); quadTo(92.5f, 127f, 91f, 119f); close() }, paint)
+            c.restore()
+        }
+        fun marks(right: Boolean, alpha: Int, len: Float) {
+            stroke.color = Color.argb(alpha, 255, 200, 26)
+            stroke.strokeWidth = 7f
+            val sx = if (right) 1f else -1f
+            val ox = if (right) 0f else 196f
+            fun line(x1: Float, y1: Float, x2: Float, y2: Float) {
+                val mx = (x1 + x2) / 2; val my = (y1 + y2) / 2
+                c.drawLine(ox + sx * (mx + (x1 - mx) * len), my + (y1 - my) * len, ox + sx * (mx + (x2 - mx) * len), my + (y2 - my) * len, stroke)
+            }
+            line(164f, 54f, 158f, 66f)
+            line(174f, 65f, 164f, 72f)
+            line(176f, 78f, 167f, 80f)
         }
 
         when (mood) {
             Mood.HELLO -> {
-                // Happy closed eyes and a big smile, with a twinkling sparkle.
-                glowing(c) { pt ->
-                    stroke.color = pt.color
-                    stroke.alpha = pt.alpha
-                    stroke.maskFilter = pt.maskFilter
-                    stroke.strokeWidth = 7f
-                    c.drawArc(RectF(68f, 86f, 90f, 108f), 200f, 140f, false, stroke)
-                    c.drawArc(RectF(110f, 86f, 132f, 108f), 200f, 140f, false, stroke)
-                    stroke.maskFilter = null
-                    stroke.alpha = 255
-                }
-                smile()
-                star(c, 168f, 42f, 13f * (1f + 0.25f * Math.sin(phase * 4 * Math.PI).toFloat()), Color.parseColor("#FDE047"))
+                eye(72f, 1f); eye(126f, 1f)
+                openMouth(1f)
+                marks(true, 255, 0.85f + 0.15f * pulse)
             }
             Mood.IDLE -> {
-                pillEyes(blink)
-                smile()
+                eye(72f, blink); eye(126f, blink)
+                openMouth(0.7f)
             }
             Mood.LISTEN -> {
-                // The eyes become a five-bar sound meter that dances with the voice.
-                glowing(c) { pt ->
-                    for (i in 0..4) {
-                        val base = floatArrayOf(12f, 26f, 38f, 26f, 12f)[i]
-                        val wave = 0.55f + 0.45f * Math.sin(phase * 6 * Math.PI + i * 1.3).toFloat()
-                        val h = (base * (0.45f + 0.55f * energy) * (0.6f + 0.4f * wave)).coerceAtLeast(8f)
-                        val x = 66f + i * 14f
-                        c.drawRoundRect(RectF(x, 96f - h / 2, x + 8f, 96f + h / 2), 4f, 4f, pt)
-                    }
-                }
+                eye(72f, 1.05f); eye(126f, 1.05f)
+                // A small round "o": listening closely.
+                paint.color = col("#8E2238")
+                c.drawOval(RectF(92f, 113f, 104f, 126f), paint)
+                paint.color = col("#FF6B86")
+                c.drawOval(RectF(94.5f, 119f, 101.5f, 125f), paint)
+                val a = (120 + 135 * energy).toInt().coerceIn(0, 255)
+                val len = 0.6f + 0.4f * (0.5f * pulse + 0.5f * energy)
+                marks(true, a, len)
+                marks(false, a, len)
             }
             Mood.WORK -> {
-                // Three loading dots taking turns to glow.
+                eye(72f, 1f, lookUp = 3f, sparkle = false); eye(126f, 1f, lookUp = 3f, sparkle = false)
+                stroke.color = col("#8E2238")
+                stroke.strokeWidth = 4f
+                c.drawLine(92f, 120f, 104f, 120f, stroke)
                 for (i in 0..2) {
                     val t = ((phase * 3f - i) % 3f + 3f) % 3f
                     val lit = if (t < 1f) 1f - kotlin.math.abs(t - 0.5f) * 2f else 0f
-                    paint.color = cyan
-                    paint.alpha = (110 + 145 * lit).toInt()
-                    c.drawCircle(78f + i * 22f, 96f - 4f * lit, 6f + 2f * lit, paint)
+                    paint.color = if (i == 1) col("#FF4A7E") else col("#2BE0C8")
+                    paint.alpha = (120 + 135 * lit).toInt()
+                    c.drawCircle(150f + i * 11f, 30f - 5f * lit, 4f + 1.5f * lit, paint)
                 }
                 paint.alpha = 255
             }
             Mood.COOL -> {
-                // Shades on: two dark lenses across the visor with a glint, and a sideways smirk.
-                paint.color = Color.parseColor("#0B0A1F")
-                c.drawRoundRect(RectF(62f, 82f, 96f, 104f), 10f, 10f, paint)
-                c.drawRoundRect(RectF(104f, 82f, 138f, 104f), 10f, 10f, paint)
-                stroke.color = cyan
-                stroke.strokeWidth = 3f
-                c.drawLine(96f, 88f, 104f, 88f, stroke)
-                stroke.color = Color.argb(150, 255, 255, 255)
-                c.drawLine(68f, 98f, 76f, 88f, stroke)
-                c.drawLine(110f, 98f, 118f, 88f, stroke)
-                stroke.color = cyan
+                // Shades on, with a glint, and a sideways grin.
+                paint.color = col("#1A0A14")
+                c.drawRoundRect(RectF(54f, 94f, 90f, 116f), 10f, 10f, paint)
+                c.drawRoundRect(RectF(108f, 94f, 144f, 116f), 10f, 10f, paint)
+                stroke.color = col("#1A0A14")
                 stroke.strokeWidth = 4f
-                c.drawArc(RectF(96f, 106f, 114f, 120f), 20f, 110f, false, stroke)
-                star(c, 34f, 44f, 11f * (1f + 0.25f * Math.sin(phase * 4 * Math.PI).toFloat()), Color.parseColor("#4ADE80"))
+                c.drawLine(90f, 100f, 108f, 100f, stroke)
+                stroke.color = Color.argb(160, 255, 255, 255)
+                stroke.strokeWidth = 3f
+                c.drawLine(60f, 110f, 68f, 99f, stroke)
+                c.drawLine(114f, 110f, 122f, 99f, stroke)
+                stroke.color = col("#8E2238")
+                stroke.strokeWidth = 4f
+                c.drawArc(RectF(94f, 114f, 112f, 128f), 20f, 110f, false, stroke)
+                star(c, 168f, 56f, 9f * (1f + 0.25f * Math.sin(phase * 4 * Math.PI).toFloat()), col("#FFC81A"))
             }
         }
         c.restore()
