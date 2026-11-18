@@ -45,6 +45,15 @@ jobs:
             --notes "Release build of ${GITHUB_SHA::7} on $GITHUB_REF_NAME, signed with the debug key. Install on the phone directly."
       - name: Unit tests
         run: ./gradlew :app:testDebugUnitTest --stacktrace
+      - name: Attach screenshots to the pre-release
+        if: always() && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [ -d app/build/shots ] || exit 0
+          tag="apk-${GITHUB_REF_NAME//\//-}"
+          (cd app/build && zip -qr ../../shots.zip shots)
+          gh release upload "$tag" shots.zip --clobber || true
       - name: Upload test report
         if: always()
         uses: actions/upload-artifact@v4

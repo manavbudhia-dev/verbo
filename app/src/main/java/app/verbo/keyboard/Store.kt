@@ -85,6 +85,9 @@ class Store(context: Context) {
 
     // the wheel, translate languages and saved clips
     /** Holding the bar opens the shortcut wheel; when off it runs the assistant straight away. */
+    /** How far the shortcut wheel was last turned, in icons; it reopens there. */
+    var wheelTurn: Int get() = prefs?.getInt("wheel_turn", 0) ?: 0
+        set(v) { prefs?.edit()?.putInt("wheel_turn", v)?.apply() }
     var wheelOn: Boolean get() = bool("wheel_on", true); set(v) = put("wheel_on", v)
     /** Up to MAX_WHEEL shortcut ids: a built-in tool from WHEEL_TOOLS, or "skill:" followed by a skill's name. */
     var wheel: List<String>

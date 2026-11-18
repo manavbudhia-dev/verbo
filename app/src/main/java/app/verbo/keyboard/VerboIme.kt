@@ -216,8 +216,8 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         top.addView(BotView(this).apply {
             mood = BotView.Mood.HELLO
             contentDescription = "Meet Verbo, the keyboard bot"
-            // The intro is a one-time greeting; after that the bot opens straight to the request panel.
-            setOnClickListener { feedback(KeyboardView.Type.MODE); if (store.welcomed) showBotPrompt() else showBotIntro() }
+            // One tap and Verbo is listening: no second tap on the mascot. Without an AI key it asks for one first.
+            setOnClickListener { feedback(KeyboardView.Type.MODE); openBot() }
         }, LinearLayout.LayoutParams(dp(30), dp(30)).apply { setMargins(dp(4), 0, dp(6), 0) })
         val voice = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -264,6 +264,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         val barActive = assistantOn && agentMode != "manual"
         baseWheel = if (barActive && store.wheelOn) store.wheel else emptyList()
         setWheel(baseWheel, emptyList())
+        keys?.wheelTurn = store.wheelTurn
         keys?.barLabel = if (!barActive) "" else if (baseWheel.isEmpty()) "hold to act" else "hold for wheel"
         keymap = store.keymap
         keys?.bound = if (assistantOn && store.keysOn) KeyAction.bound(keymap, skills, currentInputEditorInfo?.packageName) else emptySet()
@@ -714,6 +715,10 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     }
 
     /** A shortcut on the wheel was chosen. */
+    override fun onWheelTurned(turn: Int) {
+        store.wheelTurn = turn
+    }
+
     override fun onWheel(index: Int) {
         val id = wheelIds.getOrNull(index) ?: return
         feedback(KeyboardView.Type.ENTER)
@@ -1046,10 +1051,57 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(Color.parseColor("#22D3EE"), Color.parseColor("#4F46E5"))).apply { cornerRadius = dp(24).toFloat() }
-            setOnClickListener { feedback(KeyboardView.Type.MODE); showBotPrompt() }
+            setOnClickListener { feedback(KeyboardView.Type.MODE); openBot() }
         }, LinearLayout.LayoutParams(-1, dp(48)).apply { setMargins(dp(24), dp(10), dp(24), dp(6)) })
         addView(View(this@VerboIme), LinearLayout.LayoutParams(1, 0, 1f))
         addView(botGlobe())
+    }
+
+    /** The bot icon: listen for a request straight away, or ask for an AI key first when none is set. */
+    internal fun openBot() {
+        store.welcomed = true
+        welcome?.visibility = View.GONE
+        if (store.activeKey.isBlank()) { showKeyNeeded(); return }
+        voiceForBot = true
+        startVoice(true)
+    }
+
+    /** Shown instead of the bot until an AI key is saved: one tap to the AI settings. */
+    internal fun showKeyNeeded(): Unit = showPanel(dp(300)) {
+        background = paper(false)
+        addView(botTop({ hidePanel(); showTyping() }))
+        addView(View(this@VerboIme), LinearLayout.LayoutParams(1, 0, 0.5f))
+        addView(BotView(this@VerboIme).apply { mood = BotView.Mood.HELLO }, LinearLayout.LayoutParams(dp(84), dp(84)).apply { gravity = Gravity.CENTER_HORIZONTAL })
+        addView(TextView(this@VerboIme).apply {
+            text = "Add your API key first"
+            setTextColor(p.text)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+        }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+        addView(TextView(this@VerboIme).apply {
+            text = "Verbo answers with your own ${store.providerName} key. It stays on this phone."
+            setTextColor(p.muted)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            gravity = Gravity.CENTER
+        }, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(28), dp(4), dp(28), 0) })
+        addView(TextView(this@VerboIme).apply {
+            text = "Add API key"
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(Color.parseColor("#8B5CF6"), Color.parseColor("#4F46E5"))).apply { cornerRadius = dp(24).toFloat() }
+            setOnClickListener { feedback(KeyboardView.Type.MODE); hidePanel(); showTyping(); openPage("ai") }
+        }, LinearLayout.LayoutParams(-1, dp(48)).apply { setMargins(dp(24), dp(14), dp(24), 0) })
+        addView(TextView(this@VerboIme).apply {
+            text = "Not now"
+            setTextColor(p.muted)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            gravity = Gravity.CENTER
+            setOnClickListener { feedback(KeyboardView.Type.MODE); hidePanel(); showTyping() }
+        }, LinearLayout.LayoutParams(-1, dp(40)).apply { topMargin = dp(4) })
+        addView(View(this@VerboIme), LinearLayout.LayoutParams(1, 0, 1f))
     }
 
     internal fun showBotPrompt(initial: String = "", editing: Boolean = false): Unit =
@@ -2769,6 +2821,15 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             typeface = Typeface.DEFAULT_BOLD
             setPadding(dp(12), 0, 0, 0)
         }, LinearLayout.LayoutParams(0, -2, 1f))
+        if (forBot) header.addView(iconButton(R.drawable.ic_keyboard, "Type the request instead", p.muted) {
+            stopVoiceWatch()
+            rec?.cancel()
+            listening = false
+            voiceForBot = false
+            voiceSegments.setLength(0)
+            voicePartial = ""
+            showBotPrompt()
+        }, LinearLayout.LayoutParams(dp(40), dp(40)))
         header.addView(iconButton(R.drawable.ic_x, "Stop listening", p.muted) {
             stopVoiceWatch()
             rec?.cancel()

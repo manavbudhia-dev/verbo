@@ -798,7 +798,11 @@ class KeyboardTest {
         clickLabel(root, "Welcome to Verbo, the agentic keyboard")
         assertTrue("tapping the banner remembers it", store.welcomed)
         assertTrue("the intro bubbles hello", findText(root, "Hey,\nI'm Verbo 👋") != null)
+        store.apiKey = ""
         clickLabel(root, "Let's Try It")
+        assertTrue("without a key the bot asks for one first", findText(root, "Add your API key first") != null)
+        clickLabel(root, "Not now")
+        ime.showBotPrompt()
         var edit = sheetFields(root as ViewGroup)[0]
         assertEquals("the prompt starts empty, not a fixed birthday task", "", edit.text.toString())
         assertEquals("at rest the prompt replaces the keys", View.GONE, ime.keys!!.visibility)
@@ -818,19 +822,50 @@ class KeyboardTest {
     }
 
     @Test
-    fun theIntroIsShownOnceAndTheBotThenOpensThePrompt() {
+    fun theBotIconAsksForAKeyFirstThenListensInOneTap() {
         val store = Store(RuntimeEnvironment.getApplication())
         store.welcomed = false
+        store.apiKey = ""
         layout(root)
         byDesc(root, "Meet Verbo, the keyboard bot")!!.performClick()
-        assertTrue("the first tap greets with the intro", findText(root, "Hey,\nI'm Verbo 👋") != null)
-        assertTrue("showing the intro remembers the welcome", store.welcomed)
-        ime.hidePanel()
-        assertEquals("the banner never returns after the intro", View.GONE, findText(root, "Welcome to Verbo, the agentic keyboard")!!.visibility)
+        assertTrue("with no AI key the bot asks for one first", findText(root, "Add your API key first") != null)
+        assertTrue("one tap to the AI settings", findText(root, "Add API key") != null)
+        assertTrue("opening the bot counts as the welcome", store.welcomed)
+        clickLabel(root, "Not now")
+        assertEquals("not now returns to the keys", View.VISIBLE, ime.keys!!.visibility)
+        assertEquals("the banner never returns", View.GONE, findText(root, "Welcome to Verbo, the agentic keyboard")!!.visibility)
+        // With a key, the same single tap goes straight into listening: no panel asking to tap again.
+        store.apiKey = "sk-ant-test-0000"
+        ime.onStartInputView(field.info, false)
+        layout(root)
         byDesc(root, "Meet Verbo, the keyboard bot")!!.performClick()
-        assertEquals("the intro does not repeat", null, findText(root, "Hey,\nI'm Verbo 👋"))
-        assertTrue("the bot opens the request panel instead", sheetFields(root as ViewGroup).isNotEmpty())
-        assertEquals("", sheetFields(root as ViewGroup)[0].text.toString())
+        assertEquals("no key prompt once a key is set", null, findText(root, "Add your API key first"))
+        assertEquals("no tap-to-speak panel", null, findText(root, "Tap Verbo to speak, or type and press Go"))
+        assertTrue("it went straight into the voice flow (here it asks for the mic permission)", findText(root, "Allow the microphone in the Verbo app") != null)
+        store.apiKey = ""
+    }
+
+    @Test
+    fun theShortcutWheelReopensWhereItWasTurned() {
+        val keys = ime.keys!!
+        layout(root)
+        holdBar(keys)
+        touch(keys, MotionEvent.ACTION_MOVE, listOf(rimAt(keys, 80.0)))
+        touch(keys, MotionEvent.ACTION_MOVE, listOf(rimAt(keys, 100.0)))
+        org.robolectric.shadows.ShadowLooper.idleMainLooper(800, java.util.concurrent.TimeUnit.MILLISECONDS)
+        val centre = Triple(0, keys.width / 2f, keys.height * 0.97f)
+        touch(keys, MotionEvent.ACTION_MOVE, listOf(centre))
+        touch(keys, MotionEvent.ACTION_UP, listOf(centre))
+        assertEquals("the turn is remembered", 1, Store(RuntimeEnvironment.getApplication()).wheelTurn)
+        // Next hold, and after the keyboard comes back: the fan opens on the turned tools, not the first six.
+        ime.onStartInputView(field.info, false)
+        val again = ime.keys!!
+        layout(root)
+        holdBar(again)
+        assertEquals("it reopens turned", 1f, again.wheelRotation, 0.001f)
+        assertEquals("the right-most slot still shows Auto-translate", "Auto-translate", again.wheelItems[again.wheelEntryAt(5)].label)
+        touch(again, MotionEvent.ACTION_MOVE, listOf(centre))
+        touch(again, MotionEvent.ACTION_UP, listOf(centre))
     }
 
     @Test
@@ -1482,6 +1517,9 @@ class KeyboardTest {
         ime.showBotIntro()
         layout(agentRoot)
         snap(agentRoot, "bot-intro")
+        ime.showKeyNeeded()
+        layout(agentRoot)
+        snap(agentRoot, "bot-key-needed")
         ime.showBotPrompt()
         layout(agentRoot)
         snap(agentRoot, "bot-prompt")

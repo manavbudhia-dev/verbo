@@ -295,6 +295,12 @@ class CompassSpin(
         }
     }
 
+    /** Rest the dial at [degrees] straight away, with no animation (a wheel reopening where it was left). */
+    fun jumpTo(degrees: Float) {
+        handler.removeCallbacks(tick)
+        rot = degrees; from = degrees; target = degrees; drag = 0f; turning = false; lockedUntil = 0L
+    }
+
     /** Turn one icon in [dir] (+1 or -1). Refused while a one-at-a-time dial is still turning or locked. */
     fun turn(dir: Int): Boolean {
         if (dir == 0 || (oneAtATime && busy)) return false

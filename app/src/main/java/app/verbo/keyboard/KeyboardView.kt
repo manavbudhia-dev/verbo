@@ -70,6 +70,8 @@ class KeyboardView(
         fun onWheelOpening() {}
         /** A finger drew a path across the letters (swipe typing). */
         fun onSwipe(path: List<Gesture.P>) {}
+        /** The wheel closed turned [turn] icons from the start, so it can reopen there. */
+        fun onWheelTurned(turn: Int) {}
         /** The space bar was tapped twice quickly: open the language compass. */
         fun onSpaceDouble() {}
     }
@@ -116,6 +118,8 @@ class KeyboardView(
     var wheelItems: List<WheelItem> = emptyList()
     /** How many ring entries the semicircle shows at once (the user's own shortcuts). */
     var wheelSlots = 6
+    /** Where the ring rests, in whole icons: it reopens showing the tools it was last turned to. */
+    var wheelTurn = 0
     private var wheelOpen = false
     private var wheelPointer = -1
     /** The visible slot under the finger (0 = far left), or -1. */
@@ -395,6 +399,7 @@ class KeyboardView(
             wheelPick = -1
             spin.step = 180f / visibleSlots
             spin.reset()
+            if (wheelTurns) spin.jumpTo(wheelTurn * spin.step)
             rimLastAngle = Float.NaN
             stopEdge()
             listener?.onPress(Type.ENTER)
@@ -536,6 +541,14 @@ class KeyboardView(
         WheelLook.drawPill(canvas, WheelLook.pillRect(cx, label, d, sp), label, color, d, sp)
     }
 
+    /** Keep where the ring stopped, so the next hold opens on the same tools. */
+    private fun rememberTurn() {
+        val size = wheelItems.size
+        if (size == 0 || !wheelTurns) return
+        val turn = ((Math.round(spin.target / spin.step) % size) + size) % size
+        if (turn != wheelTurn) { wheelTurn = turn; listener?.onWheelTurned(turn) }
+    }
+
     /** Centre of a (possibly fractional) slot along the fan: 0 is the far-left slot. */
     private fun slotCenter(slot: Float): Pair<Float, Float> {
         val step = 180f / visibleSlots
@@ -581,6 +594,7 @@ class KeyboardView(
             // Release: the ring locks where it was heading and the entry under the finger runs.
             spin.settle()
             val entry = wheelEntryAt(wheelPick)
+            rememberTurn()
             wheelOpen = false
             wheelPick = -1
             rimLastAngle = Float.NaN
@@ -662,6 +676,7 @@ class KeyboardView(
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> up(e.getPointerId(e.actionIndex))
             MotionEvent.ACTION_CANCEL -> {
+                if (wheelOpen) { spin.settle(); rememberTurn() }
                 wheelOpen = false
                 wheelPick = -1
                 spin.reset()
