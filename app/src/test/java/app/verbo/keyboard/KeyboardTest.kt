@@ -862,6 +862,38 @@ class KeyboardTest {
     }
 
     @Test
+    fun thePromptMascotStartsListeningAndTheMicButtonIsGone() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        store.welcomed = true
+        ime.showBotPrompt()
+        layout(root)
+        assertTrue("the separate mic button is removed", byDesc(root, "Speak your request") == null)
+        val mascot = byDesc(root, "Tap Verbo to speak your request")
+        assertTrue("the mascot itself is the talk control", mascot != null && mascot.isClickable)
+        // Tapping it routes into the voice flow (here it asks for the mic permission, proving it listens).
+        mascot!!.performClick()
+        assertTrue("tapping the mascot starts listening", findText(root, "Allow the microphone in the Verbo app") != null)
+        assertTrue("Go is still offered for a typed request", findText(root, "Go") != null)
+    }
+
+    @Test
+    fun voiceWaitsForALongPauseAndJoinsEverySegment() {
+        // A short pause mid-sentence must NOT end the session; only a genuine long pause does.
+        assertTrue("a brief pause keeps listening", !ime.voiceDone(have = true, silentForMs = 500, elapsedMs = 4000))
+        assertTrue("just under the long pause keeps listening", !ime.voiceDone(true, 2199, 5000))
+        assertTrue("a long pause delivers the result", ime.voiceDone(true, 2200, 5000))
+        assertTrue("silence from the start is tolerated briefly", !ime.voiceDone(false, 9000, 5999))
+        assertTrue("never speaking eventually gives up", ime.voiceDone(false, 0, 6000))
+        assertTrue("a hard ceiling ends even continuous talk", ime.voiceDone(true, 0, 60000))
+        // Words heard across restarts are joined into one request, not dropped at each pause.
+        ime.appendSegment("Hello")
+        ime.appendSegment("how are you today")
+        ime.appendSegment(null)
+        ime.appendSegment("   ")
+        assertEquals("Hello how are you today", ime.spokenSoFar())
+    }
+
+    @Test
     fun botWorkingPanelStopsAndResultBarApplies() {
         var stopped = false
         ime.showLoading("Thinking") { stopped = true }

@@ -69,6 +69,15 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     internal var heardView: TextView? = null // the live transcript while listening
     internal var listenBot: BotView? = null // the mascot animating in the listening panel
     private var recognizer: SpeechRecognizer? = null
+    // Long-pause endpointing: the service keeps cutting us off at short pauses, so we accumulate every
+    // segment ourselves and only deliver once the user has genuinely stopped talking for LONG_PAUSE_MS.
+    private var voiceSmart = false
+    private val voiceSegments = StringBuilder() // finalized segments joined across restarts
+    private var voicePartial = "" // the live tail of the current segment
+    private var lastVoiceAt = 0L // last time we heard sound or words
+    private var listenStartAt = 0L
+    private var finalizeNext = false // a mode chip / stop asked us to wrap up on the next result
+    private val voiceWatch = Runnable { tickVoice() }
     private var builtWith = ""
 
     // settings read once per field so the typing path never touches storage
@@ -112,6 +121,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
 
     override fun onDestroy() {
         main.removeCallbacks(autoSync)
+        stopVoiceWatch()
         worker.shutdownNow()
         recognizer?.destroy()
         fb.release()
@@ -130,9 +140,12 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         generation++
         busy = false
         undo = null
+        stopVoiceWatch()
         recognizer?.cancel()
         listening = false
         voiceForBot = false
+        voiceSegments.setLength(0)
+        voicePartial = ""
         p = KeyTheme.of(this, store.theme, store.customAccent)
 
         val root = LinearLayout(this).apply {
@@ -1012,8 +1025,12 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         background = paper(false)
         addView(botTop({ hidePanel(); showTyping() }))
         addView(View(this@VerboIme), LinearLayout.LayoutParams(1, 0, 0.7f))
-        addView(BotView(this@VerboIme).apply { mood = BotView.Mood.IDLE },
-            LinearLayout.LayoutParams(dp(if (editing) 56 else 88), dp(if (editing) 56 else 88)).apply { gravity = Gravity.CENTER_HORIZONTAL })
+        // Tapping the mascot starts listening; it hears the request instead of typing it.
+        addView(BotView(this@VerboIme).apply {
+            mood = BotView.Mood.IDLE
+            contentDescription = "Tap Verbo to speak your request"
+            setOnClickListener { feedback(KeyboardView.Type.MODE); voiceForBot = true; startVoice(true) }
+        }, LinearLayout.LayoutParams(dp(if (editing) 56 else 88), dp(if (editing) 56 else 88)).apply { gravity = Gravity.CENTER_HORIZONTAL })
         val edit = android.widget.EditText(this@VerboIme).apply {
             setText(initial)
             hint = "Ask Verbo anything…"
@@ -1031,20 +1048,16 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             setOnClickListener { if (!editing) showBotPrompt(text.toString(), true) }
         }
         addView(edit, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(18), dp(if (editing) 4 else 10), dp(18), 0) })
-        // Speak it or type it: the mic opens the listening agent, Go runs the written request.
+        addView(TextView(this@VerboIme).apply {
+            text = "Tap Verbo to speak, or type and press Go"
+            setTextColor(p.muted)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, if (editing) 11f else 12f)
+            gravity = Gravity.CENTER
+        }, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(24), dp(2), dp(24), 0) })
+        // Go runs the written request; speaking is handled by tapping the mascot above.
         val actions = LinearLayout(this@VerboIme).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            addView(LinearLayout(this@VerboIme).apply {
-                gravity = Gravity.CENTER
-                background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(Color.parseColor("#22D3EE"), Color.parseColor("#4F46E5"))).apply { shape = GradientDrawable.OVAL }
-                contentDescription = "Speak your request"
-                setOnClickListener { feedback(KeyboardView.Type.MODE); voiceForBot = true; startVoice(true) }
-                addView(ImageView(this@VerboIme).apply {
-                    setImageResource(R.drawable.ic_mic)
-                    setColorFilter(Color.WHITE)
-                }, LinearLayout.LayoutParams(dp(18), dp(18)))
-            }, LinearLayout.LayoutParams(dp(if (editing) 40 else 48), dp(if (editing) 40 else 48)).apply { rightMargin = dp(12) })
             addView(TextView(this@VerboIme).apply {
                 text = "Go"
                 setTextColor(p.text)
@@ -1184,10 +1197,13 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     /** The keyboard was put away: give back the microphone service and the audio player until it is needed again. */
     override fun onWindowHidden() {
         super.onWindowHidden()
+        stopVoiceWatch()
         recognizer?.destroy()
         recognizer = null
         listening = false
         voiceForBot = false
+        voiceSegments.setLength(0)
+        voicePartial = ""
         listenBot = null
         fb.release()
     }
@@ -1237,9 +1253,12 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             refreshMode()
             hidePanel()
             showTyping()
+            stopVoiceWatch()
             recognizer?.cancel()
             listening = false
             voiceForBot = false
+            voiceSegments.setLength(0)
+            voicePartial = ""
             syncIfStale()
         }
         val type = info?.inputType ?: 0
@@ -2394,47 +2413,137 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             return
         }
         val smart = assistantOn && store.activeKey.isNotBlank()
+        voiceSmart = smart
         voiceCommand = command && smart
+        voiceSegments.setLength(0)
+        voicePartial = ""
+        finalizeNext = false
+        val now = System.currentTimeMillis()
+        lastVoiceAt = now
+        listenStartAt = now
         val rec = recognizer ?: SpeechRecognizer.createSpeechRecognizer(this).also { recognizer = it }
         rec.setRecognitionListener(object : RecognitionListener {
             override fun onPartialResults(partial: Bundle?) {
                 val heard = partial?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
-                if (!heard.isNullOrBlank()) heardView?.text = heard
+                if (!heard.isNullOrBlank()) {
+                    voicePartial = heard
+                    lastVoiceAt = System.currentTimeMillis()
+                    heardView?.text = spokenSoFar()
+                }
             }
             override fun onResults(results: Bundle?) {
-                listening = false
-                hidePanel()
                 val heard = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
-                onVoiceResult(heard, voiceForBot, voiceCommand, smart)
-                voiceForBot = false
+                appendSegment(heard)
+                // A short pause ended this segment; keep listening unless the user truly stopped.
+                if (finalizeNext || voiceDone(voiceSegments.isNotEmpty(), silentFor(), elapsed())) deliverVoice()
+                else restartSegment(rec)
             }
             override fun onError(error: Int) {
-                listening = false
-                voiceForBot = false
-                hidePanel()
-                showStatus(when (error) {
-                    SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Didn't catch that"
-                    SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "No connection for speech"
-                    SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission is missing"
-                    else -> "Voice input failed"
-                })
+                val fatal = error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS ||
+                    error == SpeechRecognizer.ERROR_NETWORK || error == SpeechRecognizer.ERROR_NETWORK_TIMEOUT ||
+                    error == SpeechRecognizer.ERROR_SERVER || error == SpeechRecognizer.ERROR_CLIENT
+                if (fatal && voiceSegments.isEmpty() && voicePartial.isBlank()) {
+                    stopVoiceWatch()
+                    listening = false
+                    voiceForBot = false
+                    hidePanel()
+                    showStatus(when (error) {
+                        SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "No connection for speech"
+                        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission is missing"
+                        else -> "Voice input failed"
+                    })
+                    return
+                }
+                // NO_MATCH / SPEECH_TIMEOUT after a pause: deliver what we have, or continue listening.
+                appendSegment(voicePartial)
+                voicePartial = ""
+                if (finalizeNext || voiceDone(voiceSegments.isNotEmpty(), silentFor(), elapsed())) deliverVoice()
+                else restartSegment(rec)
             }
             override fun onRmsChanged(rmsdB: Float) {
                 levels?.push(rmsdB)
                 listenBot?.energy = (rmsdB + 2f) / 12f
+                if (rmsdB > VOICE_RMS) lastVoiceAt = System.currentTimeMillis()
             }
             override fun onReadyForSpeech(params: Bundle?) {}
-            override fun onBeginningOfSpeech() {}
+            override fun onBeginningOfSpeech() { lastVoiceAt = System.currentTimeMillis() }
             override fun onBufferReceived(buffer: ByteArray?) {}
             override fun onEndOfSpeech() {}
             override fun onEvent(eventType: Int, params: Bundle?) {}
         })
         showListening(rec, smart)
         listening = true
-        rec.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-        })
+        rec.startListening(voiceIntent())
+        main.postDelayed(voiceWatch, WATCH_MS)
+    }
+
+    private fun voiceIntent() = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+        putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+        // Tell the service to hold on through pauses; our own watchdog decides when a pause is long enough.
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 6000L)
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 4000L)
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1500L)
+    }
+
+    private fun restartSegment(rec: SpeechRecognizer) {
+        voicePartial = ""
+        lastVoiceAt = System.currentTimeMillis()
+        try { rec.startListening(voiceIntent()) } catch (_: Exception) { deliverVoice() }
+    }
+
+    internal fun appendSegment(text: String?) {
+        if (text.isNullOrBlank()) return
+        if (voiceSegments.isNotEmpty()) voiceSegments.append(' ')
+        voiceSegments.append(text.trim())
+        voicePartial = ""
+        heardView?.text = spokenSoFar()
+    }
+
+    internal fun spokenSoFar(): String {
+        val tail = voicePartial.trim()
+        return if (voiceSegments.isEmpty()) tail
+        else if (tail.isEmpty()) voiceSegments.toString()
+        else "$voiceSegments $tail"
+    }
+
+    private fun silentFor() = System.currentTimeMillis() - lastVoiceAt
+    private fun elapsed() = System.currentTimeMillis() - listenStartAt
+
+    /** Pure endpointing rule: only finish after a genuine long pause, a hard ceiling, or silence from the start. */
+    internal fun voiceDone(have: Boolean, silentForMs: Long, elapsedMs: Long): Boolean =
+        (have && silentForMs >= LONG_PAUSE_MS) || elapsedMs >= MAX_LISTEN_MS || (!have && elapsedMs >= INITIAL_SILENCE_MS)
+
+    /** Runs every WATCH_MS: ends the session once the user has paused long enough (or never spoke). */
+    private fun tickVoice() {
+        if (!listening) return
+        val have = voiceSegments.isNotEmpty() || voicePartial.isNotBlank()
+        if (voiceDone(have, silentFor(), elapsed())) {
+            finalizeNext = true
+            recognizer?.stopListening() // flushes the tail into onResults, which then delivers
+            // Safety net in case the service never calls back.
+            main.postDelayed({ if (listening && finalizeNext) deliverVoice() }, 900L)
+        } else {
+            main.postDelayed(voiceWatch, WATCH_MS)
+        }
+    }
+
+    private fun stopVoiceWatch() { main.removeCallbacks(voiceWatch) }
+
+    /** Delivers everything heard across all segments as one result. */
+    private fun deliverVoice() {
+        if (!listening) return
+        stopVoiceWatch()
+        listening = false
+        val heard = spokenSoFar().trim().ifBlank { null }
+        val forBot = voiceForBot
+        val command = voiceCommand
+        val smart = voiceSmart
+        voiceForBot = false
+        voicePartial = ""
+        voiceSegments.setLength(0)
+        hidePanel()
+        onVoiceResult(heard, forBot, command, smart)
     }
 
     private fun showListening(rec: SpeechRecognizer, smart: Boolean) = showListeningPanel(rec, smart, voiceForBot)
@@ -2453,9 +2562,12 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             setPadding(dp(12), 0, 0, 0)
         }, LinearLayout.LayoutParams(0, -2, 1f))
         header.addView(iconButton(R.drawable.ic_x, "Stop listening", p.muted) {
+            stopVoiceWatch()
             rec?.cancel()
             listening = false
             voiceForBot = false
+            voiceSegments.setLength(0)
+            voicePartial = ""
             hidePanel()
             showTyping()
         }, LinearLayout.LayoutParams(dp(40), dp(40)))
@@ -2491,7 +2603,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             val on = voiceCommand == asCommand
             val chip = chipView(label, if (on) p.accent else p.key, if (on) p.accentPressed else p.keyPressed, if (on) p.onAccent else p.text)
             chip.typeface = Typeface.DEFAULT_BOLD
-            chip.setOnClickListener { feedback(KeyboardView.Type.MODE); voiceCommand = asCommand; rec?.stopListening() }
+            chip.setOnClickListener { feedback(KeyboardView.Type.MODE); voiceCommand = asCommand; finalizeNext = true; rec?.stopListening() }
             footer.addView(chip, LinearLayout.LayoutParams(0, dp(46), weight).apply { setMargins(dp(6), 0, dp(6), 0) })
         }
         when {
@@ -2580,6 +2692,12 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         private const val MAX_CHARS = 20000
         private const val AUTO_PAUSE_MS = 1600L
         private const val AUTO_MAX_CHARS = 2000
+        // Voice endpointing: wait for a genuine long pause before delivering, and never cut a sentence short.
+        private const val LONG_PAUSE_MS = 2200L // silence this long after speech means the user is done
+        private const val INITIAL_SILENCE_MS = 6000L // give up if nothing was ever said
+        private const val MAX_LISTEN_MS = 60000L // hard ceiling so a session can't run forever
+        private const val VOICE_RMS = 2f // loudness above this counts as the user still talking
+        private const val WATCH_MS = 150L
     }
 }
 

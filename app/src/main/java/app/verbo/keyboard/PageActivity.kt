@@ -1342,7 +1342,7 @@ class PageActivity : Activity() {
             ui.row(R.drawable.ic_sparkle, "Hold the wide bar", "Opens the wheel: slide to Ask AI, Translate, Rewrite, Voice or Clips and let go"),
             ui.row(R.drawable.ic_keyboard, "Hold a marked letter", "Runs the skill bound to that key; set the letter when editing a skill"),
             ui.row(R.drawable.ic_message_square, "Use copied text", "Copy a message, then tap this chip above the keys to give it to the assistant as context"),
-            ui.row(R.drawable.ic_mic, "Tap the microphone", "Verbo listens and acts on what you say. Ask Verbo runs it as a request; Just type puts the words in the field. Hold the Voice pill to dictate"),
+            ui.row(R.drawable.ic_mic, "Tap Verbo to speak", "Tap the mascot in the request panel and just talk — Verbo waits for a real pause before it answers, so it never cuts you off mid-sentence. Ask Verbo runs it as a request; Just type puts the words in the field. Hold the Voice pill to dictate"),
             ui.row(R.drawable.ic_keyboard, "Space twice", "Ends the sentence with a full stop"),
             ui.row(R.drawable.ic_delete, "Backspace after a correction", "Puts back the word you typed"),
         ))
