@@ -1423,11 +1423,16 @@ class KeyboardTest {
         touch(wheelKeys, MotionEvent.ACTION_MOVE, listOf(Triple(0, wheelKeys.width * 0.5f, wheelKeys.height * 0.25f)))
         snap(agentRoot, "wheel")
         touch(wheelKeys, MotionEvent.ACTION_MOVE, listOf(Triple(0, wheelKeys.width * 0.14f, wheelKeys.height * 0.80f)))
+        val turned = wheelKeys.wheelRotation
+        val entry = wheelKeys.wheelEntryAt(0)
         touch(wheelKeys, MotionEvent.ACTION_UP, listOf(Triple(0, wheelKeys.width * 0.14f, wheelKeys.height * 0.80f)))
         layout(agentRoot)
         snap(agentRoot, "panel-languages")
         // Mid-gesture on the light wheel: finger over the second flag, then release on Cancel.
-        val langWheel = wheelIn(agentRoot)!!
+        val langWheel = wheelIn(agentRoot)
+        org.junit.Assert.assertNotNull("releasing on the left-most slot opens Translate (size ${wheelKeys.width}x${wheelKeys.height}, " +
+            "turned $turned, slot 0 = entry $entry of ${wheelKeys.wheelItems.map { it.label }}, keys ${wheelKeys.visibility}, status '${ime.statusMessage}')", langWheel)
+        langWheel!!
         touch(langWheel, MotionEvent.ACTION_MOVE, listOf(Triple(0, langWheel.width * 0.30f, langWheel.height - 403f)))
         layout(agentRoot)
         snap(agentRoot, "panel-languages-pick")
