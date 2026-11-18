@@ -89,6 +89,8 @@ class KeyboardTest {
 
     @Before
     fun setUp() {
+        // Most tests look at the app itself, past the first-run sign-in screen.
+        Store(RuntimeEnvironment.getApplication()).signInSkipped = true
         ime = Robolectric.buildService(TestIme::class.java).create().get()
         field = FakeField(RuntimeEnvironment.getApplication()) { ime }
         ime.field = field
@@ -1206,6 +1208,30 @@ class KeyboardTest {
         val group = android.app.Notification.Builder(app, "x").setSmallIcon(R.drawable.ic_languages)
             .setContentTitle("Camille").setContentText("Salut").setGroup("g").setGroupSummary(true).build()
         org.junit.Assert.assertNull("a group summary is skipped", MessageListener.read(group))
+    }
+
+    @Test
+    fun aFreshInstallOpensOnContinueWithGoogle() {
+        val app = RuntimeEnvironment.getApplication()
+        val store = Store(app)
+        store.signInSkipped = false
+        store.unpair()
+        val main = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+        assertTrue("the app hands over to the sign-in screen", main.isFinishing)
+        val next = org.robolectric.Shadows.shadowOf(app).nextStartedActivity
+        assertEquals(SignInActivity::class.java.name, next.component?.className)
+        val signIn = Robolectric.buildActivity(SignInActivity::class.java).setup().get()
+        val screen = signIn.findViewById<View>(android.R.id.content)
+        assertTrue("Google sign-in is offered first", findText(screen, "Continue with Google") != null)
+        clickLabel(screen, "Use without an account")
+        assertTrue("going without an account is remembered", store.signInSkipped)
+        assertTrue("and the sign-in screen steps aside", !SignInActivity.needed(store))
+        // A paired phone never sees it.
+        store.signInSkipped = false
+        store.deviceToken = "tok"
+        assertTrue(!SignInActivity.needed(store))
+        store.unpair()
+        store.signInSkipped = true
     }
 
     @Test

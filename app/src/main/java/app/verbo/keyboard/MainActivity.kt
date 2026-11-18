@@ -25,6 +25,12 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = Store(this)
+        // A fresh install (or a reinstall) starts at "Continue with Google", which brings every saved setting back.
+        if (SignInActivity.needed(store)) {
+            startActivity(Intent(this, SignInActivity::class.java))
+            finish()
+            return
+        }
         ui = Ui(this)
         look = Look(this)
         build()

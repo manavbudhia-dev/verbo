@@ -339,6 +339,8 @@ class Store(context: Context) {
     /** Off pauses every held-key action (skill keys too); held letters then just type. */
     var keysOn: Boolean get() = bool("keys_on", true); set(v) = put("keys_on", v)
     /** The first-run guide was finished or skipped. Kept on this phone only. */
+    /** The user chose "Use without an account" on the sign-in screen, so it isn't shown again. */
+    var signInSkipped: Boolean get() = bool("sign_in_skipped", false); set(v) { prefs?.edit()?.putBoolean("sign_in_skipped", v)?.apply() }
     var onboarded: Boolean get() = bool("onboarded", false); set(v) { prefs?.edit()?.putBoolean("onboarded", v)?.apply() }
     /** The keyboard's welcome banner was tapped; the bot intro has been offered once. */
     var welcomed: Boolean get() = bool("welcomed", false); set(v) { prefs?.edit()?.putBoolean("welcomed", v)?.apply() }
