@@ -1175,7 +1175,7 @@ class KeyboardTest {
 
     @Test
     fun typeAndActPillsComeBackAfterAStatusLine() {
-        val show = VerboIme::class.java.getDeclaredMethod("showStatus", String::class.java, Array<Pair<String, () -> Unit>>::class.java)
+        val show = VerboIme::class.java.getDeclaredMethod("showStatus", String::class.java, emptyArray<Pair<String, () -> Unit>>().javaClass)
         show.isAccessible = true
         show.invoke(ime, "Done", emptyArray<Pair<String, () -> Unit>>())
         type("h")
