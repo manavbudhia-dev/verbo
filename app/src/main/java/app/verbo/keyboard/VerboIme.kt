@@ -185,7 +185,9 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             setPadding(dp(3), 0, 0, 0)
             addView(chipsRow)
         }
-        suggestRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; visibility = View.GONE }
+        // The suggestion row always keeps its height while typing (blank when there is nothing to suggest),
+        // so the keyboard never grows and shrinks as words start and end.
+        suggestRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; visibility = View.INVISIBLE }
         statusRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -419,7 +421,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             lastAttachedClip = stamp
             contextText = clip
             refreshContext()
-            suggestRow?.visibility = View.GONE
+            suggestRow?.visibility = View.INVISIBLE
             chipsScroll?.visibility = View.VISIBLE
         }
         // Quick replies to the copied message, fetched once per copy, one tap to put in the field.
@@ -1415,7 +1417,9 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         val row = suggestRow ?: return
         val labels = if (slashMatches.isNotEmpty()) slashMatches.map { (it.emoji + " " + it.name).trim() } else suggestions
         if (labels.isEmpty()) {
-            row.visibility = View.GONE
+            // Blank, not gone: the row keeps its space so the keys don't move.
+            for (i in 0 until row.childCount) (row.getChildAt(i) as TextView).apply { text = ""; isClickable = false }
+            row.visibility = View.INVISIBLE
             return
         }
         while (row.childCount < 3) {
@@ -2087,8 +2091,9 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         botEdit = null
         listenBot = null
         window?.window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
-        // Same height as the keys and strip it replaces, so the app above doesn't jump.
-        val height = if (keepKeys) 0 else typingViews.filter { it.visibility == View.VISIBLE }.sumOf { it.height }
+        // Same height as the keys, strip and suggestion row it replaces, so the app above doesn't jump.
+        val height = if (keepKeys) 0 else typingViews.filter { it.visibility == View.VISIBLE }.sumOf { it.height } +
+            (suggestRow?.takeIf { it.visibility != View.GONE }?.height ?: 0)
         box.layoutParams = box.layoutParams.apply { this.height = maxOf(height, minHeight) }
         box.gravity = Gravity.TOP
         suggestRow?.visibility = View.GONE
@@ -2951,7 +2956,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             row.addView(close, LinearLayout.LayoutParams(dp(40), dp(36)))
         }
         chipsScroll?.visibility = View.GONE
-        suggestRow?.visibility = View.GONE
+        suggestRow?.visibility = View.INVISIBLE
         row.visibility = View.VISIBLE
     }
 

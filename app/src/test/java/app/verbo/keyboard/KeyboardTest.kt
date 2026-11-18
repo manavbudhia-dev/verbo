@@ -1235,6 +1235,22 @@ class KeyboardTest {
     }
 
     @Test
+    fun theKeyboardKeepsOneHeightWhetherOrNotThereAreSuggestions() {
+        val row = VerboIme::class.java.getDeclaredField("suggestRow").apply { isAccessible = true }.get(ime) as View
+        layout(root)
+        val idle = root.measuredHeight
+        assertEquals("with nothing typed the row is blank but keeps its space", View.INVISIBLE, row.visibility)
+        type("andr")
+        layout(root)
+        assertEquals("suggestions show while a word is typed", View.VISIBLE, row.visibility)
+        assertEquals("the keyboard did not grow", idle, root.measuredHeight)
+        type("oid ")
+        layout(root)
+        assertTrue("after the word the row is blank, not removed", row.visibility == View.INVISIBLE || row.visibility == View.VISIBLE)
+        assertEquals("the keyboard did not shrink", idle, root.measuredHeight)
+    }
+
+    @Test
     fun typeAndActPillsComeBackAfterAStatusLine() {
         val show = VerboIme::class.java.getDeclaredMethod("showStatus", String::class.java, emptyArray<Pair<String, () -> Unit>>().javaClass)
         show.isAccessible = true
