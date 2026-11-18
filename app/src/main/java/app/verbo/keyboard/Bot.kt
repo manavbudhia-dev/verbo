@@ -19,8 +19,8 @@ import android.view.animation.LinearInterpolator
 /**
  * Verbo, the keyboard mascot: a glossy gumdrop that runs from orange through pink into teal, with a
  * two-lobed tuft on top, a cream face, big sparkly eyes, rosy cheeks and a little "!" of excitement.
- * It bobs and blinks while attached to a window; each mood has its own face. In [Mood.LISTEN] a halo
- * breathes and the excitement marks on both sides pulse with the live mic [energy]; in [Mood.WORK]
+ * It bobs and blinks while attached to a window; each mood has its own face. In [Mood.LISTEN] three-line
+ * sound waves on both sides ripple with the live mic [energy]; in [Mood.WORK]
  * three dots take turns above its head.
  */
 class BotView(context: Context) : View(context) {
@@ -29,7 +29,7 @@ class BotView(context: Context) : View(context) {
     var mood = Mood.IDLE
         set(v) { field = v; invalidate() }
 
-    /** Live microphone loudness, 0 (silence) to 1 (loud). Drives the listening halo and marks. */
+    /** Live microphone loudness, 0 (silence) to 1 (loud). Drives the listening sound waves. */
     var energy = 0f
         set(v) { field = v.coerceIn(0f, 1f); invalidate() }
 
@@ -100,16 +100,6 @@ class BotView(context: Context) : View(context) {
         c.drawOval(RectF(46f + bob, 166f, 150f - bob, 176f), paint)
 
         c.translate(0f, bob)
-
-        // Listening halo: soft pink and teal rings that swell with the voice.
-        if (mood == Mood.LISTEN) {
-            val grow = 4f + 14f * pulse * (0.4f + energy)
-            stroke.strokeWidth = 4f
-            stroke.color = Color.argb((70 + 150 * energy).toInt().coerceIn(0, 255), 255, 74, 126)
-            c.drawCircle(98f, 104f, 82f + grow, stroke)
-            stroke.color = Color.argb((40 + 100 * energy).toInt().coerceIn(0, 255), 43, 224, 200)
-            c.drawCircle(98f, 104f, 94f + grow * 1.4f, stroke)
-        }
 
         // The tuft: a tall glossy lobe and a rounder pink one, behind the body.
         paint.color = Color.WHITE
@@ -182,18 +172,20 @@ class BotView(context: Context) : View(context) {
             c.drawPath(Path().apply { moveTo(91f, 119f); quadTo(98f, 114f, 105f, 119f); quadTo(103.5f, 127f, 98f, 127f); quadTo(92.5f, 127f, 91f, 119f); close() }, paint)
             c.restore()
         }
-        fun marks(right: Boolean, alpha: Int, len: Float) {
+        fun marks(right: Boolean, alpha: Int, len: Float, wave: Boolean = false) {
             stroke.color = Color.argb(alpha, 255, 200, 26)
             stroke.strokeWidth = 7f
             val sx = if (right) 1f else -1f
             val ox = if (right) 0f else 196f
-            fun line(x1: Float, y1: Float, x2: Float, y2: Float) {
+            fun line(i: Int, x1: Float, y1: Float, x2: Float, y2: Float) {
+                // While listening each line takes its turn, so the three read as a sound wave.
+                val f = if (!wave) len else len * (0.5f + 0.5f * (0.5f + 0.5f * Math.sin(phase * 8 * Math.PI - i * 1.1).toFloat()))
                 val mx = (x1 + x2) / 2; val my = (y1 + y2) / 2
-                c.drawLine(ox + sx * (mx + (x1 - mx) * len), my + (y1 - my) * len, ox + sx * (mx + (x2 - mx) * len), my + (y2 - my) * len, stroke)
+                c.drawLine(ox + sx * (mx + (x1 - mx) * f), my + (y1 - my) * f, ox + sx * (mx + (x2 - mx) * f), my + (y2 - my) * f, stroke)
             }
-            line(164f, 54f, 158f, 66f)
-            line(174f, 65f, 164f, 72f)
-            line(176f, 78f, 167f, 80f)
+            line(0, 164f, 54f, 158f, 66f)
+            line(1, 174f, 65f, 164f, 72f)
+            line(2, 176f, 78f, 167f, 80f)
         }
 
         when (mood) {
@@ -213,10 +205,10 @@ class BotView(context: Context) : View(context) {
                 c.drawOval(RectF(92f, 113f, 104f, 126f), paint)
                 paint.color = col("#FF6B86")
                 c.drawOval(RectF(94.5f, 119f, 101.5f, 125f), paint)
-                val a = (120 + 135 * energy).toInt().coerceIn(0, 255)
-                val len = 0.6f + 0.4f * (0.5f * pulse + 0.5f * energy)
-                marks(true, a, len)
-                marks(false, a, len)
+                val a = (170 + 85 * energy).toInt().coerceIn(0, 255)
+                val len = 0.75f + 0.25f * energy
+                marks(true, a, len, wave = true)
+                marks(false, a, len, wave = true)
             }
             Mood.WORK -> {
                 eye(72f, 1f, lookUp = 3f, sparkle = false); eye(126f, 1f, lookUp = 3f, sparkle = false)
