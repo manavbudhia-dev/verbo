@@ -780,6 +780,60 @@ class KeyboardTest {
         assertTrue("skill:$name" !in store.pins)
     }
 
+    // ---------- the bot ----------
+
+    private fun findText(v: View, s: String): TextView? = when {
+        v is TextView && v.text.toString() == s -> v
+        v is ViewGroup -> (0 until v.childCount).firstNotNullOfOrNull { findText(v.getChildAt(it), s) }
+        else -> null
+    }
+
+    @Test
+    fun welcomeBannerOpensTheBotIntroThenThePrompt() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        store.welcomed = false
+        layout(root)
+        assertTrue("the banner greets a new user", findText(root, "Welcome to Verbo, the agentic keyboard") != null)
+        clickLabel(root, "Welcome to Verbo, the agentic keyboard")
+        assertTrue("tapping the banner remembers it", store.welcomed)
+        assertTrue("the intro bubbles hello", findText(root, "Hey,\nI'm Verbo 👋") != null)
+        clickLabel(root, "Let's Try It")
+        var edit = sheetFields(root as ViewGroup)[0]
+        assertEquals("Write a birthday message for my friend.", edit.text.toString())
+        assertEquals("at rest the prompt replaces the keys", View.GONE, ime.keys!!.visibility)
+        edit.performClick()
+        assertEquals("tapping the request brings the keys up", View.VISIBLE, ime.keys!!.visibility)
+        edit = sheetFields(root as ViewGroup)[0]
+        edit.requestFocus()
+        ime.onChar("!")
+        assertEquals("key taps type into the request while it holds focus", "Write a birthday message for my friend.!", edit.text.toString())
+        ime.onBackspace()
+        assertEquals("Write a birthday message for my friend.", edit.text.toString())
+        clickLabel(root, "Go")
+        assertTrue("without a key the bot asks to set up", findText(root, "Add your ${store.providerName} API key to use actions") != null)
+        ime.hidePanel()
+        assertEquals("the banner stays gone", View.GONE, findText(root, "Welcome to Verbo, the agentic keyboard")!!.visibility)
+    }
+
+    @Test
+    fun botWorkingPanelStopsAndResultBarApplies() {
+        var stopped = false
+        ime.showLoading("Thinking") { stopped = true }
+        layout(root)
+        assertTrue(findText(root, "Working on it…") != null)
+        byDesc(root, "Stop")!!.performClick()
+        assertTrue("the stop button cancels the wait", stopped)
+        var inserted: String? = null
+        val text = "Happy birthday! Hope your day is full of good laughs, great food, and all your favorite people."
+        ime.showResult(ActionResult(text, null), { inserted = it.text }, null)
+        layout(root)
+        clickLabel(root, "Apply")
+        assertEquals(text, inserted)
+        ime.showResult(ActionResult("Second draft", null), { inserted = it.text }, null)
+        clickLabel(root, "Edit")
+        assertEquals("Edit hands the text over for editing", "Second draft", inserted)
+    }
+
     // ---------- the 360° compass ----------
 
     private fun spaceTap(keys: KeyboardView) {
@@ -1134,6 +1188,19 @@ class KeyboardTest {
         ime.showResult(ActionResult("1) Thank you for your time, but I've decided not to go ahead with this purchase. I appreciate your help!\n2) Thanks for checking in, but I'm not interested in buying this right now.\n3) Thanks for the offer, but this isn't something I need at the moment.", null), {}, {})
         layout(agentRoot)
         snap(agentRoot, "panel-options")
+        ime.showBotIntro()
+        layout(agentRoot)
+        snap(agentRoot, "bot-intro")
+        ime.showBotPrompt()
+        layout(agentRoot)
+        snap(agentRoot, "bot-prompt")
+        ime.showLoading("Working on it") {}
+        ime.addStep("Searching the web")
+        layout(agentRoot)
+        snap(agentRoot, "bot-working")
+        ime.showResult(ActionResult("Happy birthday! 🎉 Hope your day is full of good laughs, great food, and all your favorite people. Here's to another year of adventures together!", null), {}, null)
+        layout(agentRoot)
+        snap(agentRoot, "bot-result")
         ime.hidePanel()
         clipboard.setPrimaryClip(android.content.ClipData.newPlainText("m", ""))
         field.text.append(kept)

@@ -55,6 +55,8 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     private var statusRow: LinearLayout? = null
     private var panel: LinearLayout? = null // takes the place of the keys while an action runs and to show its result
     private var typingViews: List<View> = emptyList()
+    private var welcome: TextView? = null
+    private var botEdit: android.widget.EditText? = null
     private var contextBox: LinearLayout? = null
     private var contextText: String? = null
     private var wheelIds: List<String> = emptyList()
@@ -175,28 +177,59 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             setPadding(dp(12), 0, dp(2), 0)
         }
         strip.addView(chipsScroll, FrameLayout.LayoutParams(-1, -1))
-        strip.addView(suggestRow, FrameLayout.LayoutParams(-1, -1))
         strip.addView(statusRow, FrameLayout.LayoutParams(-1, -1))
+
+        welcome = TextView(this).apply {
+            text = "Welcome to Verbo, the agentic keyboard"
+            setTextColor(p.text)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+            background = rounded(p.key, 18)
+            visibility = if (store.welcomed) View.GONE else View.VISIBLE
+            setOnClickListener {
+                feedback(KeyboardView.Type.MODE)
+                store.welcomed = true
+                visibility = View.GONE
+                showBotIntro()
+            }
+        }
+        root.addView(welcome, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(10), dp(2), dp(10), dp(6)) })
 
         val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         top.addView(strip, LinearLayout.LayoutParams(0, -1, 1f))
-        val mic = ImageView(this).apply {
-            setImageResource(R.drawable.ic_mic)
-            setColorFilter(p.text)
-            setPadding(dp(10), dp(8), dp(10), dp(8))
+        top.addView(BotView(this).apply {
+            mood = BotView.Mood.HELLO
+            contentDescription = "Meet Verbo, the keyboard bot"
+            setOnClickListener { feedback(KeyboardView.Type.MODE); showBotIntro() }
+        }, LinearLayout.LayoutParams(dp(30), dp(30)).apply { setMargins(dp(4), 0, dp(6), 0) })
+        val voice = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(dp(12), 0, dp(14), 0)
             background = pressable(p.key, p.keyPressed, 18)
             contentDescription = "Voice. Hold for a voice command"
             setOnClickListener { feedback(KeyboardView.Type.MODE); startVoice(false) }
             setOnLongClickListener { feedback(KeyboardView.Type.MODE); startVoice(true); true }
+            addView(ImageView(this@VerboIme).apply {
+                setImageResource(R.drawable.ic_mic)
+                setColorFilter(p.text)
+            }, LinearLayout.LayoutParams(dp(15), dp(15)).apply { rightMargin = dp(6) })
+            addView(TextView(this@VerboIme).apply {
+                text = "Voice"
+                setTextColor(p.text)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                typeface = Typeface.DEFAULT_BOLD
+            })
         }
-        top.addView(mic, LinearLayout.LayoutParams(dp(42), dp(36)).apply { setMargins(dp(4), 0, dp(6), 0) })
+        top.addView(voice, LinearLayout.LayoutParams(-2, dp(36)).apply { setMargins(0, 0, dp(6), 0) })
         root.addView(top, LinearLayout.LayoutParams(-1, dp(46)))
+        root.addView(suggestRow, LinearLayout.LayoutParams(-1, dp(40)))
 
         keys = KeyboardView(this, p, store.heightPercent / 100f, store.keyShape, store.numberRow).also {
             it.listener = this
             root.addView(it, LinearLayout.LayoutParams(-1, -2))
         }
-        typingViews = listOf(top, keys!!)
+        typingViews = listOf(welcome!!, top, keys!!)
         loadSettings()
         buildChips()
         return root
@@ -449,6 +482,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     }
 
     override fun onChar(text: String) {
+        botEdit?.takeIf { it.isFocused }?.let { it.text.append(text); return }
         lastWasBackspace = false
         swiped = null
         if (text == " " && expandShortcut()) return
@@ -528,6 +562,10 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     }
 
     override fun onBackspace() {
+        botEdit?.takeIf { it.isFocused }?.let {
+            if (it.text.isNotEmpty()) it.text.delete(it.text.length - 1, it.text.length)
+            return
+        }
         lastWasBackspace = true
         val ic = currentInputConnection ?: return
         swiped?.let { w ->
@@ -581,6 +619,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     }
 
     override fun onEnter() {
+        botEdit?.takeIf { it.isFocused }?.let { runBotPrompt(it.text.toString()); return }
         val ic = currentInputConnection ?: return
         clearResult()
         val options = currentInputEditorInfo?.imeOptions ?: 0
@@ -896,6 +935,133 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         addView(foot)
     }
 
+    // ---------- the bot: intro, prompt, working, result ----------
+
+    private fun botTop(onClose: () -> Unit, retry: (() -> Unit)? = null) = LinearLayout(this).apply {
+        gravity = Gravity.CENTER_VERTICAL
+        addView(View(this@VerboIme), LinearLayout.LayoutParams(0, 1, 1f))
+        if (retry != null) addView(iconButton(R.drawable.ic_refresh_cw, "Try again", p.muted, retry), LinearLayout.LayoutParams(dp(40), dp(40)))
+        addView(iconButton(R.drawable.ic_x, "Back to keyboard", p.text, onClose), LinearLayout.LayoutParams(dp(40), dp(40)))
+    }
+
+    private fun botGlobe() = LinearLayout(this).apply {
+        gravity = Gravity.CENTER_VERTICAL
+        addView(iconButton(R.drawable.ic_globe, "Languages", p.muted) { showLanguages() }, LinearLayout.LayoutParams(dp(36), dp(36)))
+    }
+
+    private fun paper(doodles: Boolean) = BotPaper(doodles, resources.displayMetrics.density)
+
+    internal fun showBotIntro(): Unit = showPanel(dp(330)) {
+        background = paper(true)
+        addView(botTop({ hidePanel(); showTyping() }))
+        addView(View(this@VerboIme), LinearLayout.LayoutParams(1, 0, 0.4f))
+        val hello = LinearLayout(this@VerboIme).apply { gravity = Gravity.CENTER_VERTICAL }
+        hello.addView(BotView(this@VerboIme).apply { mood = BotView.Mood.HELLO }, LinearLayout.LayoutParams(dp(96), dp(96)))
+        hello.addView(TextView(this@VerboIme).apply {
+            val bubble = android.text.SpannableStringBuilder("Hey,\n")
+            val bold = android.text.SpannableStringBuilder("I'm Verbo 👋")
+            bold.setSpan(android.text.style.StyleSpan(Typeface.BOLD), 0, bold.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            bubble.append(bold)
+            text = bubble
+            setTextColor(p.text)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+            background = GradientDrawable().apply {
+                setColor(Color.WHITE)
+                cornerRadii = floatArrayOf(dp(16).toFloat(), dp(16).toFloat(), dp(16).toFloat(), dp(16).toFloat(), dp(16).toFloat(), dp(16).toFloat(), dp(3).toFloat(), dp(3).toFloat())
+            }
+        }, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(10) })
+        addView(hello, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.CENTER_HORIZONTAL })
+        addView(View(this@VerboIme), LinearLayout.LayoutParams(1, 0, 0.5f))
+        addView(TextView(this@VerboIme).apply {
+            text = "Personal assistant on keyboard:"
+            setTextColor(p.text)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            gravity = Gravity.CENTER
+        }, LinearLayout.LayoutParams(-1, -2))
+        addView(TextView(this@VerboIme).apply {
+            text = "write, reply, and\nfind what you need."
+            setTextColor(p.text)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+        }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2) })
+        addView(View(this@VerboIme), LinearLayout.LayoutParams(1, 0, 0.5f))
+        addView(TextView(this@VerboIme).apply {
+            text = "Let's Try It"
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(Color.parseColor("#22D3EE"), Color.parseColor("#4F46E5"))).apply { cornerRadius = dp(24).toFloat() }
+            setOnClickListener { feedback(KeyboardView.Type.MODE); showBotPrompt() }
+        }, LinearLayout.LayoutParams(-1, dp(48)).apply { setMargins(dp(24), dp(10), dp(24), dp(6)) })
+        addView(View(this@VerboIme), LinearLayout.LayoutParams(1, 0, 1f))
+        addView(botGlobe())
+    }
+
+    internal fun showBotPrompt(initial: String = "Write a birthday message for my friend.", editing: Boolean = false): Unit =
+        showPanel(if (editing) dp(240) else dp(300), editing) {
+        background = paper(false)
+        addView(botTop({ hidePanel(); showTyping() }))
+        addView(View(this@VerboIme), LinearLayout.LayoutParams(1, 0, 0.7f))
+        addView(BotView(this@VerboIme).apply { mood = BotView.Mood.IDLE },
+            LinearLayout.LayoutParams(dp(if (editing) 56 else 88), dp(if (editing) 56 else 88)).apply { gravity = Gravity.CENTER_HORIZONTAL })
+        val edit = android.widget.EditText(this@VerboIme).apply {
+            setText(initial)
+            setTextColor(p.text)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, if (editing) 15f else 17f)
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            background = null
+            maxLines = 4
+            setPadding(dp(16), dp(if (editing) 4 else 10), dp(16), dp(4))
+            imeOptions = EditorInfo.IME_ACTION_DONE
+            setHorizontallyScrolling(false)
+            // Tapping the request brings the keys up under the panel so it can be rewritten.
+            setOnClickListener { if (!editing) showBotPrompt(text.toString(), true) }
+        }
+        addView(edit, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(18), dp(if (editing) 4 else 10), dp(18), 0) })
+        addView(TextView(this@VerboIme).apply {
+            text = "Go"
+            setTextColor(p.text)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            gravity = Gravity.CENTER
+            background = GradientDrawable().apply {
+                setColor(Color.TRANSPARENT)
+                cornerRadius = dp(24).toFloat()
+                setStroke(dp(1), Color.parseColor("#C9C9D4"))
+            }
+            setOnClickListener { feedback(KeyboardView.Type.MODE); runBotPrompt(edit.text.toString()) }
+        }, LinearLayout.LayoutParams(-1, dp(if (editing) 40 else 46)).apply { setMargins(dp(40), dp(if (editing) 6 else 12), dp(40), 0) })
+        addView(View(this@VerboIme), LinearLayout.LayoutParams(1, 0, 1f))
+        addView(botGlobe())
+        botEdit = edit
+        if (editing) {
+            // The keys stay up under this panel and type into the request while it holds focus.
+            window?.window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
+            main.post { if (botEdit === edit) edit.requestFocus() }
+        }
+    }
+
+    private fun runBotPrompt(prompt: String) {
+        if (busy) return
+        if (prompt.isBlank()) {
+            hidePanel()
+            showStatus("Type a request for the bot first")
+            return
+        }
+        if (store.activeKey.isBlank()) {
+            hidePanel()
+            showStatus("Add your ${store.providerName} API key to use actions", "Set up" to { openApp() })
+            return
+        }
+        val task = "You are Verbo, the user's personal assistant living on their keyboard. Do exactly what the user asks: write, reply, find, explain or plan. Use your tools when they help. Reply with only the message or answer itself, no preamble and no quotes around it."
+        launch("Working on it", task, prompt, connected = true, card = true) { result ->
+            showResult(result, { chosen -> insert(chosen.text) }) { showBotPrompt(prompt) }
+        }
+    }
+
     /** Runs a trigger's skill on the copied message and shows the answer as a card. */
     private fun runTrigger(t: Trigger, clip: String) {
         val skill = store.triggerSkill(t)
@@ -1106,7 +1272,6 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         val labels = if (slashMatches.isNotEmpty()) slashMatches.map { (it.emoji + " " + it.name).trim() } else suggestions
         if (labels.isEmpty()) {
             row.visibility = View.GONE
-            chipsScroll?.visibility = View.VISIBLE
             return
         }
         while (row.childCount < 3) {
@@ -1129,7 +1294,6 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             cell.setTextColor(if (strong) p.accent else p.text)
             cell.typeface = if (strong) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
         }
-        chipsScroll?.visibility = View.GONE
         row.visibility = View.VISIBLE
     }
 
@@ -1563,6 +1727,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         val local = if (input.startsWith("Context (")) null else Offline.kindFor(task)
         val localLang = if (input.startsWith("Context (")) null else Offline.translateTarget(task)
         if (store.overLimit && local == null && localLang == null) {
+            hidePanel()
             showStatus("This month's limit of $${"%.2f".format(store.monthlyLimit)} is reached", "Usage" to { openPage("usage") })
             return
         }
@@ -1626,15 +1791,23 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
 
     // ---------- the panel that replaces the keys ----------
 
-    private fun showPanel(minHeight: Int = dp(250), fill: LinearLayout.() -> Unit) {
+    private fun showPanel(minHeight: Int = dp(250), keepKeys: Boolean = false, fill: LinearLayout.() -> Unit) {
         val box = panel ?: return
         box.removeAllViews()
+        box.background = null
+        botEdit = null
+        window?.window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
         // Same height as the keys and strip it replaces, so the app above doesn't jump.
-        val height = typingViews.sumOf { it.height }
+        val height = if (keepKeys) 0 else typingViews.filter { it.visibility == View.VISIBLE }.sumOf { it.height }
         box.layoutParams = box.layoutParams.apply { this.height = maxOf(height, minHeight) }
         box.gravity = Gravity.TOP
+        suggestRow?.visibility = View.GONE
         box.fill()
-        typingViews.forEach { it.visibility = View.GONE }
+        if (!keepKeys) typingViews.forEach { it.visibility = View.GONE }
+        else {
+            typingViews.forEach { it.visibility = View.VISIBLE }
+            welcome?.visibility = View.GONE
+        }
         box.visibility = View.VISIBLE
         refreshContext()
     }
@@ -1643,8 +1816,13 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         val box = panel ?: return
         if (box.visibility != View.VISIBLE) return
         box.removeAllViews()
+        box.background = null
         box.visibility = View.GONE
+        botEdit = null
+        window?.window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
         typingViews.forEach { it.visibility = View.VISIBLE }
+        welcome?.visibility = if (store.welcomed) View.GONE else View.VISIBLE
+        showTyping()
         refreshContext()
     }
 
@@ -1660,37 +1838,38 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     /** The steps of the action in progress, shown as a card while waiting. Null when the wait is shown as a status line. */
     private var steps: LinearLayout? = null
 
-    internal fun showLoading(label: String, cancel: () -> Unit) = showPanel {
-        val header = LinearLayout(this@VerboIme).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(4), 0, 0, dp(8)) }
-        header.addView(ImageView(this@VerboIme).apply {
-            setImageResource(R.drawable.ic_sparkles)
-            setColorFilter(p.accent)
-            // A slow pulse while waiting.
-            android.animation.ObjectAnimator.ofFloat(this, "alpha", 1f, 0.3f).apply {
-                duration = 700
-                repeatMode = android.animation.ValueAnimator.REVERSE
-                repeatCount = android.animation.ValueAnimator.INFINITE
-                start()
-            }
-        }, LinearLayout.LayoutParams(dp(22), dp(22)))
-        header.addView(TextView(this@VerboIme).apply {
-            text = label.removeSuffix("…")
-            setTextColor(p.text)
+    internal fun showLoading(label: String, cancel: () -> Unit) = showPanel(dp(340)) {
+        background = paper(false)
+        addView(botTop(cancel))
+        addView(View(this@VerboIme), LinearLayout.LayoutParams(1, 0, 0.5f))
+        addView(BotView(this@VerboIme).apply { mood = BotView.Mood.WORK }, LinearLayout.LayoutParams(dp(92), dp(92)).apply { gravity = Gravity.CENTER_HORIZONTAL })
+        addView(TextView(this@VerboIme).apply {
+            text = "Working on it…"
+            setTextColor(p.muted)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-            typeface = Typeface.DEFAULT_BOLD
-            setPadding(dp(10), 0, 0, 0)
-        }, LinearLayout.LayoutParams(0, -2, 1f))
-        header.addView(iconButton(R.drawable.ic_x, "Cancel", p.muted, cancel), LinearLayout.LayoutParams(dp(40), dp(40)))
-        addView(header)
+            gravity = Gravity.CENTER
+        }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(14) })
+        addView(LinearLayout(this@VerboIme).apply {
+            gravity = Gravity.CENTER
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.WHITE)
+                setStroke(dp(1), Color.parseColor("#D9D9E2"))
+            }
+            contentDescription = "Stop"
+            setOnClickListener { feedback(KeyboardView.Type.MODE); cancel() }
+            addView(View(this@VerboIme).apply { background = rounded(Color.parseColor("#111827"), 3) }, LinearLayout.LayoutParams(dp(14), dp(14)))
+        }, LinearLayout.LayoutParams(dp(48), dp(48)).apply { gravity = Gravity.CENTER_HORIZONTAL; topMargin = dp(18) })
         val card = LinearLayout(this@VerboIme).apply {
             orientation = LinearLayout.VERTICAL
-            background = rounded(p.key, 16)
-            setPadding(dp(14), dp(10), dp(14), dp(12))
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(0, dp(10), 0, 0)
         }
-        addView(card, LinearLayout.LayoutParams(-1, -2))
+        addView(android.widget.ScrollView(this@VerboIme).apply { addView(card) }, LinearLayout.LayoutParams(-1, 0, 1f))
         steps = card
         addStep(if (contextText != null) "Reading the copied message" else "Reading your text")
-        addStep("Thinking")
+        addStep(label.removeSuffix("…"))
+        addView(botGlobe())
     }
 
     /** Marks the current step done and shows the next one. */
@@ -1703,9 +1882,10 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         box.addView(TextView(this).apply {
             tag = text
             this.text = "●   $text…"
-            setTextColor(p.text)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
-            setPadding(0, dp(5), 0, dp(5))
+            setTextColor(p.muted)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            gravity = Gravity.CENTER
+            setPadding(0, dp(2), 0, dp(2))
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
         })
@@ -1854,36 +2034,64 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             resultButtons(this, result, onInsert)
             return@showPanel
         }
-        // A short first line reads as the title of the card.
-        val lines = result.text.lines()
-        val titled = lines.size >= 2 && lines[0].length <= 60
-        if (titled) card.addView(TextView(this@VerboIme).apply {
-            text = lines[0]
+        // A plain answer sits on the bot paper: text above, Edit / Apply around the cool bot below.
+        removeAllViews()
+        background = paper(false)
+        clipChildren = false
+        addView(botTop({ hidePanel(); showTyping() }, onRetry))
+        val body = LinearLayout(this@VerboIme).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(8), dp(4), dp(8), 0) }
+        body.addView(TextView(this@VerboIme).apply {
+            text = result.text
             setTextColor(p.text)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
-            typeface = Typeface.DEFAULT_BOLD
-            setPadding(0, 0, 0, dp(4))
-        })
-        val body = if (titled) lines.drop(1).joinToString("\n").trim() else result.text
-        if (body.isNotEmpty()) card.addView(TextView(this@VerboIme).apply {
-            text = body
-            setTextColor(p.text)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-            setLineSpacing(dp(3).toFloat(), 1f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            setLineSpacing(dp(4).toFloat(), 1f)
             android.text.util.Linkify.addLinks(this, android.text.util.Linkify.WEB_URLS)
             setLinkTextColor(p.accent)
             linksClickable = false
             movementMethod = null
         })
         result.openUri?.let { uri ->
-            val open = chipView(openLabel(uri), p.fnKey, p.keyPressed, p.accent)
+            val open = chipView(openLabel(uri), Color.WHITE, p.keyPressed, p.accent)
             open.typeface = Typeface.DEFAULT_BOLD
             open.setOnClickListener { feedback(KeyboardView.Type.MODE); openLink(uri) }
-            card.addView(open, LinearLayout.LayoutParams(-2, dp(36)).apply { topMargin = dp(10) })
+            body.addView(open, LinearLayout.LayoutParams(-2, dp(36)).apply { topMargin = dp(10) })
         }
-        addView(android.widget.ScrollView(this@VerboIme).apply { addView(card) }, LinearLayout.LayoutParams(-1, 0, 1f))
-
-        resultButtons(this, result, onInsert)
+        addView(android.widget.ScrollView(this@VerboIme).apply { addView(body) }, LinearLayout.LayoutParams(-1, 0, 1f))
+        val blue = Color.parseColor("#2563EB")
+        val bar = LinearLayout(this@VerboIme).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            background = rounded(Color.WHITE, 24)
+            clipChildren = false
+        }
+        fun side(icon: Int, label: String, onTap: () -> Unit) = LinearLayout(this@VerboIme).apply {
+            gravity = Gravity.CENTER
+            setOnClickListener { feedback(KeyboardView.Type.MODE); onTap() }
+            addView(ImageView(this@VerboIme).apply { setImageResource(icon); setColorFilter(blue) }, LinearLayout.LayoutParams(dp(16), dp(16)).apply { rightMargin = dp(6) })
+            addView(TextView(this@VerboIme).apply {
+                text = label
+                setTextColor(blue)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                typeface = Typeface.DEFAULT_BOLD
+            })
+        }
+        val imeOpts = currentInputEditorInfo?.imeOptions ?: 0
+        val sends = imeOpts and EditorInfo.IME_MASK_ACTION == EditorInfo.IME_ACTION_SEND && imeOpts and EditorInfo.IME_FLAG_NO_ENTER_ACTION == 0
+        bar.addView(side(R.drawable.ic_pencil_line, "Edit") { hidePanel(); onInsert(result) }, LinearLayout.LayoutParams(0, dp(52), 1f))
+        bar.addView(View(this@VerboIme).apply { setBackgroundColor(Color.parseColor("#E5E7EB")) }, LinearLayout.LayoutParams(dp(1), dp(22)))
+        bar.addView(LinearLayout(this@VerboIme).apply {
+            gravity = Gravity.CENTER
+            clipChildren = false
+            addView(BotView(this@VerboIme).apply { mood = BotView.Mood.COOL; translationY = -dp(12).toFloat() }, LinearLayout.LayoutParams(dp(54), dp(54)))
+        }, LinearLayout.LayoutParams(0, dp(52), 1f))
+        bar.addView(View(this@VerboIme).apply { setBackgroundColor(Color.parseColor("#E5E7EB")) }, LinearLayout.LayoutParams(dp(1), dp(22)))
+        bar.addView(side(R.drawable.ic_arrow_up, if (sends) "Send" else "Apply") {
+            feedback(KeyboardView.Type.ENTER)
+            hidePanel()
+            onInsert(result)
+            if (sends) currentInputConnection?.performEditorAction(EditorInfo.IME_ACTION_SEND)
+        }, LinearLayout.LayoutParams(0, dp(52), 1f))
+        addView(bar, LinearLayout.LayoutParams(-1, dp(54)).apply { setMargins(dp(4), dp(10), dp(4), dp(2)) })
+        addView(botGlobe())
     }
 
     /** Copy and Insert (or Send) under a result card. */

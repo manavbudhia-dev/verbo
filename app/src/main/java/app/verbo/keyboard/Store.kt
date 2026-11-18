@@ -303,6 +303,8 @@ class Store(context: Context) {
     var keysOn: Boolean get() = bool("keys_on", true); set(v) = put("keys_on", v)
     /** The first-run guide was finished or skipped. Kept on this phone only. */
     var onboarded: Boolean get() = bool("onboarded", false); set(v) { prefs?.edit()?.putBoolean("onboarded", v)?.apply() }
+    /** The keyboard's welcome banner was tapped; the bot intro has been offered once. */
+    var welcomed: Boolean get() = bool("welcomed", false); set(v) { prefs?.edit()?.putBoolean("welcomed", v)?.apply() }
     /** Secret for the Google sign-in in progress: the dashboard only pairs the phone that holds it. */
     var authVerifier: String get() = str("auth_verifier"); set(v) { prefs?.edit()?.putString("auth_verifier", v)?.apply() }
     /** The dashboard that sign-in was started on. */
