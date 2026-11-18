@@ -46,6 +46,8 @@ class MessageListener : NotificationListenerService() {
         store.incomingAt = System.currentTimeMillis()
         store.incomingResult = ""
         store.incomingSkill = ""
+        // A keyboard that is already open shows the new message straight away.
+        main.post { onIncoming?.invoke(false) }
         val trigger = store.triggers.firstOrNull { it.auto && Cards.matches(it.kind, it.keyword, text) } ?: return
         val skill = store.triggerSkill(trigger) ?: return
         if (store.activeKey.isBlank() || store.overLimit) return
@@ -64,6 +66,7 @@ class MessageListener : NotificationListenerService() {
                 if (store.incomingAt == stamp) {
                     store.incomingResult = result.text
                     store.incomingSkill = skill.name
+                    onIncoming?.invoke(true)
                 }
                 store.recordUse(store.triggerId(trigger))
                 store.recordUse("skill:" + skill.name)
@@ -73,6 +76,12 @@ class MessageListener : NotificationListenerService() {
     }
 
     companion object {
+        /**
+         * Set by the keyboard while it runs (same process): called on the main thread when a message
+         * arrives (false) and when its automatic result is ready (true).
+         */
+        @Volatile var onIncoming: ((Boolean) -> Unit)? = null
+
         /** Messaging apps whose notifications carry a chat message. */
         val CHAT_APPS = setOf(
             "com.whatsapp", "com.whatsapp.w4b", "org.telegram.messenger", "org.thunderdog.challegram",

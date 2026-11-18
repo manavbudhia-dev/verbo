@@ -77,6 +77,7 @@ class TestIme : VerboIme() {
     lateinit var field: FakeField
     override fun getCurrentInputConnection() = field.ic
     override fun getCurrentInputEditorInfo() = field.info
+    override fun isInputViewShown() = true
 }
 
 @RunWith(RobolectricTestRunner::class)
@@ -1192,6 +1193,34 @@ class KeyboardTest {
         field.info.packageName = "com.other"
         ime.onStartInputView(field.info, false)
         assertTrue(chipTexts().none { it.contains("Camille") })
+        store.clearIncoming()
+        store.watchMessages = false
+    }
+
+    @Test
+    fun aMessageArrivingWhileTheKeyboardIsOpenShowsItsTranslationByItself() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        store.watchMessages = true
+        field.info.packageName = "com.whatsapp"
+        ime.onStartInputView(field.info, false)
+        layout(root)
+        // The notification reader stores the message, then tells the open keyboard.
+        store.incomingText = "Bonjour"
+        store.incomingFrom = "Navya"
+        store.incomingApp = "com.whatsapp"
+        store.incomingAt = System.currentTimeMillis()
+        store.incomingResult = ""
+        store.incomingSkill = ""
+        ime.onIncomingMessage(false)
+        assertTrue("the message is offered straight away: ${chipTexts()}", chipTexts().any { it.contains("Understand any language") })
+        // Its automatic translation arrives: the card opens without a tap.
+        store.incomingResult = "From French\nHello\nTone: a friendly greeting"
+        store.incomingSkill = "Understand any language"
+        ime.onIncomingMessage(true)
+        layout(root)
+        fun has(v: View, s: String): Boolean = (v is TextView && v.text.toString().contains(s)) ||
+            (v is ViewGroup && (0 until v.childCount).any { has(v.getChildAt(it), s) })
+        assertTrue("the translation card is open", has(root, "Hello") && ime.keys!!.visibility == View.GONE)
         store.clearIncoming()
         store.watchMessages = false
     }

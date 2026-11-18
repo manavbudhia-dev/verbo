@@ -11,8 +11,8 @@ android {
         applicationId = "app.verbo.keyboard"
         minSdk = 26
         targetSdk = 35
-        versionCode = 28
-        versionName = "0.24.2"
+        versionCode = 29
+        versionName = "0.24.3"
         // Real phones only: the offline-translation library is ~17 MB per processor type, and x86 is for emulators.
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }

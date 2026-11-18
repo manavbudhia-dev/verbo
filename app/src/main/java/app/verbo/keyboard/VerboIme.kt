@@ -115,11 +115,13 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         super.onCreate()
         store = Store(this)
         fb = Feedback(this)
+        MessageListener.onIncoming = { ready -> onIncomingMessage(ready) }
         Thread { try { dictionary.load(assets.open("words.txt")) } catch (e: Exception) { } }.start()
         main.postDelayed(autoSync, Sync.EVERY_MS)
     }
 
     override fun onDestroy() {
+        if (MessageListener.onIncoming != null) MessageListener.onIncoming = null
         main.removeCallbacks(autoSync)
         stopVoiceWatch()
         worker.shutdownNow()
@@ -399,6 +401,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         if (incoming != null && store.incomingAt != lastAttachedClip) {
             lastAttachedClip = store.incomingAt
             contextText = incoming
+            contextFromIncoming = true
             refreshContext()
         }
         // What an automatic action already made of it (a translation): one tap shows it, nothing is asked again.
@@ -452,7 +455,8 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         }
         // An automatic trigger runs once per copied message, or once per incoming one the notification didn't already handle.
         val auto = matched.firstOrNull { it.auto }
-        val autoStamp = if (fromIncoming && store.incomingResult.isBlank()) store.incomingAt else stamp
+        // An incoming message is handled by the notification reader itself; running it here too would ask twice.
+        val autoStamp = if (fromIncoming) 0L else stamp
         if (auto != null && clip != null && autoStamp != 0L && autoStamp != lastAutoClip && !busy && store.activeKey.isNotBlank()) {
             lastAutoClip = autoStamp
             main.post { runTrigger(auto, clip) }
@@ -1201,6 +1205,26 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         runTask("${skill.name}…", Ai.skillTask(skill.instruction), card = true) { runTrigger(t, clip) }
     }
 
+    /**
+     * A chat message arrived (read from its notification) while the keyboard may already be open.
+     * In that chat it becomes the context at once; when its automatic result (a translation) is ready
+     * and nothing else is on screen, the card opens by itself.
+     */
+    internal fun onIncomingMessage(ready: Boolean) {
+        if (!isInputViewShown || !store.watchMessages || !store.incomingFresh) return
+        if (store.incomingApp != currentInputEditorInfo?.packageName) return
+        // An older incoming message gives way to the new one; something the user copied on purpose stays.
+        if (contextText != null && contextText != store.incomingText && contextFromIncoming) contextText = null
+        buildChips()
+        if (ready && store.incomingResult.isNotBlank() && !busy && panel?.visibility != View.VISIBLE) {
+            val empty = try { readTarget()?.text.isNullOrBlank() } catch (e: Exception) { true }
+            if (empty) showIncomingResult()
+        }
+    }
+
+    /** True while [contextText] is a message that came in from a notification, not one the user copied. */
+    private var contextFromIncoming = false
+
     /** The answer an automatic action already made of an incoming message, as a card with Copy / Insert. */
     private fun showIncomingResult() {
         val text = store.incomingResult
@@ -1223,6 +1247,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             return
         }
         contextText = text.take(4000)
+        contextFromIncoming = false
         refreshContext()
         buildChips()
     }
@@ -1342,6 +1367,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             undo = null
             loadSettings()
             contextText = null // context belongs to the conversation it was copied for
+            contextFromIncoming = false
             buildChips()
             main.removeCallbacks(autoRun)
             autoLang = if (assistantOn) store.autoTranslate(info?.packageName) else null
