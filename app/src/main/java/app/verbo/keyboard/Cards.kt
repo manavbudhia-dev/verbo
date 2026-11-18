@@ -143,6 +143,7 @@ object Cards {
     /** A short label for a trigger chip: "Who is David Miller" rather than just "Who is". */
     fun chipLabel(trigger: Trigger, text: String): String = when (trigger.kind) {
         "person" -> personName(text)?.let { "${trigger.skill} · $it" } ?: trigger.skill
+        "foreign" -> Acts.foreignLanguage(text)?.takeIf { it != "another language" }?.let { "${trigger.skill} · $it" } ?: trigger.skill
         else -> trigger.skill
     }
 }
@@ -193,16 +194,24 @@ object Acts {
     /** True when a skill works on a copied message rather than on what the user typed. */
     fun needsCopied(instruction: String) = Regex("""copied|the context|message the user received|they received|names a person""", RegexOption.IGNORE_CASE).containsMatchIn(instruction)
 
-    /** Mostly written in a script other than Latin and Devanagari (Japanese, Arabic, Russian...): worth translating. */
-    fun isForeign(text: String): Boolean {
+    /**
+     * In a language the user doesn't read without help: French, Spanish or German as much as Japanese or
+     * Arabic. English, Hindi and Hinglish are home. Checked on the phone, nothing is sent.
+     */
+    fun isForeign(text: String): Boolean = foreignLanguage(text) != null
+
+    /** The foreign language [text] is in ("French"), "another language" for an unknown script, or null. */
+    fun foreignLanguage(text: String): String? {
+        LangDetect.detect(text)?.let { return if (it in LangDetect.HOME) null else it }
+        // A script the detector doesn't name: still foreign when it is most of the letters.
         val letters = text.filter { it.isLetter() }
-        if (letters.length < 4) return false
+        if (letters.length < 4) return null
         val other = letters.count { c ->
             val block = Character.UnicodeBlock.of(c)
             block != Character.UnicodeBlock.BASIC_LATIN && block != Character.UnicodeBlock.LATIN_1_SUPPLEMENT &&
                 block != Character.UnicodeBlock.LATIN_EXTENDED_A && block != Character.UnicodeBlock.LATIN_EXTENDED_B && block != Character.UnicodeBlock.DEVANAGARI
         }
-        return other * 10 >= letters.length * 4
+        return if (other * 10 >= letters.length * 4) "another language" else null
     }
 
     /** Acts that fit [text] best, most useful first: a date suggests Schedule it, a foreign message Understand, a link Save to Notion. */

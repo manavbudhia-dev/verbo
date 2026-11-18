@@ -50,11 +50,11 @@ object WheelLook {
         c.drawArc(arc, 180f, 180f, false, edge)
     }
 
-    /** Protractor ticks every 4 degrees along the rim. */
-    fun ticks(c: Canvas, cx: Float, cy: Float, r: Float, d: Float) {
+    /** Protractor ticks every 4 degrees along the rim, shifted by [rot] degrees as the ring turns. */
+    fun ticks(c: Canvas, cx: Float, cy: Float, r: Float, d: Float, rot: Float = 0f) {
         edge.color = Color.parseColor("#B7CDE2")
         edge.strokeWidth = d
-        var a = 0f
+        var a = ((rot % 4f) + 4f) % 4f
         while (a <= 180f) {
             val rad = Math.toRadians(a.toDouble())
             val cos = kotlin.math.cos(rad).toFloat()
@@ -110,6 +110,20 @@ object WheelLook {
         face.shader = RadialGradient(cx, cy, 55f * d, intArrayOf(Color.parseColor("#CCFFFFFF"), Color.parseColor("#00FFFFFF")), null, Shader.TileMode.CLAMP)
         c.drawArc(RectF(cx - 55f * d, cy - 55f * d, cx + 55f * d, cy + 55f * d), 180f, 180f, true, face)
         face.shader = null
+    }
+
+    /** A small arrow at an end of the fan: the ring turns that way. Filled blue while it is turning. */
+    fun chevron(c: Canvas, x: Float, y: Float, dir: Int, active: Boolean, d: Float) {
+        face.color = if (active) blue else Color.WHITE
+        c.drawCircle(x, y, 11f * d, face)
+        edge.color = if (active) Color.WHITE else blue
+        edge.strokeWidth = 2.2f * d
+        edge.strokeCap = Paint.Cap.ROUND
+        val w = 3.5f * d * dir
+        c.drawLine(x - w, y - 5f * d, x + w, y, edge)
+        c.drawLine(x + w, y, x - w, y + 5f * d, edge)
+        edge.strokeCap = Paint.Cap.BUTT
+        edge.strokeWidth = d
     }
 
     fun cancel(c: Canvas, cx: Float, cy: Float, d: Float, sp: Float) {
@@ -210,36 +224,66 @@ object WheelLook {
     }
 }
 
-/** Detented compass rotation: half a slot of finger travel turns one icon with a slow eased spin that locks on it. */
-class CompassSpin(private val redraw: () -> Unit, private val onLock: () -> Unit = {}) {
+/**
+ * Detented rotation: half a slot of finger travel turns one icon with a slow eased spin that locks on it.
+ * With [oneAtATime] the dial never runs ahead of the finger: a turn must finish and rest for [lockMs]
+ * before the next one may start, so a fast flick still moves exactly one icon at a time.
+ */
+class CompassSpin(
+    private val redraw: () -> Unit,
+    private val onLock: () -> Unit = {},
+    var step: Float = 360f / WheelLook.COMPASS_SLOTS,
+    private val duration: Long = DURATION,
+    private val oneAtATime: Boolean = false,
+    private val lockMs: Long = 0L,
+) {
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
     var rot = 0f
         private set
     private var from = 0f
-    private var target = 0f
+    /** Where the dial is heading (or rests): always a whole number of steps. */
+    var target = 0f
+        private set
     private var start = 0L
     private var drag = 0f
     private var turning = false
-    private val step = 360f / WheelLook.COMPASS_SLOTS
+    private var lockedUntil = 0L
+
+    /** True while a turn is animating or resting in its lock. */
+    val busy: Boolean get() = turning || android.os.SystemClock.uptimeMillis() < lockedUntil
 
     private val tick = object : Runnable {
         override fun run() {
-            val t = ((android.os.SystemClock.uptimeMillis() - start).toFloat() / DURATION).coerceIn(0f, 1f)
-            val e = 1f - (1f - t) * (1f - t) * (1f - t)
+            val t = ((android.os.SystemClock.uptimeMillis() - start).toFloat() / duration).coerceIn(0f, 1f)
+            // Ease in and out: starts gently, glides, and settles softly into the detent.
+            val e = if (oneAtATime) t * t * (3f - 2f * t) else 1f - (1f - t) * (1f - t) * (1f - t)
             rot = from + (target - from) * e
             redraw()
-            if (t < 1f) handler.postDelayed(this, 16) else { turning = false; rot = target; onLock() }
+            if (t < 1f) handler.postDelayed(this, 16)
+            else {
+                turning = false
+                rot = target
+                lockedUntil = android.os.SystemClock.uptimeMillis() + lockMs
+                onLock()
+            }
         }
     }
 
     fun reset() {
         handler.removeCallbacks(tick)
-        rot = 0f; from = 0f; target = 0f; drag = 0f; turning = false
+        rot = 0f; from = 0f; target = 0f; drag = 0f; turning = false; lockedUntil = 0L
     }
 
     /** Feed a wrapped finger-angle delta in degrees; each half-slot of travel queues one icon's turn. */
     fun drag(delta: Float) {
         drag += delta
+        if (oneAtATime) {
+            val cap = step * 0.45f
+            if (busy) { drag = drag.coerceIn(-cap, cap); return }
+            val dir = if (drag >= step / 2) 1 else if (drag <= -step / 2) -1 else 0
+            if (dir != 0) { drag = 0f; turn(dir) }
+            return
+        }
         var dir = 0
         while (drag >= step / 2) { drag -= step; dir++ }
         while (drag <= -step / 2) { drag += step; dir-- }
@@ -251,6 +295,16 @@ class CompassSpin(private val redraw: () -> Unit, private val onLock: () -> Unit
         }
     }
 
+    /** Turn one icon in [dir] (+1 or -1). Refused while a one-at-a-time dial is still turning or locked. */
+    fun turn(dir: Int): Boolean {
+        if (dir == 0 || (oneAtATime && busy)) return false
+        target += dir * step
+        from = rot
+        start = android.os.SystemClock.uptimeMillis()
+        if (!turning) { turning = true; handler.post(tick) }
+        return true
+    }
+
     /** Release: lock onto the icon the spin was heading to. */
     fun settle() {
         handler.removeCallbacks(tick)
@@ -259,5 +313,8 @@ class CompassSpin(private val redraw: () -> Unit, private val onLock: () -> Unit
 
     companion object {
         const val DURATION = 500L
+        /** The shortcut fan: a slow glide per icon, then a short rest before the next may start. */
+        const val FAN_DURATION = 560L
+        const val FAN_LOCK = 140L
     }
 }

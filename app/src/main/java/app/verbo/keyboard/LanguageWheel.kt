@@ -9,7 +9,11 @@ import android.graphics.Typeface
 import android.view.MotionEvent
 import android.view.View
 
-/** The translate wheel: a light semicircular fan of flags. Slide to a flag and release to translate into it. */
+/**
+ * The translate wheel: a light semicircular fan of flags. Slide to a flag and release to translate into it.
+ * Roll a finger along the blue rim (or rest it on an end arrow) and the fan turns one flag at a time,
+ * gliding slowly and locking on each, through every language in [all].
+ */
 class LanguageWheel(a: Context) : View(a) {
     var languages: List<String> = emptyList()
     var pick = -1
@@ -19,6 +23,7 @@ class LanguageWheel(a: Context) : View(a) {
                 invalidate()
             }
         }
+    /** Released on a flag: the index into [ring]. */
     var onPick: (Int) -> Unit = {}
     var onCancel: () -> Unit = {}
     var onSpace: () -> Unit = {}
@@ -27,8 +32,25 @@ class LanguageWheel(a: Context) : View(a) {
     var autoMode = false
     /** Living inside a settings page: no space bar, no Cancel, tighter bottom edge. */
     var embedded = false
-    /** Every language the compass can spin through (wider than [languages]). */
+    /** Every language the compass and the turning fan can reach (wider than [languages]). */
     var all: List<String> = emptyList()
+
+    /** The fan's ring: your languages fill the semicircle, the rest turn into view. */
+    val ring: List<String> get() = if (embedded) languages else languages + all.filter { it !in languages }
+
+    /** True when the ring holds more languages than the fan shows, so it can turn. */
+    val fanTurns: Boolean get() = !embedded && languages.isNotEmpty() && ring.size > languages.size
+
+    /** How far the fan has turned, in whole flags once it locks. */
+    val fanRotation: Float get() = fanSpin.rot / fanSpin.step
+
+    /** The language releasing over visible slot [slot] would pick, at the fan's locked position. */
+    fun ringIndexAt(slot: Int): Int {
+        val size = ring.size
+        if (size == 0 || slot < 0) return -1
+        val base = Math.round(fanSpin.target / fanSpin.step)
+        return (((base + slot) % size) + size) % size
+    }
     var onCompassPick: (Int) -> Unit = {}
     /** Each icon the compass locks onto, for a soft tick of feedback. */
     var onTurn: () -> Unit = {}
@@ -52,6 +74,10 @@ class LanguageWheel(a: Context) : View(a) {
     private val spin = CompassSpin({ invalidate() }, { onTurn() })
     private var compassFresh = false
     private var compassLastAngle = 0f
+    private val fanSpin = CompassSpin({ invalidate() }, { onTurn() },
+        step = 36f, duration = CompassSpin.FAN_DURATION, oneAtATime = true, lockMs = CompassSpin.FAN_LOCK)
+    private var rimLastAngle = Float.NaN
+    private var edgeDir = 0
     private var wx = 0f
     private var wy = 0f
 
@@ -69,7 +95,7 @@ class LanguageWheel(a: Context) : View(a) {
     private val r get() = minOf(width * 0.46f, cy - dp(36f))
 
     private fun pillText() = when {
-        pick >= 0 -> languages[pick]
+        pick >= 0 && ringIndexAt(pick) >= 0 -> ring[ringIndexAt(pick)]
         embedded -> "Your languages"
         autoMode -> "Auto-translate into"
         else -> "Translate into"
@@ -88,7 +114,8 @@ class LanguageWheel(a: Context) : View(a) {
         val dx = x - cx
         val dy = cy - y
         val dist = kotlin.math.hypot(dx, dy)
-        if (dy < 0 || dist < r * 0.30f || dist > r * 1.12f) return -1
+        if (dy < 0 || dist < r * 0.30f || dist > r * 1.2f) return -1
+        if (edgeAt(x, y) != 0) return -1
         val angle = Math.toDegrees(kotlin.math.atan2(dy, dx).toDouble())
         return ((180 - angle) / (180.0 / languages.size)).toInt().coerceIn(0, languages.size - 1)
     }
@@ -102,19 +129,49 @@ class LanguageWheel(a: Context) : View(a) {
         val dy = cy - y
         if (dy < 0) return false
         val dist = kotlin.math.hypot(x - cx, dy)
-        return dist >= r * 0.95f && dist <= r * 1.2f
+        return dist >= r * 0.90f && dist <= r * 1.2f
     }
 
     private fun screenAngle(x: Float, y: Float) =
         Math.toDegrees(kotlin.math.atan2((y - ccy).toDouble(), (x - ccx).toDouble())).toFloat()
 
-    private val bezelHold = Runnable {
-        if (compass || embedded || !onBezel(wx, wy)) return@Runnable
-        compass = true
+    /** The finger's angle around the fan's centre: 0 on the right, 180 on the left. */
+    private fun fanAngle(x: Float, y: Float) =
+        Math.toDegrees(kotlin.math.atan2((cy - y).toDouble(), (x - cx).toDouble())).toFloat()
+
+    /** -1 / +1 when the finger rests low at the fan's left / right end: the flags keep turning that way. */
+    private fun edgeAt(x: Float, y: Float): Int {
+        if (!fanTurns) return 0
+        val dx = x - cx
+        val dy = cy - y
+        val dist = kotlin.math.hypot(dx, dy)
+        if (dy < 0 || dy > r * 0.13f || dist < r * 0.42f || dist > r * 1.2f) return 0
+        return if (dx < 0) -1 else 1
+    }
+
+    private val edgeTurn = object : Runnable {
+        override fun run() {
+            if (edgeDir == 0) return
+            if (fanSpin.turn(edgeDir)) pick = -1
+            handler.postDelayed(this, 90)
+        }
+    }
+
+    private fun stopEdge() {
+        edgeDir = 0
+        handler.removeCallbacks(edgeTurn)
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
+        super.onSizeChanged(w, h, ow, oh)
+        if (languages.isNotEmpty()) fanSpin.step = 180f / languages.size
+    }
+
+    override fun onDetachedFromWindow() {
+        super.onDetachedFromWindow()
+        stopEdge()
+        fanSpin.reset()
         spin.reset()
-        compassLastAngle = screenAngle(wx, wy)
-        pick = -1
-        invalidate()
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -134,13 +191,31 @@ class LanguageWheel(a: Context) : View(a) {
                         compassLastAngle = a
                     }
                 } else {
-                    handler.removeCallbacks(bezelHold)
-                    if (!embedded && onBezel(wx, wy)) handler.postDelayed(bezelHold, 300)
+                    if (languages.isNotEmpty()) fanSpin.step = 180f / languages.size
+                    // Rolling the rim turns the flags one at a time, following the finger.
+                    if (fanTurns && onBezel(wx, wy)) {
+                        val a = fanAngle(wx, wy)
+                        if (!rimLastAngle.isNaN()) fanSpin.drag(a - rimLastAngle)
+                        rimLastAngle = a
+                    } else rimLastAngle = Float.NaN
+                    val edge = edgeAt(wx, wy)
+                    if (edge != edgeDir) {
+                        stopEdge()
+                        edgeDir = edge
+                        if (edge != 0) handler.post(edgeTurn)
+                    }
                     pick = sliceAt(wx, wy)
                 }
             }
+            MotionEvent.ACTION_CANCEL -> {
+                stopEdge()
+                rimLastAngle = Float.NaN
+                fanSpin.settle()
+                pick = -1
+            }
             MotionEvent.ACTION_UP -> {
-                handler.removeCallbacks(bezelHold)
+                stopEdge()
+                rimLastAngle = Float.NaN
                 if (compass) {
                     spin.settle()
                     val cand = WheelLook.compassCandidate(spin.rot, WheelLook.COMPASS_SLOTS, all.size)
@@ -150,7 +225,8 @@ class LanguageWheel(a: Context) : View(a) {
                     if (dist >= cr * 0.30f && cand >= 0) onCompassPick(cand) else onCancel()
                     return true
                 }
-                val i = pick
+                fanSpin.settle()
+                val i = ringIndexAt(pick)
                 pick = -1
                 when {
                     pillRect().contains(event.x, event.y) -> onMore()
@@ -171,19 +247,38 @@ class LanguageWheel(a: Context) : View(a) {
         if (n == 0) return
         val arc = RectF(cx - r, cy - r, cx + r, cy + r)
         WheelLook.fan(c, cx, cy, r, d)
-        WheelLook.ticks(c, cx, cy, r, d)
         val step = 180f / n
+        val turns = fanTurns
+        val rot = if (turns) fanSpin.rot else 0f
+        WheelLook.ticks(c, cx, cy, r, d, rot)
         if (pick >= 0) {
             val (fx, fy) = flagCenter(pick.toFloat())
             WheelLook.beam(c, cx, cy, fx, fy, arc, 180f + pick * step + 1.5f, step - 3f, d)
         }
-        for (i in 0 until n) {
-            val (x, y) = flagCenter(i.toFloat())
+        val list = ring
+        val size = list.size
+        val base = kotlin.math.floor(rot / step).toInt()
+        val frac = rot - base * step
+        for (j in -1..n) {
+            if (!turns && (j < 0 || j >= n)) continue
+            // Flags glide along the arc as the ring turns, fading in and out at the ends.
+            val pos = j - frac / step
+            val theta = 180f - (pos + 0.5f) * step
+            val alpha = (minOf(theta, 180f - theta) / (step * 0.5f)).coerceIn(0f, 1f)
+            if (alpha <= 0.02f) continue
+            val lang = list[(((base + j) % size) + size) % size]
+            val (x, y) = flagCenter(pos)
+            val layer = if (alpha < 1f) c.saveLayerAlpha(x - dp(40f), y - dp(40f), x + dp(40f), y + dp(40f), (alpha * 255).toInt()) else -1
             WheelLook.tile(c, x, y, dp(24f), d)
-            Flags.draw(c, languages[i], x - dp(17f), y - dp(11.5f), dp(34f), dp(23f), face)
+            Flags.draw(c, lang, x - dp(17f), y - dp(11.5f), dp(34f), dp(23f), face)
             edge.color = Color.parseColor("#14000000")
             edge.strokeWidth = dp(1f)
             c.drawRoundRect(RectF(x - dp(17f), y - dp(11.5f), x + dp(17f), y + dp(11.5f)), dp(3.2f), dp(3.2f), edge)
+            if (layer >= 0) c.restoreToCount(layer)
+        }
+        if (turns) {
+            WheelLook.chevron(c, cx - r * 0.86f, cy - dp(10f), -1, edgeDir == -1, d)
+            WheelLook.chevron(c, cx + r * 0.86f, cy - dp(10f), 1, edgeDir == 1, d)
         }
         WheelLook.glow(c, cx, cy, d)
         if (!embedded) WheelLook.cancel(c, cx, cy, d, sp)

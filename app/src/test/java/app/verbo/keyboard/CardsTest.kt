@@ -86,4 +86,31 @@ class CardsTest {
         assertEquals(2, r.links.size)
         assertEquals("https://wa.me/?text=hi", r.openUri)
     }
+
+    @Test
+    fun latinScriptLanguagesAreToldApart() {
+        assertEquals("French", LangDetect.detect("Bonjour, est-ce que tu peux venir demain à la réunion ?"))
+        assertEquals("French", LangDetect.detect("Merci beaucoup, c'est parfait pour moi"))
+        assertEquals("Spanish", LangDetect.detect("Hola, ¿cómo estás? Nos vemos mañana en la oficina"))
+        assertEquals("German", LangDetect.detect("Hallo, ich bin morgen nicht im Büro, danke"))
+        assertEquals("Portuguese", LangDetect.detect("Olá, você está bem? Não posso amanhã"))
+        assertEquals("Italian", LangDetect.detect("Ciao, come stai? Ci vediamo domani, grazie"))
+        assertEquals("English", LangDetect.detect("Can you send me the file today please?"))
+        assertEquals(LangDetect.HINGLISH, LangDetect.detect("kal milte hain, theek hai?"))
+        assertEquals("Japanese", LangDetect.detect("旅行用eSIMをお探しの場合は、渡航先の国と旅行日程をお知らせください。"))
+        assertEquals("Russian", LangDetect.detect("Привет, как дела у тебя сегодня?"))
+        assertEquals("Hindi", LangDetect.detect("कल मिलते हैं"))
+        assertNull("too short to say", LangDetect.detect("ok"))
+    }
+
+    @Test
+    fun frenchCountsAsForeignAndTheChipNamesIt() {
+        val french = "Bonjour, est-ce que tu peux venir demain à la réunion ?"
+        assertTrue(Acts.isForeign(french))
+        assertTrue(Cards.matches("foreign", "", french))
+        assertEquals("Understand any language · French", Cards.chipLabel(Trigger("foreign", "", "Understand any language", true), french))
+        assertFalse("English is home", Acts.isForeign("Can you send me the file today please?"))
+        assertFalse("Hinglish is home", Acts.isForeign("bhai kal office aa raha hai kya"))
+        assertEquals("Understand any language", Acts.forContext(french).first())
+    }
 }

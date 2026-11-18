@@ -379,7 +379,8 @@ class KeyboardTest {
         type("hi")
         val keys = ime.keys!!
         layout(root)
-        assertEquals("default wheel has six shortcuts", 6, keys.wheelItems.size)
+        assertEquals("default wheel shows six shortcuts", 6, keys.wheelSlots)
+        assertTrue("more tools wait round the ring", keys.wheelItems.size > 6 && keys.wheelTurns)
         holdBar(keys)
         // Slide to the far right of the wheel (Clips is the last shortcut) and let go.
         val clips = Triple(0, keys.width * 0.86f, keys.height * 0.80f)
@@ -1052,43 +1053,134 @@ class KeyboardTest {
     }
 
     @Test
-    fun languageFanBezelHoldBecomesTheCompass() {
+    fun translateFanRollsOneFlagAtATimeToReachEveryLanguage() {
+        val store = Store(RuntimeEnvironment.getApplication())
         val keys = ime.keys!!
         layout(root)
-        val show = VerboIme::class.java.getDeclaredMethod("showLanguages", Boolean::class.javaPrimitiveType, Boolean::class.javaPrimitiveType)
-        show.isAccessible = true
-        show.invoke(ime, false, false)
+        showLanguages(false, false)
         val wheel = wheelIn(root)!!
         layout(root)
-        assertTrue("the fan starts flat", !wheel.spinning)
+        assertTrue("the fan starts flat, not as the compass", !wheel.spinning)
+        assertTrue("more languages wait round the ring", wheel.fanTurns)
         val d = wheel.resources.displayMetrics.density
+        val cx = wheel.width / 2f
         val cy = wheel.height - 40f * d
         val r = minOf(wheel.width * 0.46f, cy - 36f * d)
-        touch(wheel, MotionEvent.ACTION_MOVE, listOf(Triple(0, wheel.width / 2f, cy - r * 1.05f)))
-        org.robolectric.shadows.ShadowLooper.idleMainLooper(400, java.util.concurrent.TimeUnit.MILLISECONDS)
-        assertTrue("holding the blue rim spins the fan into the compass", wheel.spinning)
-        val centre = Triple(0, wheel.width / 2f, wheel.height * 0.56f)
-        touch(wheel, MotionEvent.ACTION_MOVE, listOf(centre))
-        touch(wheel, MotionEvent.ACTION_UP, listOf(centre))
-        assertEquals(View.VISIBLE, keys.visibility)
+        fun at(deg: Double, k: Float): Triple<Int, Float, Float> {
+            val a = Math.toRadians(deg)
+            return Triple(0, cx + (r * k * Math.cos(a)).toFloat(), cy - (r * k * Math.sin(a)).toFloat())
+        }
+        touch(wheel, MotionEvent.ACTION_MOVE, listOf(at(80.0, 1.05f)))
+        touch(wheel, MotionEvent.ACTION_MOVE, listOf(at(100.0, 1.05f)))
+        // A fast extra flick while the flag is still gliding is ignored.
+        touch(wheel, MotionEvent.ACTION_MOVE, listOf(at(160.0, 1.05f)))
+        assertEquals("a roll queues a turn instead of jumping", 0f, wheel.fanRotation, 0.001f)
+        org.robolectric.shadows.ShadowLooper.idleMainLooper(150, java.util.concurrent.TimeUnit.MILLISECONDS)
+        assertTrue("the flags glide over slowly", wheel.fanRotation > 0f && wheel.fanRotation < 1f)
+        org.robolectric.shadows.ShadowLooper.idleMainLooper(700, java.util.concurrent.TimeUnit.MILLISECONDS)
+        assertEquals("one roll locks exactly one flag", 1f, wheel.fanRotation, 0.001f)
+        // The right-most flag is now the first language beyond your five: Arabic.
+        touch(wheel, MotionEvent.ACTION_MOVE, listOf(at(90.0, 0.1f)))
+        touch(wheel, MotionEvent.ACTION_MOVE, listOf(at(18.0, 0.74f)))
+        touch(wheel, MotionEvent.ACTION_UP, listOf(at(18.0, 0.74f)))
+        assertEquals("the language that turned into view is picked and saved", "Arabic", store.languages.first())
+        assertEquals("the running task replaces the wheel", null, wheelIn(root))
+    }
+
+    /** A point on the shortcut fan's blue rim at [deg] degrees (0 = right, 180 = left). */
+    private fun rimAt(keys: KeyboardView, deg: Double): Triple<Int, Float, Float> {
+        val wr = minOf(keys.width * 0.47f, keys.height * 0.80f)
+        val a = Math.toRadians(deg)
+        return Triple(0, keys.width / 2f + (wr * 1.05f * Math.cos(a)).toFloat(), keys.height - (wr * 1.05f * Math.sin(a)).toFloat())
     }
 
     @Test
-    fun shortcutWheelRimHoldSpinsTheCompassAndReleaseRunsTheTool() {
+    fun rollingTheRimTurnsTheFanOneIconAtATimeAndReleaseRunsTheNewTool() {
+        val keys = ime.keys!!
+        layout(root)
+        holdBar(keys)
+        touch(keys, MotionEvent.ACTION_MOVE, listOf(rimAt(keys, 80.0)))
+        touch(keys, MotionEvent.ACTION_MOVE, listOf(rimAt(keys, 100.0)))
+        assertEquals("a roll queues a turn instead of jumping", 0f, keys.wheelRotation, 0.001f)
+        // A fast second flick while the first icon is still gliding is ignored: no fast spin.
+        touch(keys, MotionEvent.ACTION_MOVE, listOf(rimAt(keys, 150.0)))
+        org.robolectric.shadows.ShadowLooper.idleMainLooper(150, java.util.concurrent.TimeUnit.MILLISECONDS)
+        assertTrue("the icon glides over slowly", keys.wheelRotation > 0f && keys.wheelRotation < 1f)
+        org.robolectric.shadows.ShadowLooper.idleMainLooper(700, java.util.concurrent.TimeUnit.MILLISECONDS)
+        assertEquals("one roll locks exactly one icon", 1f, keys.wheelRotation, 0.001f)
+        // Slot 6 now holds the first extra tool, Auto-translate.
+        val last = Triple(0, keys.width * 0.86f, keys.height * 0.80f)
+        touch(keys, MotionEvent.ACTION_MOVE, listOf(Triple(0, keys.width / 2f, keys.height * 0.97f)))
+        touch(keys, MotionEvent.ACTION_MOVE, listOf(last))
+        touch(keys, MotionEvent.ACTION_UP, listOf(last))
+        assertTrue("releasing runs the tool that turned into view: the auto-translate picker", wheelIn(root)!!.autoMode)
+    }
+
+    @Test
+    fun restingAtTheFanEndKeepsTurningButSlowly() {
         val keys = ime.keys!!
         layout(root)
         holdBar(keys)
         val wr = minOf(keys.width * 0.47f, keys.height * 0.80f)
-        touch(keys, MotionEvent.ACTION_MOVE, listOf(Triple(0, keys.width / 2f, keys.height - wr * 1.05f)))
-        org.robolectric.shadows.ShadowLooper.idleMainLooper(400, java.util.concurrent.TimeUnit.MILLISECONDS)
-        assertTrue("holding the blue rim turns the wheel into the compass", keys.compassOpen)
-        // Spin two slots (72°) so "auto", catalog index 2, lands under the needle.
-        val cr = minOf(keys.width * 0.42f, keys.height * 0.40f)
-        val a = Math.toRadians(-18.0)
-        val spin = Triple(0, keys.width / 2f + (cr * 0.9f * Math.cos(a)).toFloat(), keys.height * 0.56f + (cr * 0.9f * Math.sin(a)).toFloat())
-        touch(keys, MotionEvent.ACTION_MOVE, listOf(spin))
-        touch(keys, MotionEvent.ACTION_UP, listOf(spin))
-        assertTrue("releasing runs the spun-to tool: the auto-translate picker", wheelIn(root)!!.autoMode)
+        val end = Triple(0, keys.width / 2f + wr * 0.7f, keys.height - wr * 0.06f)
+        touch(keys, MotionEvent.ACTION_MOVE, listOf(end))
+        org.robolectric.shadows.ShadowLooper.idleMainLooper(300, java.util.concurrent.TimeUnit.MILLISECONDS)
+        assertTrue("the first icon is on its way", keys.wheelRotation > 0f && keys.wheelRotation < 1f)
+        org.robolectric.shadows.ShadowLooper.idleMainLooper(2100, java.util.concurrent.TimeUnit.MILLISECONDS)
+        assertTrue("it keeps turning, one locked icon at a time (${keys.wheelRotation})", keys.wheelRotation >= 3f && keys.wheelRotation <= 4f)
+        // Lifting at the end runs nothing.
+        touch(keys, MotionEvent.ACTION_UP, listOf(end))
+        assertEquals(View.VISIBLE, keys.visibility)
+    }
+
+    private fun chipTexts(): List<String> {
+        val row = VerboIme::class.java.getDeclaredField("chipsRow").apply { isAccessible = true }.get(ime) as ViewGroup
+        return (0 until row.childCount).mapNotNull { (row.getChildAt(it) as? android.widget.TextView)?.text?.toString() }
+    }
+
+    @Test
+    fun aFrenchMessageThatArrivedIsWaitingAboveTheKeysWithItsTranslation() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        store.watchMessages = true
+        store.incomingText = "Bonjour, est-ce que tu peux venir demain à la réunion ?"
+        store.incomingFrom = "Camille"
+        store.incomingApp = "com.chat"
+        store.incomingAt = System.currentTimeMillis()
+        store.incomingResult = "From French\nHi, can you come to the meeting tomorrow?\nTone: friendly, asking you to join"
+        store.incomingSkill = "Understand any language"
+        field.info.packageName = "com.chat"
+        ime.onStartInputView(field.info, false)
+        assertTrue("one tap shows the ready translation: ${chipTexts()}", chipTexts().any { it.contains("Understand any language") && it.contains("Camille") })
+        // In another app the message stays out of the way.
+        field.info.packageName = "com.other"
+        ime.onStartInputView(field.info, false)
+        assertTrue(chipTexts().none { it.contains("Camille") })
+        store.clearIncoming()
+        store.watchMessages = false
+    }
+
+    @Test
+    fun readsTheNewestMessageAndItsSenderFromAChatNotification() {
+        val app = RuntimeEnvironment.getApplication()
+        val msg = android.app.Notification.Builder(app, "x").setSmallIcon(R.drawable.ic_languages)
+            .setContentTitle("Camille").setContentText("Bonjour, tu viens demain ?").build()
+        assertEquals("Camille" to "Bonjour, tu viens demain ?", MessageListener.read(msg))
+        val summary = android.app.Notification.Builder(app, "x").setSmallIcon(R.drawable.ic_languages)
+            .setContentTitle("WhatsApp").setContentText("5 new messages").build()
+        org.junit.Assert.assertNull("a summary is not a message", MessageListener.read(summary))
+        val group = android.app.Notification.Builder(app, "x").setSmallIcon(R.drawable.ic_languages)
+            .setContentTitle("Camille").setContentText("Salut").setGroup("g").setGroupSummary(true).build()
+        org.junit.Assert.assertNull("a group summary is skipped", MessageListener.read(group))
+    }
+
+    @Test
+    fun typeAndActPillsComeBackAfterAStatusLine() {
+        val show = VerboIme::class.java.getDeclaredMethod("showStatus", String::class.java, Array<Pair<String, () -> Unit>>::class.java)
+        show.isAccessible = true
+        show.invoke(ime, "Done", emptyArray<Pair<String, () -> Unit>>())
+        type("h")
+        val scroll = VerboIme::class.java.getDeclaredField("chipsScroll").apply { isAccessible = true }.get(ime) as View
+        assertEquals("the Type / Act pills are back once typing resumes", View.VISIBLE, scroll.visibility)
     }
 
     /** A point on the compass rim at [deg] degrees, for flicking the language dial. */
@@ -1437,21 +1529,24 @@ class KeyboardTest {
         touch(appKeys, MotionEvent.ACTION_UP, listOf(Triple(0, appKeys.width * 0.5f, appKeys.height * 0.97f)))
         store.wheel = Store.DEFAULT_WHEEL
         ime.onStartInputView(field.info, false)
-        // The shortcut wheel spun into its 360° compass by holding the blue rim.
+        // The shortcut fan rolled by its rim: mid-glide, then locked with Auto-translate, Notion and Slack in view.
         val cmpKeys = ime.keys!!
         val cmpRoot = cmpKeys.parent as View
         layout(cmpRoot)
         holdBar(cmpKeys)
-        val wr = minOf(cmpKeys.width * 0.47f, cmpKeys.height * 0.80f)
-        touch(cmpKeys, MotionEvent.ACTION_MOVE, listOf(Triple(0, cmpKeys.width / 2f, cmpKeys.height - wr * 1.05f)))
-        org.robolectric.shadows.ShadowLooper.idleMainLooper(400, java.util.concurrent.TimeUnit.MILLISECONDS)
-        val cr = minOf(cmpKeys.width * 0.42f, cmpKeys.height * 0.40f)
-        val sa = Math.toRadians(-18.0)
-        touch(cmpKeys, MotionEvent.ACTION_MOVE, listOf(Triple(0, cmpKeys.width / 2f + (cr * 0.9f * Math.cos(sa)).toFloat(), cmpKeys.height * 0.56f + (cr * 0.9f * Math.sin(sa)).toFloat())))
-        org.robolectric.shadows.ShadowLooper.idleMainLooper(220, java.util.concurrent.TimeUnit.MILLISECONDS)
+        touch(cmpKeys, MotionEvent.ACTION_MOVE, listOf(rimAt(cmpKeys, 80.0)))
+        touch(cmpKeys, MotionEvent.ACTION_MOVE, listOf(rimAt(cmpKeys, 100.0)))
+        org.robolectric.shadows.ShadowLooper.idleMainLooper(280, java.util.concurrent.TimeUnit.MILLISECONDS)
         layout(cmpRoot)
-        snap(cmpRoot, "wheel-compass")
-        val cmpCentre = Triple(0, cmpKeys.width / 2f, cmpKeys.height * 0.56f)
+        snap(cmpRoot, "wheel-turning")
+        for (k in 0 until 2) {
+            org.robolectric.shadows.ShadowLooper.idleMainLooper(800, java.util.concurrent.TimeUnit.MILLISECONDS)
+            touch(cmpKeys, MotionEvent.ACTION_MOVE, listOf(rimAt(cmpKeys, 100.0 + k * 20 + 20)))
+        }
+        org.robolectric.shadows.ShadowLooper.idleMainLooper(800, java.util.concurrent.TimeUnit.MILLISECONDS)
+        layout(cmpRoot)
+        snap(cmpRoot, "wheel-turned")
+        val cmpCentre = Triple(0, cmpKeys.width / 2f, cmpKeys.height * 0.97f)
         touch(cmpKeys, MotionEvent.ACTION_MOVE, listOf(cmpCentre))
         touch(cmpKeys, MotionEvent.ACTION_UP, listOf(cmpCentre))
         // Double-press space: the language compass of every language.

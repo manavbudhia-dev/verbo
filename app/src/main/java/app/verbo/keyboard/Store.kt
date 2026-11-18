@@ -286,6 +286,23 @@ class Store(context: Context) {
         prefs?.edit()?.remove("inbox_text")?.remove("inbox_file")?.remove("inbox_name")?.remove("inbox_mime")
             ?.remove("inbox_from")?.remove("inbox_at")?.apply()
     }
+    /** Read incoming chat notifications so auto actions can run without copying (off until the user turns it on). */
+    var watchMessages: Boolean get() = bool("watch_messages", false); set(v) = put("watch_messages", v)
+    /** The last chat message a notification brought in, kept on the phone for the keyboard to act on. */
+    var incomingText: String get() = str("incoming_text"); set(v) = put("incoming_text", v)
+    var incomingFrom: String get() = str("incoming_from"); set(v) = put("incoming_from", v)
+    var incomingApp: String get() = str("incoming_app"); set(v) = put("incoming_app", v)
+    var incomingAt: Long get() = prefs?.getLong("incoming_at", 0L) ?: 0L
+        set(v) { prefs?.edit()?.putLong("incoming_at", v)?.apply() }
+    /** What an automatic action already made of [incomingText], so the keyboard can show it without asking again. */
+    var incomingResult: String get() = str("incoming_result"); set(v) = put("incoming_result", v)
+    var incomingSkill: String get() = str("incoming_skill"); set(v) = put("incoming_skill", v)
+    /** Fresh for ten minutes: long enough to open the chat and answer. */
+    val incomingFresh: Boolean get() = incomingAt > 0 && System.currentTimeMillis() - incomingAt < 10 * 60 * 1000L && incomingText.isNotBlank()
+    fun clearIncoming() {
+        prefs?.edit()?.remove("incoming_text")?.remove("incoming_from")?.remove("incoming_app")?.remove("incoming_at")
+            ?.remove("incoming_result")?.remove("incoming_skill")?.apply()
+    }
     var calendlyToken: String get() = str("calendly_token"); set(v) = put("calendly_token", v.trim())
     /** Slack, GitHub, Todoist, Linear and Discord, by dashboard field name (see [APP_TOKENS]). */
     fun token(field: String): String = APP_TOKENS[field]?.let { str(it) } ?: ""

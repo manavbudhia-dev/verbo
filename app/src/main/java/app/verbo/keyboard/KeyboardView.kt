@@ -63,14 +63,13 @@ class KeyboardView(
         fun onShift()
         fun onBarHeld()
         fun onKeyHeld(letter: Char)
+        /** The wheel was released on ring entry [index] (an index into [wheelItems]). */
         fun onWheel(index: Int)
         fun onPress(type: Type)
         /** The wheel is about to open: a chance to fit its shortcuts to what is being written. */
         fun onWheelOpening() {}
         /** A finger drew a path across the letters (swipe typing). */
         fun onSwipe(path: List<Gesture.P>) {}
-        /** The compass was spun and released on catalog entry [index]. */
-        fun onWheelCatalog(index: Int) {}
         /** The space bar was tapped twice quickly: open the language compass. */
         fun onSpaceDouble() {}
     }
@@ -109,27 +108,42 @@ class KeyboardView(
     /** 0 off, 1 next letter, 2 caps lock. */
     var shift = 0
         set(value) { if (field != value) { field = value; invalidate() } }
-    /** Shortcuts shown on the wheel when the bar is held. Empty means holding the bar runs the assistant directly. */
+    /**
+     * The wheel's ring when the bar is held: the user's own shortcuts first, then more tools and apps
+     * (Auto-translate, Notion, Slack...) that turn into view as the fan rotates. Empty means holding
+     * the bar runs the assistant directly.
+     */
     var wheelItems: List<WheelItem> = emptyList()
-    /** Everything the compass can spin through: tools, skills and apps, in the same order as [wheelCatalogIds]. */
-    var wheelCatalog: List<WheelItem> = emptyList()
-    var wheelCatalogIds: List<String> = emptyList()
+    /** How many ring entries the semicircle shows at once (the user's own shortcuts). */
+    var wheelSlots = 6
     private var wheelOpen = false
     private var wheelPointer = -1
+    /** The visible slot under the finger (0 = far left), or -1. */
     private var wheelPick = -1
-    private var compass = false
-    private val spin = CompassSpin({ invalidate() }, { listener?.onPress(Type.MODE) })
-    private var compassLastAngle = 0f
-    private var bezelSince = 0L
+    private val spin = CompassSpin({ invalidate() }, { listener?.onPress(Type.MODE) },
+        step = 30f, duration = CompassSpin.FAN_DURATION, oneAtATime = true, lockMs = CompassSpin.FAN_LOCK)
+    private var rimLastAngle = Float.NaN
+    private var edgeDir = 0
     private var lastSpaceTap = 0L
     private var wheelX = 0f
     private var wheelY = 0f
 
-    /** True while the wheel has become the 360° compass (rim held and spun). */
-    val compassOpen: Boolean get() = compass
+    /** Slots actually shown: never more than the ring holds. */
+    private val visibleSlots: Int get() = wheelSlots.coerceIn(1, maxOf(1, wheelItems.size))
 
-    /** Where the compass currently sits, in degrees; always a whole icon once it locks. */
-    val compassRotation: Float get() = spin.rot
+    /** True when the ring holds more than the fan shows, so it can turn. */
+    val wheelTurns: Boolean get() = wheelItems.size > visibleSlots
+
+    /** How far the fan has turned, in whole icons once it locks (positive brings in entries from the right). */
+    val wheelRotation: Float get() = spin.rot / spin.step
+
+    /** The ring entry that releasing over visible slot [slot] would run, at the dial's locked position. */
+    fun wheelEntryAt(slot: Int): Int {
+        val size = wheelItems.size
+        if (size == 0 || slot < 0) return -1
+        val base = Math.round(spin.target / spin.step)
+        return (((base + slot) % size) + size) % size
+    }
 
     /** Letters that run a skill when held. They are marked with a small glow. */
     var bound: Set<Char> = emptySet()
@@ -379,9 +393,10 @@ class KeyboardView(
             wheelOpen = true
             wheelPointer = entry.key
             wheelPick = -1
-            compass = false
+            spin.step = 180f / visibleSlots
             spin.reset()
-            handler.removeCallbacks(bezelHold)
+            rimLastAngle = Float.NaN
+            stopEdge()
             listener?.onPress(Type.ENTER)
             invalidate()
         }
@@ -393,70 +408,93 @@ class KeyboardView(
     private val wheelCy get() = height.toFloat()
     private val wheelR get() = minOf(width * 0.47f, height * 0.80f)
 
-    // The compass sits centred in the view so the whole 360° dial fits on screen.
-    private val compassCx get() = width / 2f
-    private val compassCy get() = height * 0.60f
-    private val compassR get() = minOf(width * 0.44f, height * 0.40f)
-
-    /** True when a point rests on the fan's outer blue rim: the grip that spins the compass. */
+    /** True when a point rests on the fan's outer blue rim: the grip that turns the ring. */
     private fun onBezel(x: Float, y: Float): Boolean {
         val dy = wheelCy - y
         if (dy < 0) return false
         val dist = kotlin.math.hypot(x - wheelCx, dy)
-        return dist >= wheelR * 0.92f && dist <= wheelR * 1.25f
+        return dist >= wheelR * 0.90f && dist <= wheelR * 1.25f
     }
 
-    private fun screenAngle(x: Float, y: Float) =
-        Math.toDegrees(kotlin.math.atan2((y - compassCy).toDouble(), (x - compassCx).toDouble())).toFloat()
-
-    private val bezelHold = Runnable {
-        if (!wheelOpen || compass || !onBezel(wheelX, wheelY)) return@Runnable
-        compass = true
-        spin.reset()
-        compassLastAngle = screenAngle(wheelX, wheelY)
-        wheelPick = -1
-        listener?.onPress(Type.MODE)
-        invalidate()
+    /** -1 / +1 when the finger rests low at the fan's left / right end: the ring keeps turning that way. */
+    private fun edgeAt(x: Float, y: Float): Int {
+        if (!wheelTurns) return 0
+        val dx = x - wheelCx
+        val dy = wheelCy - y
+        val dist = kotlin.math.hypot(dx, dy)
+        if (dy < 0 || dy > wheelR * 0.13f || dist < wheelR * 0.42f || dist > wheelR * 1.25f) return 0
+        return if (dx < 0) -1 else 1
     }
 
-    private fun enterCompassCheck() {
-        handler.removeCallbacks(bezelHold)
-        if (onBezel(wheelX, wheelY)) handler.postDelayed(bezelHold, 300)
+    /** The finger's angle around the fan's centre: 0 on the right, 180 on the left. */
+    private fun fanAngle(x: Float, y: Float) =
+        Math.toDegrees(kotlin.math.atan2((wheelCy - y).toDouble(), (x - wheelCx).toDouble())).toFloat()
+
+    /** Holding at an end of the fan turns it one icon, rests on it, then turns the next: never a fast spin. */
+    private val edgeTurn = object : Runnable {
+        override fun run() {
+            if (!wheelOpen || edgeDir == 0) return
+            if (spin.turn(edgeDir)) wheelPick = -1
+            handler.postDelayed(this, 90)
+        }
     }
 
-    /** Which shortcut a point is over, or -1 for the cancel zone in the middle (and anything outside the wheel). */
+    private fun stopEdge() {
+        edgeDir = 0
+        handler.removeCallbacks(edgeTurn)
+    }
+
+    /** Which visible slot a point is over, or -1 for the cancel zone in the middle, the turning ends and outside. */
     private fun wheelAt(x: Float, y: Float): Int {
         val dx = x - wheelCx
         val dy = wheelCy - y
         val dist = kotlin.math.hypot(dx, dy)
         if (dist < wheelR * 0.36f || dist > wheelR * 1.25f || dy < 0) return -1
+        if (edgeAt(x, y) != 0) return -1
+        val n = visibleSlots
         val angle = Math.toDegrees(kotlin.math.atan2(dy, dx).toDouble()) // 0 = right, 180 = left
-        return ((180 - angle) / (180.0 / wheelItems.size)).toInt().coerceIn(0, wheelItems.size - 1)
+        return ((180 - angle) / (180.0 / n)).toInt().coerceIn(0, n - 1)
     }
 
     private fun drawWheel(canvas: Canvas) {
-        val n = wheelItems.size
+        val size = wheelItems.size
         val cx = wheelCx
         val cy = wheelCy
         val r = wheelR
         WheelLook.paper(canvas, width.toFloat(), height.toFloat(), d)
-        if (compass) { drawCompass(canvas); return }
-        if (n == 0) return
+        if (size == 0) return
+        val n = visibleSlots
+        val turns = wheelTurns
         val arc = RectF(cx - r, cy - r, cx + r, cy + r)
         WheelLook.fan(canvas, cx, cy, r, d)
-        WheelLook.ticks(canvas, cx, cy, r, d)
         val step = 180f / n
+        val rot = if (turns) spin.rot else 0f
+        // The ticks turn with the ring, so the rim reads as something you can grab and roll.
+        WheelLook.ticks(canvas, cx, cy, r, d, rot)
         if (wheelPick >= 0) {
-            val (fx, fy) = wheelCenter(wheelPick)
+            val (fx, fy) = slotCenter(wheelPick.toFloat())
             WheelLook.beam(canvas, cx, cy, fx, fy, arc, 180f + wheelPick * step + 1.5f, step - 3f, d)
         }
+        val picked = if (wheelPick >= 0) Math.round(spin.target / step) + wheelPick else Int.MIN_VALUE
         val chord = 2 * r * 0.74f * kotlin.math.sin(Math.toRadians((step / 2).toDouble())).toFloat()
-        for (i in 0 until n) {
-            val item = wheelItems[i]
-            val (x, y) = wheelCenter(i)
-            WheelLook.tile(canvas, x, y, (if (i == wheelPick) 26f else 24f) * d, d)
-            if (item.suggested && i != wheelPick) WheelLook.ring(canvas, x, y, 29f * d, WheelLook.blue, 2.5f * d)
-            val tint = if (item.tint != 0) item.tint else if (i == wheelPick) WheelLook.blue else WheelLook.ink
+        val base = kotlin.math.floor(rot / step).toInt()
+        val frac = rot - base * step
+        for (j in -1..n) {
+            val i = base + j
+            // Slot position minus the part of a step the ring has turned: tiles glide along the arc.
+            val pos = j - frac / step
+            val theta = 180f - (pos + 0.5f) * step
+            if (theta < -step * 0.5f || theta > 180f + step * 0.5f) continue
+            val alpha = (minOf(theta, 180f - theta) / (step * 0.5f)).coerceIn(0f, 1f)
+            if (alpha <= 0.02f) continue
+            if (!turns && (j < 0 || j >= n)) continue
+            val item = wheelItems[((i % size) + size) % size]
+            val (x, y) = slotCenter(pos)
+            val hot = i == picked
+            val layer = if (alpha < 1f) canvas.saveLayerAlpha(x - 40 * d, y - 40 * d, x + 40 * d, minOf(y + 50 * d, height.toFloat()), (alpha * 255).toInt()) else -1
+            WheelLook.tile(canvas, x, y, (if (hot) 26f else 24f) * d, d)
+            if (item.suggested && !hot) WheelLook.ring(canvas, x, y, 29f * d, WheelLook.blue, 2.5f * d)
+            val tint = if (item.tint != 0) item.tint else if (hot) WheelLook.blue else WheelLook.ink
             if (item.icon != 0) {
                 val half = 11 * d
                 icon(item.icon).apply {
@@ -468,60 +506,41 @@ class KeyboardView(
                 WheelLook.drawText(canvas, item.emoji.ifEmpty { item.label.take(1) }, x, y, 19 * d, tint)
             }
             // The hovered item's name is in the pill; a label here would sit on the beam knob.
-            if (i != wheelPick) {
-                var size = 10.5f * sp
-                letters.textSize = size
+            if (!hot) {
+                var size2 = 10.5f * sp
+                letters.textSize = size2
                 val tw = letters.measureText(item.label)
-                if (tw > chord * 0.92f) size *= chord * 0.92f / tw
-                WheelLook.drawText(canvas, item.label, x, minOf(y + 37 * d, height - 8 * d), size, WheelLook.label)
+                if (tw > chord * 0.92f) size2 *= chord * 0.92f / tw
+                WheelLook.drawText(canvas, item.label, x, minOf(y + 37 * d, height - 8 * d), size2, WheelLook.label)
             }
+            if (layer >= 0) canvas.restoreToCount(layer)
+        }
+        // Little arrows at both ends say the ring turns: slide along the rim, or rest a finger there.
+        if (turns) {
+            WheelLook.chevron(canvas, cx - r * 0.86f, cy - 10f * d, -1, edgeDir == -1, d)
+            WheelLook.chevron(canvas, cx + r * 0.86f, cy - 10f * d, 1, edgeDir == 1, d)
         }
         // The middle is where the finger starts: lifting there does nothing.
         WheelLook.glow(canvas, cx, cy, d)
         WheelLook.cancel(canvas, cx, cy, d, sp)
         // What lifting the finger will do, in a pill above the wheel.
-        val hint = wheelItems.firstOrNull { it.suggested }?.let { "Try: ${it.label}" }
-        val label = if (wheelPick >= 0) wheelItems[wheelPick].label else hint ?: "Slide to choose · release to cancel"
-        val color = if (wheelPick >= 0 || hint != null) WheelLook.blue else WheelLook.ink
+        val entry = wheelEntryAt(wheelPick)
+        val hint = wheelItems.take(n).firstOrNull { it.suggested }?.let { "Try: ${it.label}" }
+        val label = when {
+            entry >= 0 -> wheelItems[entry].label
+            hint != null -> hint
+            turns -> "Roll the rim for more tools"
+            else -> "Slide to choose · release to cancel"
+        }
+        val color = if (entry >= 0 || hint != null) WheelLook.blue else WheelLook.ink
         WheelLook.drawPill(canvas, WheelLook.pillRect(cx, label, d, sp), label, color, d, sp)
     }
 
-    private fun wheelCenter(i: Int): Pair<Float, Float> {
-        val step = 180f / wheelItems.size
-        val angle = Math.toRadians((180 - (i + 0.5f) * step).toDouble())
+    /** Centre of a (possibly fractional) slot along the fan: 0 is the far-left slot. */
+    private fun slotCenter(slot: Float): Pair<Float, Float> {
+        val step = 180f / visibleSlots
+        val angle = Math.toRadians((180 - (slot + 0.5f) * step).toDouble())
         return Pair(wheelCx + (wheelR * 0.74f * kotlin.math.cos(angle)).toFloat(), wheelCy - (wheelR * 0.74f * kotlin.math.sin(angle)).toFloat())
-    }
-
-    /** The 360° compass: spin the blue rim to bring any tool, skill or app under the needle. */
-    private fun drawCompass(canvas: Canvas) {
-        val k = WheelLook.COMPASS_SLOTS
-        val cx = compassCx
-        val cy = compassCy
-        val r = compassR
-        val size = wheelCatalog.size
-        val rot = spin.rot
-        WheelLook.compassDial(canvas, cx, cy, r, rot, d)
-        val cand = WheelLook.compassCandidate(rot, k, size)
-        if (size > 0) for (j in 0 until k) {
-            val item = wheelCatalog[WheelLook.compassIndex(j, k, rot, size)]
-            val (x, y) = WheelLook.compassPos(cx, cy, r, j, k, rot)
-            val isCand = j == k / 2
-            WheelLook.tile(canvas, x, y, (if (isCand) 19f else 17f) * d, d)
-            if (isCand) WheelLook.ring(canvas, x, y, 22f * d, WheelLook.blue, 2.5f * d)
-            val tint = if (item.tint != 0) item.tint else if (isCand) WheelLook.blue else WheelLook.ink
-            if (item.icon != 0) {
-                val half = 8.5f * d
-                icon(item.icon).apply {
-                    setTint(tint)
-                    setBounds((x - half).toInt(), (y - half).toInt(), (x + half).toInt(), (y + half).toInt())
-                    draw(canvas)
-                }
-            } else {
-                WheelLook.drawText(canvas, item.emoji.ifEmpty { item.label.take(1) }, x, y, 16 * d, tint)
-            }
-        }
-        val label = if (cand >= 0) wheelCatalog[cand].label else "Nothing to spin"
-        WheelLook.compassTop(canvas, cx, cy, r, k, d, sp, label, "Cancel")
     }
 
     private fun down(id: Int, x: Float, y: Float) {
@@ -559,19 +578,15 @@ class KeyboardView(
 
     private fun up(id: Int) {
         if (wheelOpen && id == wheelPointer) {
-            val wasCompass = compass
-            val pick = wheelPick
+            // Release: the ring locks where it was heading and the entry under the finger runs.
             spin.settle()
-            val cand = WheelLook.compassCandidate(spin.rot, WheelLook.COMPASS_SLOTS, wheelCatalogIds.size)
-            val dist = kotlin.math.hypot(wheelX - compassCx, wheelY - compassCy)
+            val entry = wheelEntryAt(wheelPick)
             wheelOpen = false
             wheelPick = -1
-            compass = false
-            handler.removeCallbacks(bezelHold)
+            rimLastAngle = Float.NaN
+            stopEdge()
             presses.remove(id)
-            if (wasCompass) {
-                if (dist >= compassR * 0.30f && cand >= 0) listener?.onWheelCatalog(cand)
-            } else if (pick >= 0) listener?.onWheel(pick)
+            if (entry >= 0) listener?.onWheel(entry)
             return
         }
         val press = presses.remove(id) ?: return
@@ -609,19 +624,23 @@ class KeyboardView(
                 if (i >= 0) {
                     wheelX = e.getX(i)
                     wheelY = e.getY(i)
-                    if (compass) {
-                        val a = screenAngle(wheelX, wheelY)
-                        var delta = a - compassLastAngle
-                        if (delta > 180) delta -= 360 else if (delta < -180) delta += 360
-                        spin.drag(delta)
-                        compassLastAngle = a
-                    } else {
-                        enterCompassCheck()
-                        val pick = wheelAt(wheelX, wheelY)
-                        if (pick != wheelPick) {
-                            wheelPick = pick
-                            if (pick >= 0) listener?.onPress(Type.MODE)
-                        }
+                    // Rolling the rim turns the ring one icon at a time, following the finger's direction.
+                    if (wheelTurns && onBezel(wheelX, wheelY)) {
+                        val a = fanAngle(wheelX, wheelY)
+                        if (!rimLastAngle.isNaN()) spin.drag(a - rimLastAngle)
+                        rimLastAngle = a
+                    } else rimLastAngle = Float.NaN
+                    // Resting low at either end keeps turning that way, one locked icon after another.
+                    val edge = edgeAt(wheelX, wheelY)
+                    if (edge != edgeDir) {
+                        stopEdge()
+                        edgeDir = edge
+                        if (edge != 0) handler.post(edgeTurn)
+                    }
+                    val pick = wheelAt(wheelX, wheelY)
+                    if (pick != wheelPick) {
+                        wheelPick = pick
+                        if (pick >= 0) listener?.onPress(Type.MODE)
                     }
                 }
             } else for (i in 0 until e.pointerCount) {
@@ -645,11 +664,11 @@ class KeyboardView(
             MotionEvent.ACTION_CANCEL -> {
                 wheelOpen = false
                 wheelPick = -1
-                compass = false
                 spin.reset()
+                rimLastAngle = Float.NaN
+                stopEdge()
                 presses.clear()
                 handler.removeCallbacks(barHold)
-                handler.removeCallbacks(bezelHold)
                 handler.removeCallbacks(keyHold)
                 handler.removeCallbacks(repeatDelete)
             }

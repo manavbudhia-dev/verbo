@@ -262,13 +262,9 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         keys?.swipeEnabled = store.swipeTyping
         hindiOn = store.hindiScript
         val barActive = assistantOn && agentMode != "manual"
-        wheelIds = if (barActive && store.wheelOn) store.wheel else emptyList()
-        baseWheel = wheelIds
-        keys?.wheelItems = wheelIds.map { wheelItem(it, false) }
-        val catalogIds = Store.WHEEL_TOOLS.map { it.first } + skills.map { "skill:" + it.name } + Apps.ALL.map { Apps.id(it) }
-        keys?.wheelCatalogIds = catalogIds
-        keys?.wheelCatalog = catalogIds.map { wheelItem(it, false) }
-        keys?.barLabel = if (!barActive) "" else if (wheelIds.isEmpty()) "hold to act" else "hold for wheel"
+        baseWheel = if (barActive && store.wheelOn) store.wheel else emptyList()
+        setWheel(baseWheel, emptyList())
+        keys?.barLabel = if (!barActive) "" else if (baseWheel.isEmpty()) "hold to act" else "hold for wheel"
         keymap = store.keymap
         keys?.bound = if (assistantOn && store.keysOn) KeyAction.bound(keymap, skills, currentInputEditorInfo?.packageName) else emptySet()
     }
@@ -360,8 +356,24 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         val rest = baseWheel.filter { it !in fits }
         val keep = rest.take(Store.MAX_WHEEL - fits.size)
         val mid = keep.size / 2
-        wheelIds = keep.take(mid) + fits + keep.drop(mid)
-        keys?.wheelItems = wheelIds.map { wheelItem(it, it in fits) }
+        setWheel(keep.take(mid) + fits + keep.drop(mid), fits)
+    }
+
+    /**
+     * The wheel's ring: [front] fills the semicircle, and rolling the rim brings in more tools and apps,
+     * Auto-translate, Notion and Slack first, then the other tools, connected apps and your skills.
+     */
+    private fun setWheel(front: List<String>, suggested: List<String>) {
+        wheelIds = if (front.isEmpty()) emptyList() else front + wheelExtras().filter { it !in front }
+        keys?.wheelSlots = maxOf(1, front.size)
+        keys?.wheelItems = wheelIds.map { wheelItem(it, it in suggested) }
+    }
+
+    private fun wheelExtras(): List<String> {
+        val apps = Apps.ALL.map { Apps.id(it) }
+        // Apps with a token come before those still waiting to be connected.
+        val (ready, later) = apps.partition { id -> Apps.byId(id)?.let { it.tokenField == null || Apps.token(it, store).isNotEmpty() } ?: false }
+        return (listOf("auto", "app:notion", "app:slack") + Store.WHEEL_TOOLS.map { it.first } + ready + skills.map { "skill:" + it.name } + later).distinct()
     }
 
     private fun buildChips() {
@@ -377,8 +389,28 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             row.addView(inbox, chipParams())
         }
         val fresh = contextText == null && hasFreshClip()
+        // A message that just arrived in this chat (read from its notification, when the user allowed it)
+        // counts like a copied one: no copying needed to translate or answer it.
+        val incoming = if (contextText == null && !fresh && store.triggersOn && store.watchMessages && store.incomingFresh &&
+            store.incomingApp == currentInputEditorInfo?.packageName) store.incomingText else null
+        if (incoming != null && store.incomingAt != lastAttachedClip) {
+            lastAttachedClip = store.incomingAt
+            contextText = incoming
+            refreshContext()
+        }
+        // What an automatic action already made of it (a translation): one tap shows it, nothing is asked again.
+        if (incoming != null || (contextText != null && contextText == store.incomingText && store.incomingFresh)) {
+            val done = store.incomingResult
+            if (done.isNotBlank()) {
+                val chip = chipView("⚡ " + store.incomingSkill.ifBlank { "Result" } + " · " + store.incomingFrom.ifBlank { "message" }.take(18),
+                    p.accent, p.accentPressed, p.onAccent)
+                chip.setOnClickListener { feedback(KeyboardView.Type.MODE); showIncomingResult() }
+                row.addView(chip, chipParams())
+            }
+        }
         // Triggers: the copied message is matched on the phone; a chip offers each matching skill.
         val clip = if (store.triggersOn) contextText ?: (if (fresh) readClip() else null) else null
+        val fromIncoming = clip != null && clip == store.incomingText && store.incomingFresh
         val matched = clip?.let { c -> store.triggers.filter { Cards.matches(it.kind, it.keyword, c) } }.orEmpty()
         val stamp = if (fresh) clipStamp() else 0L
         if (fresh && matched.isNotEmpty() && stamp != lastAttachedClip) {
@@ -390,7 +422,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             chipsScroll?.visibility = View.VISIBLE
         }
         // Quick replies to the copied message, fetched once per copy, one tap to put in the field.
-        val replyStamp = if (clip != null) clipStamp() else 0L
+        val replyStamp = if (fromIncoming) store.incomingAt else if (clip != null) clipStamp() else 0L
         if (clip != null && replyStamp != 0L && replyStamp != lastHistoryClip) { lastHistoryClip = replyStamp; store.addClipHistory(clip) }
         if (clip != null && store.smartReplies && replyStamp != 0L) {
             if (repliesFor == replyStamp) for (r in replies) {
@@ -415,10 +447,11 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             val empty = try { readTarget()?.text.isNullOrBlank() } catch (e: Exception) { false }
             if (empty) main.post { if (!busy) showActs() }
         }
-        // An automatic trigger runs once per copied message.
+        // An automatic trigger runs once per copied message, or once per incoming one the notification didn't already handle.
         val auto = matched.firstOrNull { it.auto }
-        if (auto != null && clip != null && stamp != 0L && stamp != lastAutoClip && !busy && store.activeKey.isNotBlank()) {
-            lastAutoClip = stamp
+        val autoStamp = if (fromIncoming && store.incomingResult.isBlank()) store.incomingAt else stamp
+        if (auto != null && clip != null && autoStamp != 0L && autoStamp != lastAutoClip && !busy && store.activeKey.isNotBlank()) {
+            lastAutoClip = autoStamp
             main.post { runTrigger(auto, clip) }
         }
         for (skill in skills) {
@@ -683,13 +716,6 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     /** A shortcut on the wheel was chosen. */
     override fun onWheel(index: Int) {
         val id = wheelIds.getOrNull(index) ?: return
-        feedback(KeyboardView.Type.ENTER)
-        runShortcut(id)
-    }
-
-    /** The compass was spun and released: run whichever catalog entry landed under the needle. */
-    override fun onWheelCatalog(index: Int) {
-        val id = keys?.wheelCatalogIds?.getOrNull(index) ?: return
         feedback(KeyboardView.Type.ENTER)
         runShortcut(id)
     }
@@ -1121,6 +1147,16 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         runTask("${skill.name}…", Ai.skillTask(skill.instruction), card = true) { runTrigger(t, clip) }
     }
 
+    /** The answer an automatic action already made of an incoming message, as a card with Copy / Insert. */
+    private fun showIncomingResult() {
+        val text = store.incomingResult
+        if (text.isBlank()) return
+        contextText = store.incomingText
+        refreshContext()
+        val target = readTarget()
+        showResult(ActionResult(text, null), { chosen -> if (target != null) deliver(target, chosen) else insert(chosen.text) }, null)
+    }
+
     private fun useClipAsContext() {
         val text = try {
             val clipboard = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
@@ -1321,6 +1357,9 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     /** The strip shows suggestions while a word is being typed, and the skill keys otherwise. */
     private fun showTyping() {
         statusRow?.visibility = View.GONE
+        // A status line hides the Type / Act pills; bring them back whenever typing resumes.
+        chipsScroll?.visibility = View.VISIBLE
+        if (assistantOn && (chipsRow?.childCount ?: 0) == 0) buildChips()
         val row = suggestRow ?: return
         val labels = if (slashMatches.isNotEmpty()) slashMatches.map { (it.emoji + " " + it.name).trim() } else suggestions
         if (labels.isEmpty()) {
@@ -1720,8 +1759,12 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
                 all = Store.ALL_LANGUAGES
                 autoMode = auto
                 onPick = { i ->
-                    rememberLanguage(mine[i])
-                    if (auto) { hidePanel(); setAuto(mine[i]) } else translateInto(listOf(mine[i]))
+                    // The index is into the turning ring: your languages first, then every other one.
+                    val lang = ring.getOrNull(i)
+                    if (lang != null) {
+                        rememberLanguage(lang)
+                        if (auto) { hidePanel(); setAuto(lang) } else translateInto(listOf(lang))
+                    }
                 }
                 onCompassPick = { i ->
                     val lang = Store.ALL_LANGUAGES[i]

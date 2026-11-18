@@ -50,7 +50,7 @@ class PageActivity : Activity() {
     private var resumed = false
     override fun onResume() {
         super.onResume()
-        if (resumed && (page == "welcome" || page == "dashboard" || page == "keys" || page == "automate" || page == "memory")) { store = Store(this); render() }
+        if (resumed && (page == "welcome" || page == "dashboard" || page == "keys" || page == "automate" || page == "memory" || page == "copysettings")) { store = Store(this); render() }
         resumed = true
         // Coming back from the browser (the dashboard, say): refresh on its own, except on screens mid-edit.
         if (!page.contains("-new") && !page.contains("-edit") && page != "try") {
@@ -420,7 +420,7 @@ class PageActivity : Activity() {
 
     private fun trigLine(t: Trigger) = when (t.kind) {
         "link" -> "When text is a URL"
-        "foreign" -> "When text is not in English"
+        "foreign" -> "When a message is in another language (French, Spanish, Japanese…)"
         "keyword" -> "When text has “${t.keyword}”"
         else -> "When text has " + (Cards.KINDS.firstOrNull { it.first == t.kind }?.second ?: t.kind)
     }
@@ -500,6 +500,33 @@ class PageActivity : Activity() {
             ui.row(R.drawable.ic_zap, "Suggest actions for copied text", "Checked on the phone only", ui.toggle(store.triggersOn) { store.triggersOn = it; render() }),
             ui.row(R.drawable.ic_pencil_line, "Quick replies when I copy", "Three short replies as chips, one small request per copy", ui.toggle(store.smartReplies) { store.smartReplies = it }),
             ui.row(R.drawable.ic_sparkles, "Show my acts when I copy", "Opens the acts in place of the keys, once per copy", ui.toggle(store.actsOnCopy) { store.actsOnCopy = it }),
+        ))
+        // Incoming messages: no copying at all. Needs notification access, which only the user can grant.
+        val access = MessageListener.hasAccess(this)
+        note(column, "\nAct on incoming messages: Verbo reads new WhatsApp, Telegram and SMS notifications on your phone. " +
+            "A message that matches an auto action set to run automatically (a French message and Understand any language, say) " +
+            "is sent to your AI key and the result comes as a notification, and waits above the keys when you reply. Nothing else leaves the phone.")
+        column.addView(ui.rows(
+            ui.row(R.drawable.ic_languages, "Act on incoming messages",
+                if (!store.watchMessages) "Off" else if (access) "On: translates foreign messages as they arrive" else "Waiting for notification access",
+                ui.toggle(store.watchMessages) { on ->
+                    store.watchMessages = on
+                    if (on) {
+                        // The ask was "translate a French message automatically": make sure that auto action exists and runs by itself.
+                        val list = store.triggers
+                        store.triggers = if (list.any { it.kind == "foreign" }) list.map { if (it.kind == "foreign") it.copy(auto = true) else it }
+                            else list + Trigger("foreign", "", "Understand any language", true)
+                        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+                            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 41)
+                        }
+                        if (!MessageListener.hasAccess(this)) {
+                            android.widget.Toast.makeText(this, "Turn on notification access for Verbo", android.widget.Toast.LENGTH_LONG).show()
+                            try { startActivity(MessageListener.accessIntent()) } catch (e: Exception) { }
+                        }
+                    }
+                    render()
+                }),
         ))
     }
 
