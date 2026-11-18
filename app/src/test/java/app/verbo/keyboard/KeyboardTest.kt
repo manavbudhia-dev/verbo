@@ -799,20 +799,66 @@ class KeyboardTest {
         assertTrue("the intro bubbles hello", findText(root, "Hey,\nI'm Verbo 👋") != null)
         clickLabel(root, "Let's Try It")
         var edit = sheetFields(root as ViewGroup)[0]
-        assertEquals("Write a birthday message for my friend.", edit.text.toString())
+        assertEquals("the prompt starts empty, not a fixed birthday task", "", edit.text.toString())
         assertEquals("at rest the prompt replaces the keys", View.GONE, ime.keys!!.visibility)
         edit.performClick()
         assertEquals("tapping the request brings the keys up", View.VISIBLE, ime.keys!!.visibility)
         edit = sheetFields(root as ViewGroup)[0]
         edit.requestFocus()
-        ime.onChar("!")
-        assertEquals("key taps type into the request while it holds focus", "Write a birthday message for my friend.!", edit.text.toString())
+        ime.onChar("H")
+        ime.onChar("i")
+        assertEquals("key taps type into the request while it holds focus", "Hi", edit.text.toString())
         ime.onBackspace()
-        assertEquals("Write a birthday message for my friend.", edit.text.toString())
+        assertEquals("H", edit.text.toString())
         clickLabel(root, "Go")
         assertTrue("without a key the bot asks to set up", findText(root, "Add your ${store.providerName} API key to use actions") != null)
         ime.hidePanel()
         assertEquals("the banner stays gone", View.GONE, findText(root, "Welcome to Verbo, the agentic keyboard")!!.visibility)
+    }
+
+    @Test
+    fun theIntroIsShownOnceAndTheBotThenOpensThePrompt() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        store.welcomed = false
+        layout(root)
+        byDesc(root, "Meet Verbo, the keyboard bot")!!.performClick()
+        assertTrue("the first tap greets with the intro", findText(root, "Hey,\nI'm Verbo 👋") != null)
+        assertTrue("showing the intro remembers the welcome", store.welcomed)
+        ime.hidePanel()
+        assertEquals("the banner never returns after the intro", View.GONE, findText(root, "Welcome to Verbo, the agentic keyboard")!!.visibility)
+        byDesc(root, "Meet Verbo, the keyboard bot")!!.performClick()
+        assertEquals("the intro does not repeat", null, findText(root, "Hey,\nI'm Verbo 👋"))
+        assertTrue("the bot opens the request panel instead", sheetFields(root as ViewGroup).isNotEmpty())
+        assertEquals("", sheetFields(root as ViewGroup)[0].text.toString())
+    }
+
+    @Test
+    fun theListeningPanelAnimatesAndSpokenRequestsRunTheBot() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        store.welcomed = true
+        ime.showListeningPanel(null, smart = true, forBot = true)
+        layout(root)
+        val bot = ime.listenBot
+        assertTrue("the mascot is in its listening mood", bot != null && bot.mood == BotView.Mood.LISTEN)
+        assertTrue("a live transcript is shown", ime.heardView != null)
+        ime.heardView?.text = "Remind me to call mom tonight"
+        bot!!.energy = 0.8f
+        assertEquals("the mic level drives the animation", 0.8f, bot.energy, 0.001f)
+        assertTrue("Ask Verbo is offered", findText(root, "Ask Verbo") != null)
+        assertTrue("Just type is offered", findText(root, "Just type") != null)
+        byDesc(root, "Stop listening")!!.performClick()
+        assertEquals("stopping returns to the keys", View.VISIBLE, ime.keys!!.visibility)
+        // A spoken request runs the bot; without a key it asks to set up.
+        store.apiKey = ""
+        ime.onVoiceResult("Write a thank you note", forBot = true, command = true, smart = true)
+        assertTrue(findText(root, "Add your ${store.providerName} API key to use actions") != null)
+        // "Just type" dictates the words straight into the field.
+        field.text.clear()
+        ime.onVoiceResult("hello there", forBot = true, command = false, smart = true)
+        assertEquals("hello there", field.text.toString())
+        // Blank speech is reported, not run.
+        ime.onVoiceResult("   ", forBot = true, command = true, smart = true)
+        assertTrue(findText(root, "Didn't catch that") != null)
     }
 
     @Test
@@ -1194,11 +1240,16 @@ class KeyboardTest {
         ime.showBotPrompt()
         layout(agentRoot)
         snap(agentRoot, "bot-prompt")
+        ime.showListeningPanel(null, smart = true, forBot = true)
+        ime.heardView?.text = "Remind me to call mom tonight"
+        ime.listenBot?.energy = 0.7f
+        layout(agentRoot)
+        snap(agentRoot, "bot-listening")
         ime.showLoading("Working on it") {}
         ime.addStep("Searching the web")
         layout(agentRoot)
         snap(agentRoot, "bot-working")
-        ime.showResult(ActionResult("Happy birthday! 🎉 Hope your day is full of good laughs, great food, and all your favorite people. Here's to another year of adventures together!", null), {}, null)
+        ime.showResult(ActionResult("Thanks so much for the invite! I'd love to come — count me in for Saturday. Looking forward to it. 🎉", null), {}, null)
         layout(agentRoot)
         snap(agentRoot, "bot-result")
         ime.hidePanel()

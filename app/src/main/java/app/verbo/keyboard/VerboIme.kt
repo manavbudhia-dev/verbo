@@ -64,8 +64,10 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     private var autoLang: String? = null // while set, what you type is translated into this language whenever you pause
     private var lastAuto = "" // the last text auto-translate produced, so it isn't translated again
     private var voiceCommand = false
+    private var voiceForBot = false // true when the mic was tapped to speak a request to the bot, not to dictate
     private var levels: LevelView? = null
-    private var heardView: TextView? = null // a copied message the user chose to give the assistant as context
+    internal var heardView: TextView? = null // the live transcript while listening
+    internal var listenBot: BotView? = null // the mascot animating in the listening panel
     private var recognizer: SpeechRecognizer? = null
     private var builtWith = ""
 
@@ -130,6 +132,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         undo = null
         recognizer?.cancel()
         listening = false
+        voiceForBot = false
         p = KeyTheme.of(this, store.theme, store.customAccent)
 
         val root = LinearLayout(this).apply {
@@ -200,16 +203,17 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         top.addView(BotView(this).apply {
             mood = BotView.Mood.HELLO
             contentDescription = "Meet Verbo, the keyboard bot"
-            setOnClickListener { feedback(KeyboardView.Type.MODE); showBotIntro() }
+            // The intro is a one-time greeting; after that the bot opens straight to the request panel.
+            setOnClickListener { feedback(KeyboardView.Type.MODE); if (store.welcomed) showBotPrompt() else showBotIntro() }
         }, LinearLayout.LayoutParams(dp(30), dp(30)).apply { setMargins(dp(4), 0, dp(6), 0) })
         val voice = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             setPadding(dp(12), 0, dp(14), 0)
             background = pressable(p.key, p.keyPressed, 18)
-            contentDescription = "Voice. Hold for a voice command"
-            setOnClickListener { feedback(KeyboardView.Type.MODE); startVoice(false) }
-            setOnLongClickListener { feedback(KeyboardView.Type.MODE); startVoice(true); true }
+            contentDescription = "Voice. Tap to ask Verbo, hold to dictate"
+            setOnClickListener { feedback(KeyboardView.Type.MODE); voiceForBot = true; startVoice(true) }
+            setOnLongClickListener { feedback(KeyboardView.Type.MODE); voiceForBot = false; startVoice(false); true }
             addView(ImageView(this@VerboIme).apply {
                 setImageResource(R.drawable.ic_mic)
                 setColorFilter(p.text)
@@ -684,7 +688,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             "translate" -> showLanguages()
             "auto" -> showLanguages(auto = true)
             "rewrite" -> showRewrite()
-            "voice" -> startVoice(false)
+            "voice" -> { voiceForBot = true; startVoice(true) }
             "clips" -> showClips()
             "meet" -> makeMeetLink()
             else -> if (id.startsWith("text:")) currentInputConnection?.commitText(id.removePrefix("text:"), 1)
@@ -952,6 +956,9 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     private fun paper(doodles: Boolean) = BotPaper(doodles, resources.displayMetrics.density)
 
     internal fun showBotIntro(): Unit = showPanel(dp(330)) {
+        // Showing the intro counts as the one-time welcome, so the banner and intro never return.
+        store.welcomed = true
+        welcome?.visibility = View.GONE
         background = paper(true)
         addView(botTop({ hidePanel(); showTyping() }))
         addView(View(this@VerboIme), LinearLayout.LayoutParams(1, 0, 0.4f))
@@ -1000,7 +1007,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         addView(botGlobe())
     }
 
-    internal fun showBotPrompt(initial: String = "Write a birthday message for my friend.", editing: Boolean = false): Unit =
+    internal fun showBotPrompt(initial: String = "", editing: Boolean = false): Unit =
         showPanel(if (editing) dp(240) else dp(300), editing) {
         background = paper(false)
         addView(botTop({ hidePanel(); showTyping() }))
@@ -1009,6 +1016,8 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             LinearLayout.LayoutParams(dp(if (editing) 56 else 88), dp(if (editing) 56 else 88)).apply { gravity = Gravity.CENTER_HORIZONTAL })
         val edit = android.widget.EditText(this@VerboIme).apply {
             setText(initial)
+            hint = "Ask Verbo anything…"
+            setHintTextColor(p.muted)
             setTextColor(p.text)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, if (editing) 15f else 17f)
             typeface = Typeface.DEFAULT_BOLD
@@ -1022,18 +1031,34 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             setOnClickListener { if (!editing) showBotPrompt(text.toString(), true) }
         }
         addView(edit, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(18), dp(if (editing) 4 else 10), dp(18), 0) })
-        addView(TextView(this@VerboIme).apply {
-            text = "Go"
-            setTextColor(p.text)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-            gravity = Gravity.CENTER
-            background = GradientDrawable().apply {
-                setColor(Color.TRANSPARENT)
-                cornerRadius = dp(24).toFloat()
-                setStroke(dp(1), Color.parseColor("#C9C9D4"))
-            }
-            setOnClickListener { feedback(KeyboardView.Type.MODE); runBotPrompt(edit.text.toString()) }
-        }, LinearLayout.LayoutParams(-1, dp(if (editing) 40 else 46)).apply { setMargins(dp(40), dp(if (editing) 6 else 12), dp(40), 0) })
+        // Speak it or type it: the mic opens the listening agent, Go runs the written request.
+        val actions = LinearLayout(this@VerboIme).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(LinearLayout(this@VerboIme).apply {
+                gravity = Gravity.CENTER
+                background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(Color.parseColor("#22D3EE"), Color.parseColor("#4F46E5"))).apply { shape = GradientDrawable.OVAL }
+                contentDescription = "Speak your request"
+                setOnClickListener { feedback(KeyboardView.Type.MODE); voiceForBot = true; startVoice(true) }
+                addView(ImageView(this@VerboIme).apply {
+                    setImageResource(R.drawable.ic_mic)
+                    setColorFilter(Color.WHITE)
+                }, LinearLayout.LayoutParams(dp(18), dp(18)))
+            }, LinearLayout.LayoutParams(dp(if (editing) 40 else 48), dp(if (editing) 40 else 48)).apply { rightMargin = dp(12) })
+            addView(TextView(this@VerboIme).apply {
+                text = "Go"
+                setTextColor(p.text)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+                gravity = Gravity.CENTER
+                background = GradientDrawable().apply {
+                    setColor(Color.TRANSPARENT)
+                    cornerRadius = dp(24).toFloat()
+                    setStroke(dp(1), Color.parseColor("#C9C9D4"))
+                }
+                setOnClickListener { feedback(KeyboardView.Type.MODE); runBotPrompt(edit.text.toString()) }
+            }, LinearLayout.LayoutParams(0, dp(if (editing) 40 else 46), 1f))
+        }
+        addView(actions, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(24), dp(if (editing) 6 else 12), dp(24), 0) })
         addView(View(this@VerboIme), LinearLayout.LayoutParams(1, 0, 1f))
         addView(botGlobe())
         botEdit = edit
@@ -1162,6 +1187,8 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         recognizer?.destroy()
         recognizer = null
         listening = false
+        voiceForBot = false
+        listenBot = null
         fb.release()
     }
 
@@ -1212,6 +1239,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             showTyping()
             recognizer?.cancel()
             listening = false
+            voiceForBot = false
             syncIfStale()
         }
         val type = info?.inputType ?: 0
@@ -1796,6 +1824,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         box.removeAllViews()
         box.background = null
         botEdit = null
+        listenBot = null
         window?.window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
         // Same height as the keys and strip it replaces, so the app above doesn't jump.
         val height = if (keepKeys) 0 else typingViews.filter { it.visibility == View.VISIBLE }.sumOf { it.height }
@@ -1819,6 +1848,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         box.background = null
         box.visibility = View.GONE
         botEdit = null
+        listenBot = null
         window?.window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
         typingViews.forEach { it.visibility = View.VISIBLE }
         welcome?.visibility = if (store.welcomed) View.GONE else View.VISIBLE
@@ -2375,10 +2405,12 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
                 listening = false
                 hidePanel()
                 val heard = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
-                if (heard.isNullOrBlank()) showStatus("Didn't catch that") else onHeard(heard, voiceCommand, smart)
+                onVoiceResult(heard, voiceForBot, voiceCommand, smart)
+                voiceForBot = false
             }
             override fun onError(error: Int) {
                 listening = false
+                voiceForBot = false
                 hidePanel()
                 showStatus(when (error) {
                     SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Didn't catch that"
@@ -2387,7 +2419,10 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
                     else -> "Voice input failed"
                 })
             }
-            override fun onRmsChanged(rmsdB: Float) { levels?.push(rmsdB) }
+            override fun onRmsChanged(rmsdB: Float) {
+                levels?.push(rmsdB)
+                listenBot?.energy = (rmsdB + 2f) / 12f
+            }
             override fun onReadyForSpeech(params: Bundle?) {}
             override fun onBeginningOfSpeech() {}
             override fun onBufferReceived(buffer: ByteArray?) {}
@@ -2402,44 +2437,82 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         })
     }
 
-    private fun showListening(rec: SpeechRecognizer, smart: Boolean) = showPanel {
+    private fun showListening(rec: SpeechRecognizer, smart: Boolean) = showListeningPanel(rec, smart, voiceForBot)
+
+    /** The listening panel: the mascot hears you, words appear live, and the mic level drives its halo and waves. */
+    internal fun showListeningPanel(rec: SpeechRecognizer?, smart: Boolean, forBot: Boolean) = showPanel(dp(360)) {
+        background = paper(false)
+        // Speaking to the bot defaults to running the request; dictation defaults to transcribe.
+        voiceCommand = forBot && smart
         val header = LinearLayout(this@VerboIme).apply { gravity = Gravity.CENTER_VERTICAL }
         header.addView(TextView(this@VerboIme).apply {
-            text = "Listening…"
+            text = if (forBot) "Speak to Verbo" else "Listening…"
             setTextColor(p.muted)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setPadding(dp(8), 0, 0, 0)
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(dp(12), 0, 0, 0)
         }, LinearLayout.LayoutParams(0, -2, 1f))
         header.addView(iconButton(R.drawable.ic_x, "Stop listening", p.muted) {
-            rec.cancel()
+            rec?.cancel()
             listening = false
+            voiceForBot = false
             hidePanel()
             showTyping()
         }, LinearLayout.LayoutParams(dp(40), dp(40)))
         addView(header)
-        levels = LevelView(this@VerboIme, p.accent)
-        addView(levels, LinearLayout.LayoutParams(-1, 0, 1f))
+        addView(View(this@VerboIme), LinearLayout.LayoutParams(1, 0, 0.3f))
+        val bot = BotView(this@VerboIme).apply { mood = BotView.Mood.LISTEN }
+        listenBot = bot
+        addView(bot, LinearLayout.LayoutParams(dp(128), dp(128)).apply { gravity = Gravity.CENTER_HORIZONTAL })
+        addView(TextView(this@VerboIme).apply {
+            text = if (forBot) "Listening for your request…" else "Listening…"
+            setTextColor(p.muted)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            gravity = Gravity.CENTER
+        }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
         heardView = TextView(this@VerboIme).apply {
             gravity = Gravity.CENTER
             setTextColor(p.text)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            setHintTextColor(p.muted)
+            hint = "Your words appear here"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            typeface = Typeface.DEFAULT_BOLD
             maxLines = 2
             ellipsize = TextUtils.TruncateAt.START
-            setPadding(dp(8), 0, dp(8), dp(8))
+            setPadding(dp(16), dp(6), dp(16), dp(2))
         }
-        addView(heardView, LinearLayout.LayoutParams(-1, dp(48)))
-        // Tapping either button stops listening and decides what happens to the words.
-        val footer = LinearLayout(this@VerboIme).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, 0, 0, dp(2)) }
+        addView(heardView, LinearLayout.LayoutParams(-1, dp(56)))
+        levels = LevelView(this@VerboIme, p.accent)
+        addView(levels, LinearLayout.LayoutParams(-1, dp(26)))
+        addView(View(this@VerboIme), LinearLayout.LayoutParams(1, 0, 0.4f))
+        // Tapping a mode stops listening and decides what happens to the words.
+        val footer = LinearLayout(this@VerboIme).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, 0, 0, dp(8)) }
         fun mode(label: String, asCommand: Boolean, weight: Float) {
             val on = voiceCommand == asCommand
             val chip = chipView(label, if (on) p.accent else p.key, if (on) p.accentPressed else p.keyPressed, if (on) p.onAccent else p.text)
             chip.typeface = Typeface.DEFAULT_BOLD
-            chip.setOnClickListener { feedback(KeyboardView.Type.MODE); voiceCommand = asCommand; rec.stopListening() }
-            footer.addView(chip, LinearLayout.LayoutParams(0, dp(46), weight).apply { setMargins(dp(4), 0, dp(4), 0) })
+            chip.setOnClickListener { feedback(KeyboardView.Type.MODE); voiceCommand = asCommand; rec?.stopListening() }
+            footer.addView(chip, LinearLayout.LayoutParams(0, dp(46), weight).apply { setMargins(dp(6), 0, dp(6), 0) })
         }
-        if (smart) mode("Command", true, 1f)
-        mode(if (smart) "Transcribe" else "Done", false, 1.3f)
+        when {
+            smart && forBot -> { mode("Ask Verbo", true, 1f); mode("Just type", false, 1f) }
+            smart -> { mode("Command", true, 1f); mode("Transcribe", false, 1.3f) }
+            else -> mode("Done", false, 1f)
+        }
         addView(footer)
+    }
+
+    /** Decides what happens to heard words: a spoken request runs the bot; "Just type" dictates; otherwise tidy/command. */
+    internal fun onVoiceResult(heard: String?, forBot: Boolean, command: Boolean, smart: Boolean) {
+        if (heard.isNullOrBlank()) {
+            showStatus("Didn't catch that")
+            return
+        }
+        when {
+            forBot && command && smart -> runBotPrompt(heard)
+            forBot -> insert(heard)
+            else -> onHeard(heard, command, smart)
+        }
     }
 
     private fun onHeard(heard: String, command: Boolean, smart: Boolean) {
