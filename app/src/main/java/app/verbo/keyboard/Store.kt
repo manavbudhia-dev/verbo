@@ -118,7 +118,7 @@ class Store(context: Context) {
     }
 
     // dashboard pairing
-    var serverUrl: String get() = str("server_url"); set(v) = put("server_url", v)
+    var serverUrl: String get() = moved(str("server_url")); set(v) = put("server_url", v)
     var deviceToken: String get() = str("device_token"); set(v) = put("device_token", v)
     var lastSync: Long
         get() = prefs?.getLong("last_sync", 0) ?: 0
@@ -347,7 +347,7 @@ class Store(context: Context) {
     /** Secret for the Google sign-in in progress: the dashboard only pairs the phone that holds it. */
     var authVerifier: String get() = str("auth_verifier"); set(v) { prefs?.edit()?.putString("auth_verifier", v)?.apply() }
     /** The dashboard that sign-in was started on. */
-    var authServer: String get() = str("auth_server"); set(v) { prefs?.edit()?.putString("auth_server", v)?.apply() }
+    var authServer: String get() = moved(str("auth_server")); set(v) { prefs?.edit()?.putString("auth_server", v)?.apply() }
 
     /** Suggest (or run) skills when a copied message matches a trigger. The matching happens on the phone; nothing is sent until a skill runs. */
     var triggersOn: Boolean get() = bool("triggers_on", true); set(v) = put("triggers_on", v)
@@ -554,7 +554,12 @@ class Store(context: Context) {
         fun keyHint(key: String) = if (key.length >= 8) key.takeLast(4) else ""
 
         /** The hosted dashboard, used by "Continue with Google" until the user pairs with another one. */
-        const val DEFAULT_SERVER = "https://verbo-env-fpemontcg1.ap-south-1a.lb.nimbuz.tech"
+        const val DEFAULT_SERVER = "https://verbo.zealcoder.in"
+        /** Where the dashboard used to live; a phone paired there follows it to [DEFAULT_SERVER]. */
+        private val OLD_SERVERS = listOf("https://verbo-env-fpemontcg1.ap-south-1a.lb.nimbuz.tech")
+
+        /** A saved address on the old host reads as the new one. */
+        fun moved(url: String): String = if (OLD_SERVERS.any { url.trimEnd('/').equals(it, ignoreCase = true) }) DEFAULT_SERVER else url
 
         const val MIN_HEIGHT = 80
         const val MAX_HEIGHT = 130
