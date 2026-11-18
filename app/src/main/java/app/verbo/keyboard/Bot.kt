@@ -117,6 +117,7 @@ class BotView(context: Context) : View(context) {
         val tipGlow = if (mood == Mood.LISTEN || mood == Mood.WORK) 0.6f + 0.4f * pulse else 0.35f + 0.25f * pulse
         paint.color = Color.argb((tipGlow * 120).toInt(), 250, 204, 21)
         c.drawCircle(100f, 20f, 13f, paint)
+        paint.color = Color.WHITE // a gradient still takes the paint's alpha: keep it opaque
         paint.shader = RadialGradient(97f, 17f, 9f, Color.parseColor("#FEF9C3"), Color.parseColor("#FACC15"), Shader.TileMode.CLAMP)
         c.drawCircle(100f, 20f, 8f, paint)
         paint.shader = null
@@ -136,6 +137,7 @@ class BotView(context: Context) : View(context) {
             arcTo(RectF(30f, 40f, 122f, 132f), 180f, 90f)
             close()
         }
+        paint.color = Color.WHITE
         paint.shader = LinearGradient(30f, 40f, 170f, 176f,
             intArrayOf(Color.parseColor("#A78BFA"), Color.parseColor("#7C3AED"), Color.parseColor("#4F46E5")), floatArrayOf(0f, 0.55f, 1f), Shader.TileMode.CLAMP)
         c.drawPath(body, paint)
@@ -147,6 +149,7 @@ class BotView(context: Context) : View(context) {
         c.drawOval(RectF(44f, 46f, 96f, 62f), paint); c.restore()
 
         // The visor, with a faint reflection band.
+        paint.color = Color.WHITE
         paint.shader = LinearGradient(0f, 64f, 0f, 128f, Color.parseColor("#2E2A6B"), Color.parseColor("#151236"), Shader.TileMode.CLAMP)
         c.drawRoundRect(RectF(46f, 64f, 154f, 128f), 32f, 32f, paint)
         paint.shader = null
