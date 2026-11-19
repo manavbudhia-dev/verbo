@@ -1280,6 +1280,37 @@ class KeyboardTest {
     }
 
     @Test
+    fun theAssistantChatGreetsRemembersAndKeepsTheConversation() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        store.chat("[]")
+        store.apiKey = ""
+        var a = Robolectric.buildActivity(AssistantActivity::class.java).setup().resume().get()
+        var screen = a.findViewById<View>(android.R.id.content)
+        layout(screen)
+        assertTrue("without a key the assistant asks for one", findText(screen, "Add your API key first") != null)
+        store.apiKey = "sk-ant-test-0000"
+        a = Robolectric.buildActivity(AssistantActivity::class.java).setup().resume().get()
+        screen = a.findViewById(android.R.id.content)
+        layout(screen)
+        assertTrue("the mascot says hello", findText(screen, "Hi, I'm Verbo") != null)
+        assertTrue("ideas are offered", findText(screen, AssistantActivity.IDEAS[0]) != null)
+        // A "remember" command is handled on the phone and answered in the chat.
+        a.send("remember my UPI is me@okicici")
+        assertTrue("it remembers", store.memory.any { it.value == "me@okicici" })
+        layout(screen)
+        fun has(v: View, t: String): Boolean = (v is TextView && v.text.toString().contains(t)) ||
+            (v is ViewGroup && (0 until v.childCount).any { has(v.getChildAt(it), t) })
+        assertTrue("the reply is in the chat", has(screen, "I'll remember"))
+        // The conversation is still there next time.
+        val again = Robolectric.buildActivity(AssistantActivity::class.java).setup().resume().get()
+        val screen2 = again.findViewById<View>(android.R.id.content)
+        layout(screen2)
+        assertTrue("the chat is kept", has(screen2, "remember my UPI is me@okicici"))
+        store.chat("[]")
+        store.apiKey = ""
+    }
+
+    @Test
     fun typeAndActPillsComeBackAfterAStatusLine() {
         val show = VerboIme::class.java.getDeclaredMethod("showStatus", String::class.java, emptyArray<Pair<String, () -> Unit>>().javaClass)
         show.isAccessible = true
@@ -1474,6 +1505,13 @@ class KeyboardTest {
 
     // ---------- pictures for checking layout by eye ----------
 
+    /** A full-screen activity at phone size (1080 x 2200). */
+    private fun snapSized(view: View, name: String) {
+        view.measure(View.MeasureSpec.makeMeasureSpec(1080, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(2200, View.MeasureSpec.EXACTLY))
+        view.layout(0, 0, 1080, 2200)
+        snap(view, name)
+    }
+
     private fun snap(view: View, name: String) {
         val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
         view.draw(Canvas(bitmap))
@@ -1591,6 +1629,26 @@ class KeyboardTest {
         ime.showKeyNeeded()
         layout(agentRoot)
         snap(agentRoot, "bot-key-needed")
+        run {
+            val st = Store(RuntimeEnvironment.getApplication())
+            st.apiKey = "sk-ant-test-0000"
+            st.chat("[]")
+            val chat = Robolectric.buildActivity(AssistantActivity::class.java).setup().resume().get()
+            val v = chat.findViewById<View>(android.R.id.content)
+            layout(v); v.layout(0, 0, 1080, 2200); snapSized(v, "assistant-hello")
+            st.chat(org.json.JSONArray()
+                .put(org.json.JSONObject().put("u", true).put("t", "Remind me to call Mom tomorrow at 7pm"))
+                .put(org.json.JSONObject().put("u", false).put("t", "Done! I've set it for tomorrow at 7:00 PM: Call Mom.")
+                    .put("l", "https://calendar.google.com/calendar/render?action=TEMPLATE&text=Call%20Mom&dates=20261120T190000/20261120T193000"))
+                .put(org.json.JSONObject().put("u", true).put("t", "And write a birthday wish for Rahul on WhatsApp"))
+                .put(org.json.JSONObject().put("u", false).put("t", "Happy birthday Rahul! 🎉 Wishing you a year full of wins, laughs and great food. Have an amazing day!")
+                    .put("l", "https://wa.me/?text=Happy%20birthday%20Rahul")).toString())
+            val chat2 = Robolectric.buildActivity(AssistantActivity::class.java).setup().resume().get()
+            val v2 = chat2.findViewById<View>(android.R.id.content)
+            layout(v2); v2.layout(0, 0, 1080, 2200); snapSized(v2, "assistant-chat")
+            st.chat("[]")
+            st.apiKey = ""
+        }
         ime.showBotPrompt()
         layout(agentRoot)
         snap(agentRoot, "bot-prompt")

@@ -356,6 +356,10 @@ class Store(context: Context) {
         get() = try { parseMemory(JSONArray(str("memory", "[]"))) } catch (e: Exception) { emptyList() }
         set(v) = put("memory", memoryJson(v).toString())
 
+    /** The assistant chat, as a JSON array of turns; kept on this phone only. */
+    fun chat(): String = str("assistant_chat", "[]")
+    fun chat(json: String) { prefs?.edit()?.putString("assistant_chat", json)?.apply() }
+
     fun remember(fact: Memory.Fact) { memory = memory.filter { !it.label.equals(fact.label, true) || fact.label == "Note" } + fact }
     fun forget(label: String): Boolean {
         val before = memory

@@ -103,6 +103,7 @@ class MainActivity : Activity() {
             addView(ui.icon(R.drawable.ic_search, 20, ui.muted))
             addView(ui.text("Search skills, actions, apps, settings…", 15f, ui.muted).apply { setPadding(ui.dp(10), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
         }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = ui.dp(12) })
+        assistantCard(column)
         newSetupBox(column)
         aiStatus(column)
 
@@ -119,6 +120,25 @@ class MainActivity : Activity() {
         buttons.addView(ui.button("Create", R.drawable.ic_plus, filled = true) { open("create") }, LinearLayout.LayoutParams(0, -2, 1f).apply { rightMargin = ui.dp(6) })
         buttons.addView(ui.button("Try it", R.drawable.ic_keyboard) { open("try") }, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = ui.dp(6) })
         column.addView(buttons)
+    }
+
+    /** The way into the personal assistant: the mascot and a prompt to chat with it. */
+    private fun assistantCard(column: LinearLayout) {
+        val card = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            background = ui.ripple(android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
+                intArrayOf(android.graphics.Color.parseColor("#FFF1EC"), android.graphics.Color.parseColor("#FFE8F0"), android.graphics.Color.parseColor("#E3FAF6"))).apply { cornerRadius = ui.dp(20).toFloat() }, 20)
+            setPadding(ui.dp(12), ui.dp(12), ui.dp(16), ui.dp(12))
+            contentDescription = "Chat with Verbo"
+            setOnClickListener { startActivity(Intent(this@MainActivity, AssistantActivity::class.java)) }
+        }
+        card.addView(BotView(this).apply { mood = BotView.Mood.HELLO }, LinearLayout.LayoutParams(ui.dp(64), ui.dp(64)))
+        val words = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(ui.dp(12), 0, 0, 0) }
+        words.addView(ui.text("Chat with Verbo", 17f, ui.ink, bold = true))
+        words.addView(ui.text("Your personal assistant. Ask, plan, write, or tell it what to do.", 13.5f, ui.muted).apply { setPadding(0, ui.dp(2), 0, 0) })
+        card.addView(words, LinearLayout.LayoutParams(0, -2, 1f))
+        card.addView(ui.chevron())
+        column.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = ui.dp(12) })
     }
 
     /** "Ready · Haiku 5.5 · key ends 1234", or a button to add a key. Tapping opens the AI service page. */
