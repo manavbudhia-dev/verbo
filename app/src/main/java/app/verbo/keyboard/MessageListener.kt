@@ -50,12 +50,18 @@ class MessageListener : NotificationListenerService() {
         main.post { onIncoming?.invoke(false) }
         val trigger = store.triggers.firstOrNull { it.auto && Cards.matches(it.kind, it.keyword, text) } ?: return
         val skill = store.triggerSkill(trigger) ?: return
-        if (store.activeKey.isBlank() || store.overLimit) return
+        // Without a key only an on-phone translation can run.
+        if ((store.activeKey.isBlank() || store.overLimit) && !skill.name.equals("Understand any language", true)) return
         val stamp = store.incomingAt
         val engine = Engine(store)
         val title = Cards.chipLabel(trigger, text)
         Thread {
-            val result = try {
+            // A foreign message is translated on the phone first: instant and free once the model is there.
+            val quick = if (skill.name.equals("Understand any language", true)) {
+                val from = Acts.foreignLanguage(text)?.takeIf { it != "another language" }
+                if (from == null) null else Offline.quick(text, "English")?.takeIf { it != text }?.let { ActionResult("From $from\n$it", null) }
+            } else null
+            val result = quick ?: try {
                 engine.run(Ai.skillTask(skill.instruction), Ai.userMessage("", text), web = false, tools = emptyList(), label = skill.name)
             } catch (e: Exception) {
                 null

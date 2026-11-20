@@ -1359,6 +1359,18 @@ class KeyboardTest {
     }
 
     @Test
+    fun translationKnowsTheSourceLanguageOnThePhone() {
+        assertEquals("fr", Offline.sourceCode("Bonjour, est-ce que tu peux venir demain ?"))
+        assertEquals("es", Offline.sourceCode("Hola, ¿cómo estás? Nos vemos mañana"))
+        assertEquals("en", Offline.sourceCode("Can you send me the file today please?"))
+        assertEquals("hi", Offline.sourceCode("कल मिलते हैं"))
+        assertEquals("Hinglish goes to the AI service", null, Offline.sourceCode("bhai kal office aa raha hai kya"))
+        assertEquals("fr", Offline.languageCode("French"))
+        // Without a downloaded model it never blocks: null, and the AI service takes this one.
+        assertEquals(null, Offline.quick("Bonjour, tu viens demain ?", "English"))
+    }
+
+    @Test
     fun typeAndActPillsComeBackAfterAStatusLine() {
         val show = VerboIme::class.java.getDeclaredMethod("showStatus", String::class.java, emptyArray<Pair<String, () -> Unit>>().javaClass)
         show.isAccessible = true

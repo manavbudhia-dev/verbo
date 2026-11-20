@@ -115,6 +115,8 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         super.onCreate()
         store = Store(this)
         fb = Feedback(this)
+        // Translation models for your languages download quietly on Wi-Fi, so translating is instant and free.
+        try { Offline.prefetch(store.languages) } catch (e: Throwable) { }
         MessageListener.onIncoming = { ready -> onIncomingMessage(ready) }
         Thread { try { dictionary.load(assets.open("words.txt")) } catch (e: Exception) { } }.start()
         main.postDelayed(autoSync, Sync.EVERY_MS)
@@ -893,6 +895,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         if (contextText == null && hasFreshClip()) readClip()?.let { contextText = it }
         refreshContext()
         val schedule = name.equals("Schedule it", true)
+        contextText?.let { if (understandQuickly(skill.name, it)) return }
         if (Acts.isChain(skill.instruction)) {
             val steps = Acts.chainSteps(skill.instruction)
             val task = Acts.chainTask(steps) { step -> actSkill(step)?.takeIf { !Acts.isChain(it.instruction) }?.instruction }
@@ -910,6 +913,31 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
                 r.copy(text = r.text + "\nAdd it to your calendar: " + r.openUri)
             } else r
         })
+    }
+
+    /**
+     * "Understand any language" on a received message: translated into English on the phone in a moment when
+     * the language's model is there, shown as a card. Returns false (and the AI service is used) otherwise.
+     */
+    private fun understandQuickly(name: String, message: String): Boolean {
+        if (!name.equals("Understand any language", true) || busy) return false
+        val from = Acts.foreignLanguage(message)?.takeIf { it != "another language" } ?: return false
+        busy = true
+        showStatus("Translating from $from…")
+        val token = ++generation
+        worker.execute {
+            val done = Offline.quick(message, "English")
+            main.post {
+                if (token != generation) return@post
+                busy = false
+                if (done != null && done != message) showResult(ActionResult("From $from\n$done", null), { chosen -> insert(chosen.text.substringAfter('\n')) }, null)
+                else {
+                    val skill = actSkill(name) ?: return@post
+                    runTask("${skill.name}…", Ai.skillTask(skill.instruction), card = true) { }
+                }
+            }
+        }
+        return true
     }
 
     /** After a chain: every calendar link becomes a saved event; the last other link stays as the button. */
@@ -1237,6 +1265,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         store.recordUse(store.triggerId(t))
         store.recordUse("skill:" + skill.name)
         sendAfter = skill.name.equals("Place", true)
+        if (understandQuickly(skill.name, clip)) return
         runTask("${skill.name}…", Ai.skillTask(skill.instruction), card = Acts.showsCard(skill.name)) { runTrigger(t, clip) }
     }
 
@@ -1913,7 +1942,30 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
 
     private fun translateInto(languages: List<String>) {
         hidePanel()
-        runTask(if (languages.size == 1) "Into ${languages[0]}…" else "Translating…", Ai.translateTask(languages), card = true) { showLanguages() }
+        val target = readTarget()
+        val text = target?.text.orEmpty()
+        val one = languages.singleOrNull()
+        // Your own text into one language: instantly on the phone when its model is downloaded, straight into the field.
+        if (one != null && target != null && text.isNotBlank() && text.length <= MAX_CHARS && !busy && !isPasswordField()) {
+            busy = true
+            showStatus("Into $one…")
+            val token = ++generation
+            worker.execute {
+                val done = Offline.quick(text, one)
+                main.post {
+                    if (token != generation) return@post
+                    busy = false
+                    when {
+                        done == null -> runTask("Into $one…", Ai.translateTask(languages), card = false) { showLanguages() }
+                        done == text -> showStatus("Already in $one")
+                        else -> deliver(target, ActionResult(done, null))
+                    }
+                }
+            }
+            return
+        }
+        // A received message (nothing typed) or several languages at once: a card to read.
+        runTask(if (one != null) "Into $one…" else "Translating…", Ai.translateTask(languages), card = text.isBlank() || one == null) { showLanguages() }
     }
 
     /** The full list: every language, all of mine at once, and the auto-translate switch. */
@@ -1945,6 +1997,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         autoLang = language
         lastAuto = ""
         store.setAutoTranslate(currentInputEditorInfo?.packageName, language)
+        if (language != null) try { Offline.prefetch(listOf(language)) } catch (e: Throwable) { }
         main.removeCallbacks(autoRun)
         refreshMode()
         showTyping()
@@ -1987,36 +2040,47 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     private fun autoTranslateNow() {
         val language = autoLang ?: return
         if (busy || listening || panel?.visibility == View.VISIBLE || isPasswordField()) return
-        if (store.activeKey.isBlank()) {
-            showStatus("Auto-translate needs your API key", "Set up" to { openApp() })
-            return
-        }
         val target = readTarget() ?: return
         val text = target.text
         // Nothing to do for an empty field, for text we just produced, or for a selection the user is working on.
         if (text.isBlank() || text == lastAuto || target.selection != null || text.length > AUTO_MAX_CHARS) return
-        launch("→ $language…", Ai.autoTranslateTask(language), text, connected = false) { result ->
-            val now = readTarget()
-            val unchanged = now != null && now.selection == null && now.before == target.before && now.after == target.after
-            if (!unchanged || result.text.isEmpty()) {
-                // The user kept typing: drop this translation and wait for the next pause.
-                showTyping()
-                scheduleAuto()
-                return@launch
+        // On the phone first: instant and free once the language's model is downloaded.
+        busy = true
+        val token = ++generation
+        worker.execute {
+            val done = Offline.quick(text, language)
+            main.post {
+                if (token != generation) return@post
+                busy = false
+                if (done != null) applyAuto(target, text, ActionResult(done, null), language)
+                else if (store.activeKey.isBlank()) showStatus("Auto-translate needs your API key", "Set up" to { openApp() })
+                else launch("→ $language…", Ai.autoTranslateTask(language), text, connected = false) { result -> applyAuto(target, text, result, language) }
             }
-            lastAuto = result.text
-            if (result.text == text) {
-                showTyping() // it was already in the target language
-                return@launch
-            }
-            val ic = currentInputConnection ?: return@launch
-            ic.beginBatchEdit()
-            ic.deleteSurroundingText(target.before.length, target.after.length)
-            ic.commitText(result.text, 1)
-            ic.endBatchEdit()
-            undo = text to result.text
-            showStatus("Translated into $language", "Undo" to { lastAuto = text; undoLast() })
         }
+    }
+
+    /** Puts an auto-translation in place of the text, unless the user kept typing meanwhile. */
+    private fun applyAuto(target: Target, text: String, result: ActionResult, language: String) {
+        val now = readTarget()
+        val unchanged = now != null && now.selection == null && now.before == target.before && now.after == target.after
+        if (!unchanged || result.text.isEmpty()) {
+            // The user kept typing: drop this translation and wait for the next pause.
+            showTyping()
+            scheduleAuto()
+            return
+        }
+        lastAuto = result.text
+        if (result.text == text) {
+            showTyping() // it was already in the target language
+            return
+        }
+        val ic = currentInputConnection ?: return
+        ic.beginBatchEdit()
+        ic.deleteSurroundingText(target.before.length, target.after.length)
+        ic.commitText(result.text, 1)
+        ic.endBatchEdit()
+        undo = text to result.text
+        showStatus("Translated into $language", "Undo" to { lastAuto = text; undoLast() })
     }
 
     private fun showRewrite() {
