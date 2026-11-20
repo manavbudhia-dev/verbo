@@ -780,8 +780,40 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
                     showStatus("Connect ${app.name} in Verbo to use it here", "Connect" to { openPage("automate") })
                     return
                 }
-                runTask("${app.name}…", app.task, card = true, retry = { runApp(app) })
+                if (app.sends) sendToApp(app) else runTask("${app.name}…", app.task, card = false, retry = { runApp(app) })
             }
+        }
+    }
+
+    /**
+     * Slack, Todoist, Linear, GitHub, Discord: one tap sends or saves the text there. The text that was sent
+     * leaves the field (like sending a message), and a status line says what happened, with Open and Undo.
+     */
+    private fun sendToApp(app: Apps.App) {
+        if (busy) return
+        if (store.activeKey.isBlank()) { showStatus("Add your ${store.providerName} API key to use actions", "Set up" to { openApp() }); return }
+        val target = readTarget() ?: return
+        val context = contextText ?: if (hasFreshClip()) readClip() else null
+        if (target.text.isBlank() && context == null) { showStatus("Type something first to send it to ${app.name}"); return }
+        store.recordUse(Apps.id(app))
+        launch("${app.name}…", app.task, Ai.userMessage(target.text, context), connected = true) { r ->
+            val line = r.text.lines().firstOrNull { it.isNotBlank() }?.take(70) ?: "Done"
+            val failed = Regex("""\b(fail|error|couldn|can't|cannot|not connected|unable)""", RegexOption.IGNORE_CASE).containsMatchIn(line)
+            val open = r.openUri?.let { uri -> openLabel(uri) to { openLink(uri) } }
+            if (!failed && target.text.isNotBlank()) {
+                // It went to the app: clear what was sent, the way a sent message leaves the box.
+                val now = readTarget()
+                if (now != null && now.text == target.text) {
+                    val ic = currentInputConnection
+                    ic?.beginBatchEdit()
+                    if (now.selection == null) ic?.deleteSurroundingText(now.before.length, now.after.length) else ic?.commitText("", 1)
+                    ic?.endBatchEdit()
+                    undo = target.text to ""
+                }
+            }
+            contextText = null
+            refreshContext()
+            showStatus(line, *listOfNotNull(open, if (undo != null && !failed) "Put text back" to { undoLast() } else null).toTypedArray())
         }
     }
 

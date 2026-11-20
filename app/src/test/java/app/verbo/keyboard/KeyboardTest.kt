@@ -1337,6 +1337,28 @@ class KeyboardTest {
     }
 
     @Test
+    fun appShortcutsSendOrSaveInOneTap() {
+        for (key in listOf("slack", "todoist", "linear", "github", "discord")) assertTrue("$key sends in one tap", Apps.byKey(key)!!.sends)
+        assertEquals("Notion saves the message", "Save to Notion", Apps.byKey("notion")!!.skill)
+        assertTrue("Notion's save is a one-tap act", !Acts.showsCard("Save to Notion"))
+        assertTrue("Slack posts with slack_send_message", Apps.byKey("slack")!!.task!!.contains("slack_send_message"))
+        // Email and LinkedIn open their ready draft at once, also for skills saved before.
+        val store = Store(RuntimeEnvironment.getApplication())
+        store.skills = listOf(Skill("📧", "Email", "Turn the text into a clear email with a short subject. Return the email text, then a final [[open:mailto:?subject=...&body=...]] line with both URL-encoded so it opens as a ready draft in Gmail.", "write"))
+        assertEquals(Store.EMAIL_INSTRUCTION, store.skills.first().instruction)
+        assertTrue(Store.EMAIL_INSTRUCTION.contains("[[go:"))
+        store.resetSkills()
+        // With nothing typed or copied, a send says so instead of sending an empty message.
+        store.apiKey = "sk-ant-test-0000"
+        store.setToken("slackToken", "xoxb-test")
+        field.text.clear()
+        ime.runApp(Apps.byKey("slack")!!)
+        assertTrue("asks for text first: ${ime.statusMessage}", ime.statusMessage.contains("Type something first"))
+        store.setToken("slackToken", "")
+        store.apiKey = ""
+    }
+
+    @Test
     fun typeAndActPillsComeBackAfterAStatusLine() {
         val show = VerboIme::class.java.getDeclaredMethod("showStatus", String::class.java, emptyArray<Pair<String, () -> Unit>>().javaClass)
         show.isAccessible = true

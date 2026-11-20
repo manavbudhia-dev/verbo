@@ -477,6 +477,8 @@ class Store(context: Context) {
             return try { parseSkills(JSONArray(raw)).map { when (it.instruction) {
                 OLD_NOTION -> it.copy(instruction = NOTION_INSTRUCTION)
                 OLD_PLACE -> it.copy(instruction = PLACE_INSTRUCTION) // used to describe the place; now it's a link to send
+                OLD_EMAIL -> it.copy(instruction = EMAIL_INSTRUCTION) // one tap: the draft opens, nothing to paste
+                OLD_LINKEDIN -> it.copy(instruction = LINKEDIN_INSTRUCTION)
                 else -> it
             } } } catch (e: Exception) { DEFAULT_SKILLS }
         }
@@ -633,6 +635,10 @@ class Store(context: Context) {
         }
 
         /** The Notion skill before it opened the page itself; saved copies of it are upgraded. */
+        private const val OLD_EMAIL = "Turn the text into a clear email with a short subject. Return the email text, then a final [[open:mailto:?subject=...&body=...]] line with both URL-encoded so it opens as a ready draft in Gmail."
+        const val EMAIL_INSTRUCTION = "Turn the text into a clear email with a short subject. Return one short line saying the draft is ready, then a final [[go:mailto:?subject=...&body=...]] line with both URL-encoded, so the ready draft opens in Gmail at once."
+        private const val OLD_LINKEDIN = "Turn the text into a LinkedIn post: a strong first line, short paragraphs, no more than three hashtags at the end. Return the post, then a final [[open:https://www.linkedin.com/feed/?shareActive=true&text=...]] line with the post URL-encoded."
+        const val LINKEDIN_INSTRUCTION = "Turn the text into a LinkedIn post: a strong first line, short paragraphs, no more than three hashtags at the end. Return one short line saying the post is ready, then a final [[go:https://www.linkedin.com/feed/?shareActive=true&text=...]] line with the post URL-encoded, so LinkedIn opens with it at once."
         private const val OLD_PLACE = "The text names a place. Find it with the place search and return its name, address and a Google Maps link, with the map marker line."
         /** Place: one tap turns a typed place into its name and a maps link, ready to send. */
         const val PLACE_INSTRUCTION = "The text names a place. Find it with the place search and reply with exactly two lines, ready to send in a chat: the place name with its area or city, then its Google Maps link https://www.google.com/maps/search/?api=1&query=NAME+ADDRESS (URL-encoded). Nothing else."
@@ -651,8 +657,8 @@ class Store(context: Context) {
             Skill("📍", "Place", PLACE_INSTRUCTION, "write", "l"),
             Skill("👤", "Who is", "The text or the context names a person. Look them up on the web and reply with one item per line: their full name; a one-line headline with their role and organisation; then Current: their current role, Previous: their previous role, Education: where they studied; and last a LinkedIn people search link, https://www.linkedin.com/search/results/people/?keywords= followed by the name with spaces written as %20. Leave out any line you cannot verify. If you cannot tell who they are, say so in one line instead of guessing.", "write", "w"),
             Skill("🗒️", "Notion", NOTION_INSTRUCTION, "write", "n"),
-            Skill("📧", "Email", "Turn the text into a clear email with a short subject. Return the email text, then a final [[open:mailto:?subject=...&body=...]] line with both URL-encoded so it opens as a ready draft in Gmail.", "write"),
-            Skill("💼", "LinkedIn post", "Turn the text into a LinkedIn post: a strong first line, short paragraphs, no more than three hashtags at the end. Return the post, then a final [[open:https://www.linkedin.com/feed/?shareActive=true&text=...]] line with the post URL-encoded.", "write"),
+            Skill("📧", "Email", EMAIL_INSTRUCTION, "write"),
+            Skill("💼", "LinkedIn post", LINKEDIN_INSTRUCTION, "write"),
             Skill("📋", "List", "Turn the text into a tidy list, one item per line, each starting with a dash. Keep the user's wording where you can.", "edit"),
         )
     }
