@@ -1187,7 +1187,8 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         }
         val task = "You are Verbo, the user's personal assistant living on their keyboard. Do exactly what the user asks: write, reply, find, explain or plan. Use your tools when they help. Reply with only the message or answer itself, no preamble and no quotes around it."
         launch("Working on it", task, prompt, connected = true, card = true) { result ->
-            showResult(result, { chosen -> insert(chosen.text) }, { showBotPrompt(prompt) }, bot = true)
+            resultFromBot = true
+            showResult(result, { chosen -> insert(chosen.text) }) { showBotPrompt(prompt) }
         }
     }
 
@@ -2258,7 +2259,12 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         Cards.notion(r.text, r.openUri)?.plain() ?: Cards.list(r.text)?.plain() ?: r.text
 
     /** The result as a card: back, try again, copy, and insert into the field (or send, where the app allows it). */
-    internal fun showResult(result: ActionResult, onInsert: (ActionResult) -> Unit, onRetry: (() -> Unit)?, bot: Boolean = false) = showPanel {
+    /** Set just before showing the bot's own answer: only then does the cool mascot sit on the result bar. */
+    private var resultFromBot = false
+
+    internal fun showResult(result: ActionResult, onInsert: (ActionResult) -> Unit, onRetry: (() -> Unit)?) = showPanel {
+        val bot = resultFromBot
+        resultFromBot = false
         steps = null
         val person = Ai.personCard(result.text)
         val notion = if (person == null) Cards.notion(result.text, result.openUri) else null
