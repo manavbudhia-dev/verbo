@@ -1117,12 +1117,22 @@ class KeyboardTest {
         assertTrue("the flags glide over slowly", wheel.fanRotation > 0f && wheel.fanRotation < 1f)
         org.robolectric.shadows.ShadowLooper.idleMainLooper(700, java.util.concurrent.TimeUnit.MILLISECONDS)
         assertEquals("one roll locks exactly one flag", 1f, wheel.fanRotation, 0.001f)
-        // The right-most flag is now the first language beyond your five: Arabic.
-        touch(wheel, MotionEvent.ACTION_MOVE, listOf(at(90.0, 0.1f)))
-        touch(wheel, MotionEvent.ACTION_MOVE, listOf(at(18.0, 0.74f)))
+        // Lifting the finger after the roll keeps the wheel up on the new languages.
+        touch(wheel, MotionEvent.ACTION_UP, listOf(at(160.0, 1.05f)))
+        assertTrue("the wheel stays after a roll", wheelIn(root) === wheel)
+        assertEquals("the turn is remembered for next time", 1, store.langTurn)
+        // The right-most flag is now the first language beyond your five: a tap on it translates.
+        val arabic = wheel.ring[wheel.ringIndexAt(4)]
+        assertEquals("Arabic", arabic)
+        touch(wheel, MotionEvent.ACTION_DOWN, listOf(at(18.0, 0.74f)))
         touch(wheel, MotionEvent.ACTION_UP, listOf(at(18.0, 0.74f)))
-        assertEquals("the language that turned into view is picked and saved", "Arabic", store.languages.first())
         assertEquals("the running task replaces the wheel", null, wheelIn(root))
+        // Opened again, it shows the turned languages, not the first five.
+        showLanguages(false, false)
+        val again = wheelIn(root)!!
+        layout(root)
+        assertEquals("it reopens turned", 1f, again.fanRotation, 0.001f)
+        store.langTurn = 0
     }
 
     /** A point on the shortcut fan's blue rim at [deg] degrees (0 = right, 180 = left). */
@@ -1311,6 +1321,22 @@ class KeyboardTest {
     }
 
     @Test
+    fun actionsWorkInOneTapAndOnlyLookupsOpenACard() {
+        assertTrue(!Acts.showsCard("Place"))
+        assertTrue(!Acts.showsCard("Schedule it"))
+        assertTrue(!Acts.showsCard("LinkedIn post"))
+        assertTrue(Acts.showsCard("Who is"))
+        assertTrue(Acts.showsCard("Find anything"))
+        assertTrue(Acts.showsCard("Reply options"))
+        // Place now sends a maps link instead of describing the place, also for skills saved before.
+        val store = Store(RuntimeEnvironment.getApplication())
+        val old = "The text names a place. Find it with the place search and return its name, address and a Google Maps link, with the map marker line."
+        store.skills = listOf(Skill("📍", "Place", old, "write", "l"))
+        assertEquals(Store.PLACE_INSTRUCTION, store.skills.first().instruction)
+        store.resetSkills()
+    }
+
+    @Test
     fun typeAndActPillsComeBackAfterAStatusLine() {
         val show = VerboIme::class.java.getDeclaredMethod("showStatus", String::class.java, emptyArray<Pair<String, () -> Unit>>().javaClass)
         show.isAccessible = true
@@ -1352,7 +1378,10 @@ class KeyboardTest {
         org.robolectric.shadows.ShadowLooper.idleMainLooper(700, java.util.concurrent.TimeUnit.MILLISECONDS)
         assertEquals("a second flick locks the next icon", 72f, wheel.compassRotation, 0.001f)
         touch(wheel, MotionEvent.ACTION_UP, listOf(compassAt(wheel, 80.0)))
-        assertEquals("releasing runs the locked language and closes the compass", null, wheelIn(root))
+        assertTrue("lifting after a spin keeps the compass up", wheelIn(root) === wheel && wheel.spinning)
+        touch(wheel, MotionEvent.ACTION_DOWN, listOf(compassAt(wheel, 80.0)))
+        touch(wheel, MotionEvent.ACTION_UP, listOf(compassAt(wheel, 80.0)))
+        assertEquals("a tap runs the locked language and closes the compass", null, wheelIn(root))
     }
 
     @Test
@@ -1363,6 +1392,8 @@ class KeyboardTest {
         layout(root)
         touch(wheel, MotionEvent.ACTION_MOVE, listOf(compassAt(wheel, 0.0)))
         touch(wheel, MotionEvent.ACTION_MOVE, listOf(compassAt(wheel, 180.0)))
+        touch(wheel, MotionEvent.ACTION_UP, listOf(compassAt(wheel, 180.0)))
+        touch(wheel, MotionEvent.ACTION_DOWN, listOf(compassAt(wheel, 180.0)))
         touch(wheel, MotionEvent.ACTION_UP, listOf(compassAt(wheel, 180.0)))
         assertEquals("the spun-to language is saved first", "Arabic", store.languages.first())
         assertTrue("the old languages stay", store.languages.containsAll(Store.DEFAULT_LANGUAGES))

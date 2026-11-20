@@ -88,6 +88,9 @@ class Store(context: Context) {
     /** How far the shortcut wheel was last turned, in icons; it reopens there. */
     var wheelTurn: Int get() = prefs?.getInt("wheel_turn", 0) ?: 0
         set(v) { prefs?.edit()?.putInt("wheel_turn", v)?.apply() }
+    /** How far the translate fan was last turned, in flags; it reopens there. */
+    var langTurn: Int get() = prefs?.getInt("lang_turn", 0) ?: 0
+        set(v) { prefs?.edit()?.putInt("lang_turn", v)?.apply() }
     var wheelOn: Boolean get() = bool("wheel_on", true); set(v) = put("wheel_on", v)
     /** Up to MAX_WHEEL shortcut ids: a built-in tool from WHEEL_TOOLS, or "skill:" followed by a skill's name. */
     var wheel: List<String>
@@ -471,7 +474,11 @@ class Store(context: Context) {
     var skills: List<Skill>
         get() {
             val raw = prefs?.getString("skills", null) ?: return DEFAULT_SKILLS
-            return try { parseSkills(JSONArray(raw)).map { if (it.instruction == OLD_NOTION) it.copy(instruction = NOTION_INSTRUCTION) else it } } catch (e: Exception) { DEFAULT_SKILLS }
+            return try { parseSkills(JSONArray(raw)).map { when (it.instruction) {
+                OLD_NOTION -> it.copy(instruction = NOTION_INSTRUCTION)
+                OLD_PLACE -> it.copy(instruction = PLACE_INSTRUCTION) // used to describe the place; now it's a link to send
+                else -> it
+            } } } catch (e: Exception) { DEFAULT_SKILLS }
         }
         set(v) = put("skills", skillsJson(v).toString())
 
@@ -626,6 +633,9 @@ class Store(context: Context) {
         }
 
         /** The Notion skill before it opened the page itself; saved copies of it are upgraded. */
+        private const val OLD_PLACE = "The text names a place. Find it with the place search and return its name, address and a Google Maps link, with the map marker line."
+        /** Place: one tap turns a typed place into its name and a maps link, ready to send. */
+        const val PLACE_INSTRUCTION = "The text names a place. Find it with the place search and reply with exactly two lines, ready to send in a chat: the place name with its area or city, then its Google Maps link https://www.google.com/maps/search/?api=1&query=NAME+ADDRESS (URL-encoded). Nothing else."
         private const val OLD_NOTION = "Search the user's Notion for the page the text describes and return its title and link. If Notion is not connected, say so in one line."
         const val NOTION_INSTRUCTION = "Find the Notion page that best matches the text, or the copied message if there is one, with notion_search: try the key names and topics, and search again with fewer words if nothing matches. Reply with exactly two lines: the page title, then Last edited: and when it was last edited in plain words (like Today at 10:42 AM), and end with [[open:PAGE_URL]]. If Notion is not connected, reply: Connect Notion in Verbo to search your pages, and end with [[open:https://www.notion.so]]."
 
@@ -638,7 +648,7 @@ class Store(context: Context) {
             Skill("🌍", "English", "Translate the text into natural English. If it is already English, leave the wording alone and only fix mistakes.", "translate", "t"),
             Skill("🧾", "Summarize", "Summarise the text as a few short key points, one per line. Keep names, numbers and dates.", "summarize", "s"),
             Skill("🔎", "Look up", "Treat the text as a question. Find the answer, searching the web if needed, and give it in one to three short sentences.", "write", "g"),
-            Skill("📍", "Place", "The text names a place. Find it with the place search and return its name, address and a Google Maps link, with the map marker line.", "write", "l"),
+            Skill("📍", "Place", PLACE_INSTRUCTION, "write", "l"),
             Skill("👤", "Who is", "The text or the context names a person. Look them up on the web and reply with one item per line: their full name; a one-line headline with their role and organisation; then Current: their current role, Previous: their previous role, Education: where they studied; and last a LinkedIn people search link, https://www.linkedin.com/search/results/people/?keywords= followed by the name with spaces written as %20. Leave out any line you cannot verify. If you cannot tell who they are, say so in one line instead of guessing.", "write", "w"),
             Skill("🗒️", "Notion", NOTION_INSTRUCTION, "write", "n"),
             Skill("📧", "Email", "Turn the text into a clear email with a short subject. Return the email text, then a final [[open:mailto:?subject=...&body=...]] line with both URL-encoded so it opens as a ready draft in Gmail.", "write"),

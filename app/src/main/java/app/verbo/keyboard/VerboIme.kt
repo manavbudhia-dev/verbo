@@ -857,6 +857,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     internal fun runAct(name: String) {
         val skill = actSkill(name) ?: run { showStatus("No act called “$name”"); return }
         store.recordUse("skill:" + skill.name)
+        sendAfter = skill.name.equals("Place", true)
         if (contextText == null && hasFreshClip()) readClip()?.let { contextText = it }
         refreshContext()
         val schedule = name.equals("Schedule it", true)
@@ -866,7 +867,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             runTask("${skill.name}…", task, card = true, retry = { runAct(name) }, then = { r -> finishChain(r) })
             return
         }
-        runTask("${skill.name}…", Ai.skillTask(skill.instruction), card = true, retry = { runAct(name) }, then = { r ->
+        runTask("${skill.name}…", Ai.skillTask(skill.instruction), card = Acts.showsCard(skill.name), retry = { runAct(name) }, then = { r ->
             val event = r.openUri?.let { PhoneCalendar.parseTemplate(it) }
             if (schedule && event != null) {
                 // One tap: the event is saved now, and the message carries the link so friends can add it too.
@@ -1186,7 +1187,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         }
         val task = "You are Verbo, the user's personal assistant living on their keyboard. Do exactly what the user asks: write, reply, find, explain or plan. Use your tools when they help. Reply with only the message or answer itself, no preamble and no quotes around it."
         launch("Working on it", task, prompt, connected = true, card = true) { result ->
-            showResult(result, { chosen -> insert(chosen.text) }) { showBotPrompt(prompt) }
+            showResult(result, { chosen -> insert(chosen.text) }, { showBotPrompt(prompt) }, bot = true)
         }
     }
 
@@ -1202,7 +1203,8 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         buildChips()
         store.recordUse(store.triggerId(t))
         store.recordUse("skill:" + skill.name)
-        runTask("${skill.name}…", Ai.skillTask(skill.instruction), card = true) { runTrigger(t, clip) }
+        sendAfter = skill.name.equals("Place", true)
+        runTask("${skill.name}…", Ai.skillTask(skill.instruction), card = Acts.showsCard(skill.name)) { runTrigger(t, clip) }
     }
 
     /**
@@ -1551,6 +1553,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         if (skill == null && rememberCommand()) return
         if (skill != null && Acts.isChain(skill.instruction)) { runAct(skill.name); return }
         if (skill != null) store.recordUse("skill:" + skill.name)
+        sendAfter = skill?.name.equals("Place", true)
         // Requests typed for the bar are answers to look at first, so they open as a card with Copy and Insert.
         // Skill keys rewrite your own text, so they apply straight away unless Agent Mode is "Ask first".
         runTask(
@@ -1719,6 +1722,9 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         }
     }
 
+    /** Set for a Place run: its link is sent right after it goes in (chat apps only). */
+    private var sendAfter = false
+
     private fun runTask(label: String, task: String?, card: Boolean, then: (ActionResult) -> ActionResult = { it }, retry: () -> Unit) {
         if (busy) return
         if (isPasswordField()) {
@@ -1840,17 +1846,21 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
                 languages = mine
                 all = Store.ALL_LANGUAGES
                 autoMode = auto
+                // It reopens on the languages it was last turned to, not back at the first five.
+                startTurn = store.langTurn
+                onFanTurned = { store.langTurn = it }
                 onPick = { i ->
                     // The index is into the turning ring: your languages first, then every other one.
                     val lang = ring.getOrNull(i)
                     if (lang != null) {
-                        rememberLanguage(lang)
+                        // The ring keeps its order (no reshuffle), so the turned view stays where the user left it.
                         if (auto) { hidePanel(); setAuto(lang) } else translateInto(listOf(lang))
                     }
                 }
                 onCompassPick = { i ->
                     val lang = Store.ALL_LANGUAGES[i]
                     rememberLanguage(lang)
+                    store.langTurn = 0 // the saved language now leads the fan: open it at the start
                     if (auto) { hidePanel(); setAuto(lang) } else translateInto(listOf(lang))
                 }
                 onTurn = { feedback(KeyboardView.Type.MODE) }
@@ -2164,7 +2174,6 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         background = paper(false)
         addView(botTop(cancel))
         addView(View(this@VerboIme), LinearLayout.LayoutParams(1, 0, 0.5f))
-        addView(BotView(this@VerboIme).apply { mood = BotView.Mood.WORK }, LinearLayout.LayoutParams(dp(92), dp(92)).apply { gravity = Gravity.CENTER_HORIZONTAL })
         addView(TextView(this@VerboIme).apply {
             text = "Working on it…"
             setTextColor(p.muted)
@@ -2249,7 +2258,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         Cards.notion(r.text, r.openUri)?.plain() ?: Cards.list(r.text)?.plain() ?: r.text
 
     /** The result as a card: back, try again, copy, and insert into the field (or send, where the app allows it). */
-    internal fun showResult(result: ActionResult, onInsert: (ActionResult) -> Unit, onRetry: (() -> Unit)?) = showPanel {
+    internal fun showResult(result: ActionResult, onInsert: (ActionResult) -> Unit, onRetry: (() -> Unit)?, bot: Boolean = false) = showPanel {
         steps = null
         val person = Ai.personCard(result.text)
         val notion = if (person == null) Cards.notion(result.text, result.openUri) else null
@@ -2400,10 +2409,15 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         val sends = imeOpts and EditorInfo.IME_MASK_ACTION == EditorInfo.IME_ACTION_SEND && imeOpts and EditorInfo.IME_FLAG_NO_ENTER_ACTION == 0
         bar.addView(side(R.drawable.ic_pencil_line, "Edit") { hidePanel(); onInsert(result) }, LinearLayout.LayoutParams(0, dp(52), 1f))
         bar.addView(View(this@VerboIme).apply { setBackgroundColor(Color.parseColor("#E5E7EB")) }, LinearLayout.LayoutParams(dp(1), dp(22)))
-        bar.addView(LinearLayout(this@VerboIme).apply {
+        // The cool bot sits in the middle only for the bot's own answers; an action's result gets Copy there.
+        if (bot) bar.addView(LinearLayout(this@VerboIme).apply {
             gravity = Gravity.CENTER
             clipChildren = false
             addView(BotView(this@VerboIme).apply { mood = BotView.Mood.COOL; translationY = -dp(12).toFloat() }, LinearLayout.LayoutParams(dp(54), dp(54)))
+        }, LinearLayout.LayoutParams(0, dp(52), 1f))
+        else bar.addView(side(R.drawable.ic_clipboard, "Copy") {
+            (getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(android.content.ClipData.newPlainText("Verbo", result.text))
+            hidePanel(); showStatus("Copied")
         }, LinearLayout.LayoutParams(0, dp(52), 1f))
         bar.addView(View(this@VerboIme).apply { setBackgroundColor(Color.parseColor("#E5E7EB")) }, LinearLayout.LayoutParams(dp(1), dp(22)))
         bar.addView(side(R.drawable.ic_arrow_up, if (sends) "Send" else "Apply") {
@@ -2566,6 +2580,13 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
 
     private fun deliver(target: Target, result: ActionResult) {
         val open = result.openUri?.let { uri -> openLabel(uri) to { openLink(uri) } }
+        // A Notion save or lookup is done once it's in Notion: say so, don't paste its title into the field.
+        if (result.openUri?.contains("notion.so") == true && Cards.notion(result.text, result.openUri) != null) {
+            contextText = null
+            refreshContext()
+            showStatus(result.text.lines().firstOrNull()?.take(60)?.ifBlank { null } ?: "Done", *listOfNotNull(open).toTypedArray())
+            return
+        }
         if (result.text.isEmpty()) {
             showStatus("Ready", *listOfNotNull(open).toTypedArray())
             return
@@ -2591,6 +2612,17 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         undo = target.text to chatText(result)
         contextText = null
         refreshContext()
+        // "Send my location": in a chat whose enter key sends, it goes out with the same tap.
+        if (sendAfter) {
+            sendAfter = false
+            val opts = currentInputEditorInfo?.imeOptions ?: 0
+            if (opts and EditorInfo.IME_MASK_ACTION == EditorInfo.IME_ACTION_SEND && opts and EditorInfo.IME_FLAG_NO_ENTER_ACTION == 0) {
+                ic.performEditorAction(EditorInfo.IME_ACTION_SEND)
+                undo = null
+                showStatus("Location sent")
+                return
+            }
+        }
         showStatus("Done", *listOfNotNull("Undo" to { undoLast() }, open).toTypedArray())
     }
 

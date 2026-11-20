@@ -52,6 +52,23 @@ class LanguageWheel(a: Context) : View(a) {
         return (((base + slot) % size) + size) % size
     }
     var onCompassPick: (Int) -> Unit = {}
+    /** The fan came to rest [turn] flags round, so it can reopen there next time. */
+    var onFanTurned: (Int) -> Unit = {}
+
+    /** Open the fan already turned this many flags (where it was left last time). */
+    var startTurn = 0
+        set(v) { field = v; applyStart() }
+
+    private fun applyStart() {
+        if (languages.isEmpty() || !fanTurns) return
+        fanSpin.step = 180f / languages.size
+        fanSpin.jumpTo((((startTurn % ring.size) + ring.size) % ring.size) * fanSpin.step)
+        invalidate()
+    }
+
+    /** Where the dial stood when the finger went down: moving it means this gesture was a roll, not a pick. */
+    private var downTarget = 0f
+    private var downCompass = 0f
     /** Each icon the compass locks onto, for a soft tick of feedback. */
     var onTurn: () -> Unit = {}
 
@@ -94,8 +111,12 @@ class LanguageWheel(a: Context) : View(a) {
     private val cy get() = height - dp(if (embedded) 14f else 40f)
     private val r get() = minOf(width * 0.46f, cy - dp(36f))
 
+    /** Set after the first roll: the pill then says how to pick. */
+    private var rolledOnce = false
+
     private fun pillText() = when {
         pick >= 0 && ringIndexAt(pick) >= 0 -> ring[ringIndexAt(pick)]
+        rolledOnce -> "Tap a flag to translate"
         embedded -> "Your languages"
         autoMode -> "Auto-translate into"
         else -> "Translate into"
@@ -164,7 +185,8 @@ class LanguageWheel(a: Context) : View(a) {
 
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
         super.onSizeChanged(w, h, ow, oh)
-        if (languages.isNotEmpty()) fanSpin.step = 180f / languages.size
+        if (languages.isNotEmpty() && fanSpin.target == 0f) applyStart()
+        else if (languages.isNotEmpty()) fanSpin.step = 180f / languages.size
     }
 
     override fun onDetachedFromWindow() {
@@ -179,6 +201,7 @@ class LanguageWheel(a: Context) : View(a) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
                 wx = event.x
                 wy = event.y
+                if (event.actionMasked == MotionEvent.ACTION_DOWN) { downTarget = fanSpin.target; downCompass = spin.target }
                 if (compass) {
                     val a = screenAngle(wx, wy)
                     if (compassFresh) {
@@ -218,6 +241,8 @@ class LanguageWheel(a: Context) : View(a) {
                 rimLastAngle = Float.NaN
                 if (compass) {
                     spin.settle()
+                    // Lifting after a spin keeps the compass up on the language it reached; a tap picks it.
+                    if (spin.target != downCompass) { invalidate(); return true }
                     val cand = WheelLook.compassCandidate(spin.rot, WheelLook.COMPASS_SLOTS, all.size)
                     val dist = kotlin.math.hypot(wx - ccx, wy - ccy)
                     compass = false
@@ -226,6 +251,16 @@ class LanguageWheel(a: Context) : View(a) {
                     return true
                 }
                 fanSpin.settle()
+                // Lifting after rolling (or on the rim or an end arrow) keeps the wheel up on the new languages:
+                // only a tap or slide onto a flag picks one.
+                val rolled = fanSpin.target != downTarget
+                if (fanTurns) onFanTurned(Math.round(fanSpin.target / fanSpin.step))
+                if (rolled || (fanTurns && (onBezel(event.x, event.y) || edgeAt(event.x, event.y) != 0))) {
+                    pick = -1
+                    rolledOnce = true
+                    invalidate()
+                    return true
+                }
                 val i = ringIndexAt(pick)
                 pick = -1
                 when {
