@@ -286,6 +286,21 @@ class PageActivity : Activity() {
         ))
         note(column, "An estimate from the token counts your AI service reports, at its list prices (Haiku 5.5 $0.10 / $0.50, Sonnet 5.5 $2 / $10, Opus 5.5 $4 / $20 per million tokens in / out; web search $10 per 1,000)." +
             if (u.optBoolean("unpriced")) " Some requests used a model without a known price, so they count as $0." else "")
+        // The answer cache: repeated requests come back free.
+        column.addView(ui.text("Answer cache", 16f, bold = true).apply { setPadding(ui.dp(2), ui.dp(6), 0, ui.dp(6)) })
+        val hits = u.optInt("cacheHits")
+        val saved = u.optDouble("cacheSaved", 0.0)
+        val kept = AnswerCache.size(store)
+        column.addView(ui.rows(
+            ui.row(R.drawable.ic_zap, "Reuse answers for repeated requests", if (store.cacheOn) "$hits reused this month · saved about $${"%.3f".format(saved)}" else "Off: every request goes to your AI service",
+                ui.toggle(store.cacheOn) { store.cacheOn = it; render() }),
+            ui.row(R.drawable.ic_refresh_cw, "Clear saved answers", "$kept kept on this phone", ui.chevron()) {
+                AnswerCache.clear(store); ui.toast("Saved answers cleared"); render()
+            },
+        ))
+        note(column, "Polish, translations, replies and drafts you ask for again come back instantly and cost nothing. Sending, saving, " +
+            "lookups and anything that searches the web always run fresh, and a request about \"today\" or \"tomorrow\" is only reused the same day. " +
+            "Asking again right away gives a fresh answer. Answers stay on this phone for 30 days.")
         val skills = u.optJSONObject("skills")
         if (skills != null && skills.length() > 0) {
             column.addView(ui.text("Where it went", 16f, bold = true).apply { setPadding(ui.dp(2), ui.dp(6), 0, ui.dp(6)) })

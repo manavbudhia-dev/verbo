@@ -1371,6 +1371,30 @@ class KeyboardTest {
     }
 
     @Test
+    fun repeatedRequestsComeBackFromTheCacheForFree() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        AnswerCache.clear(store)
+        val k = AnswerCache.key("claude:claude-haiku-5-5", "Task: polish", "i reached late  sorry", false, emptyList())
+        assertEquals("spacing doesn't matter", k, AnswerCache.key("claude:claude-haiku-5-5", "Task: polish", " i reached late sorry ", false, emptyList()))
+        assertTrue("another model is another answer", k != AnswerCache.key("claude:claude-sonnet-5-5", "Task: polish", "i reached late sorry", false, emptyList()))
+        assertEquals(null, AnswerCache.get(store, k))
+        AnswerCache.put(store, k, ActionResult("I reached late, sorry.", null), 0.0004, now = 1_000_000L)
+        val hit = AnswerCache.get(store, k, now = 2_000_000L)
+        assertEquals("I reached late, sorry.", hit?.text)
+        assertEquals(0.0004, AnswerCache.costOf(store, k), 1e-9)
+        // Asking again within two minutes of a reused answer means "try again": a fresh answer.
+        assertEquals(null, AnswerCache.get(store, k, now = 2_030_000L))
+        // Entries expire after 30 days.
+        AnswerCache.put(store, k, ActionResult("x", null), 0.0, now = 0L)
+        assertEquals(null, AnswerCache.get(store, k, now = 31L * 24 * 60 * 60 * 1000))
+        // "tomorrow" ties the answer to today's date.
+        val a = AnswerCache.key("m", "t", "meet tomorrow at 5", false, emptyList())
+        assertTrue(a.isNotEmpty())
+        AnswerCache.clear(store)
+        assertEquals(0, AnswerCache.size(store))
+    }
+
+    @Test
     fun typeAndActPillsComeBackAfterAStatusLine() {
         val show = VerboIme::class.java.getDeclaredMethod("showStatus", String::class.java, emptyArray<Pair<String, () -> Unit>>().javaClass)
         show.isAccessible = true

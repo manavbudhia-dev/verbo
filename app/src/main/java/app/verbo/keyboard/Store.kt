@@ -21,6 +21,8 @@ class Store(context: Context) {
     val locked: Boolean = !(context.getSystemService(UserManager::class.java)?.isUserUnlocked ?: true)
     private val prefs: SharedPreferences? =
         if (locked) null else context.applicationContext.getSharedPreferences("verbo", Context.MODE_PRIVATE)
+    /** App storage that is never backed up (the answer cache lives here); null before the first unlock. */
+    val filesDir: java.io.File? = if (locked) null else context.applicationContext.noBackupFilesDir
 
     private fun str(key: String, default: String = "") = prefs?.getString(key, default) ?: default
     private fun bool(key: String, default: Boolean) = prefs?.getBoolean(key, default) ?: default
@@ -388,6 +390,17 @@ class Store(context: Context) {
         val o = try { JSONObject(str("usage", "{}")) } catch (e: Exception) { JSONObject() }
         return if (o.optString("month") == month) o else JSONObject().put("month", month).put("requests", 0).put("inTokens", 0L)
             .put("outTokens", 0L).put("searches", 0L).put("cost", 0.0).put("skills", JSONObject())
+    }
+
+    /** Reuse answers for repeated requests (the answer cache). */
+    var cacheOn: Boolean get() = bool("cache_on", true); set(v) = put("cache_on", v)
+
+    /** A request answered from the cache: counted this month, with what it would have cost. */
+    @Synchronized
+    fun recordCacheHit(saved: Double) {
+        val u = usage
+        u.put("cacheHits", u.optInt("cacheHits") + 1).put("cacheSaved", u.optDouble("cacheSaved", 0.0) + saved)
+        put("usage", u.toString())
     }
 
     @Synchronized
