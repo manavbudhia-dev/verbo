@@ -122,11 +122,13 @@ object Offline {
      * under a second. Never downloads in the way; a missing model is fetched in the background on Wi-Fi and
      * null is returned, so this one time the AI service translates. Blocking: call from a worker thread.
      */
-    fun quick(text: String, target: String): String? = try {
+    fun quick(text: String, target: String): String? = sourceCode(text)?.let { quickFrom(text, it, target) }
+
+    /** [quick] with the source language already known (an ML Kit code such as "hi"). */
+    fun quickFrom(text: String, from: String, target: String): String? = try {
         val to = languageCode(target)
-        val from = sourceCode(text)
         when {
-            to == null || from == null -> null
+            to == null -> null
             from == to -> text
             else -> {
                 val have = downloadedModels() + TranslateLanguage.ENGLISH
@@ -142,7 +144,7 @@ object Offline {
     } catch (e: Throwable) { null }
 
     /** Downloads the translation models for these languages in the background, on Wi-Fi only. */
-    fun prefetch(languages: List<String>) = fetch(languages.mapNotNull { languageCode(it) } + TranslateLanguage.ENGLISH)
+    fun prefetch(languages: List<String>) = fetch(languages.mapNotNull { languageCode(it) } + TranslateLanguage.ENGLISH + TranslateLanguage.HINDI)
 
     private fun fetch(codes: List<String>) {
         val need = codes.distinct().filter { it !in (downloaded ?: emptySet()) && fetching.add(it) }

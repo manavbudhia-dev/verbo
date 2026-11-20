@@ -1395,6 +1395,35 @@ class KeyboardTest {
     }
 
     @Test
+    fun hinglishIsLearntSoItCanBeTranslatedOnThePhone() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        store.setText("hinglish_words", "{}")
+        val english = { w: String -> w in setOf("office", "meeting", "late") }
+        assertTrue(Hinglish.isHinglish("bhai kal office aa raha hai kya"))
+        assertTrue(!Hinglish.isHinglish("Can you send me the file today please?"))
+        // Known words and English words: confident enough for the phone.
+        assertEquals("भाई कल office आ रहा है क्या", Hinglish.toDevanagari("bhai kal office aa raha hai kya", emptyMap(), english))
+        // The user's own spellings are guesses at first...
+        assertEquals(null, Hinglish.toDevanagari("mko kese pta h", emptyMap(), english))
+        // ...until the AI service teaches them once.
+        val r = Hinglish.learn(store, ActionResult("How would I know?\n[[words:mko=मुझको, kese=कैसे, pta=पता, h=है]]", null))
+        assertEquals("the marker line is removed", "How would I know?", r.text)
+        assertEquals("मुझको कैसे पता है", Hinglish.toDevanagari("mko kese pta h", Hinglish.words(store), english))
+        assertEquals("into Hindi it is just the Devanagari", "मुझको कैसे पता है", Hinglish.quick(store, "mko kese pta h", "Hindi", english))
+        store.setText("hinglish_words", "{}")
+    }
+
+    @Test
+    fun writingJobsGoWithoutToolsSoTheyAreFaster() {
+        assertTrue(!Ai.needsTools(Ai.translateTask(listOf("French"))))
+        assertTrue(!Ai.needsTools(Ai.skillTask(Store.DEFAULT_SKILLS.first { it.name == "Polish" }.instruction)))
+        assertTrue(!Ai.needsTools(Ai.skillTask(Store.EMAIL_INSTRUCTION)))
+        assertTrue(Ai.needsTools(Ai.skillTask(Store.PLACE_INSTRUCTION)))
+        assertTrue(Ai.needsTools(Ai.skillTask(Store.NOTION_INSTRUCTION)))
+        assertTrue(Ai.needsTools(Ai.skillTask(Trigger.BUILTIN.getValue("Who is"))))
+    }
+
+    @Test
     fun typeAndActPillsComeBackAfterAStatusLine() {
         val show = VerboIme::class.java.getDeclaredMethod("showStatus", String::class.java, emptyArray<Pair<String, () -> Unit>>().javaClass)
         show.isAccessible = true

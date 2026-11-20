@@ -392,6 +392,10 @@ class Store(context: Context) {
             .put("outTokens", 0L).put("searches", 0L).put("cost", 0.0).put("skills", JSONObject())
     }
 
+    /** Plain text values kept on this phone only (not synced): the learnt Hinglish words. */
+    fun text(key: String, default: String = ""): String = str(key, default)
+    fun setText(key: String, value: String) { prefs?.edit()?.putString(key, value)?.apply() }
+
     /** Reuse answers for repeated requests (the answer cache). */
     var cacheOn: Boolean get() = bool("cache_on", true); set(v) = put("cache_on", v)
 

@@ -1807,7 +1807,8 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             showStatus("That's too much text for one action. Select a part of it")
             return
         }
-        launch(label, task, Ai.userMessage(target.text, context), connected = true, card = card) { raw ->
+        // Only requests that may need an app, a lookup or the web carry the tools: the rest are smaller and much faster.
+        launch(label, task, Ai.userMessage(target.text, context), connected = task == null || Ai.needsTools(task), card = card) { raw ->
             val result = then(raw)
             if (card) showResult(result, { chosen -> deliver(target, chosen) }) { hidePanel(); retry() }
             else deliver(target, result)
@@ -1951,12 +1952,14 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             showStatus("Into $one…")
             val token = ++generation
             worker.execute {
-                val done = Offline.quick(text, one)
+                val done = Offline.quick(text, one) ?: Hinglish.quick(store, text, one) { dictionary.contains(it) }
                 main.post {
                     if (token != generation) return@post
                     busy = false
                     when {
-                        done == null -> runTask("Into $one…", Ai.translateTask(languages), card = false) { showLanguages() }
+                        // The AI service translates this one; Hinglish also teaches it the user's spellings for next time.
+                        done == null -> runTask("Into $one…", Ai.translateTask(languages) + if (Hinglish.isHinglish(text, { dictionary.contains(it) })) Hinglish.LEARN else "",
+                            card = false, then = { r -> Hinglish.learn(store, r) }) { showLanguages() }
                         done == text -> showStatus("Already in $one")
                         else -> deliver(target, ActionResult(done, null))
                     }
@@ -2048,13 +2051,14 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         busy = true
         val token = ++generation
         worker.execute {
-            val done = Offline.quick(text, language)
+            val done = Offline.quick(text, language) ?: Hinglish.quick(store, text, language) { dictionary.contains(it) }
             main.post {
                 if (token != generation) return@post
                 busy = false
+                val learn = if (Hinglish.isHinglish(text, { dictionary.contains(it) })) Hinglish.LEARN else ""
                 if (done != null) applyAuto(target, text, ActionResult(done, null), language)
                 else if (store.activeKey.isBlank()) showStatus("Auto-translate needs your API key", "Set up" to { openApp() })
-                else launch("→ $language…", Ai.autoTranslateTask(language), text, connected = false) { result -> applyAuto(target, text, result, language) }
+                else launch("→ $language…", Ai.autoTranslateTask(language) + learn, text, connected = false) { result -> applyAuto(target, text, Hinglish.learn(store, result), language) }
             }
         }
     }

@@ -91,6 +91,16 @@ You may also have tools for apps and APIs the user connected. Use them when the 
     /** Turns whatever was shared or copied (a WhatsApp message, a note, a file's contents) into a post worth publishing. */
     const val LINKEDIN_TASK = "Task: turn the user's text or copied message into one LinkedIn post they can publish as themselves. Open with a hook line that stops the scroll, then two or three short paragraphs in a plain, human, first-person voice (no corporate buzzwords, no emoji spam), and end with one question to invite comments. Add three to five relevant hashtags on the last line. Keep any names, numbers and facts from the source exactly. If the source is a file name or link rather than text, write about what it likely covers and say so honestly. Return only the post, nothing else."
 
+    /**
+     * True when a task may need the user's connected apps, a lookup or the web. Writing jobs (polish, tone,
+     * translation, replies, drafts) don't, so they go without tools or web search: a smaller, faster request.
+     */
+    fun needsTools(task: String): Boolean = TOOL_WORDS.containsMatchIn(task)
+    private val TOOL_WORDS = Regex(
+        """\b(search|look (it|them|up)|web|online|current|latest|news|weather|forecast|place|address|maps?\b|near|notion|calendar|gmail|inbox|slack|todoist|linear|github|discord|calendly|find|fact|verify|price|score|[a-z]+_[a-z_]+)""",
+        RegexOption.IGNORE_CASE,
+    )
+
     fun translateTask(languages: List<String>) =
         if (languages.size == 1) "Task: translate the text into ${languages[0]}. Return only the translation, natural and idiomatic, keeping the tone, emoji and names."
         else "Task: translate the text into each of these languages: ${languages.joinToString(", ")}. Put a short title on the first line, then one line per language in the form \"Language: translation\"."
