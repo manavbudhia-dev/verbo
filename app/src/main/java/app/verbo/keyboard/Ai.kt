@@ -97,7 +97,7 @@ You may also have tools for apps and APIs the user connected. Use them when the 
      */
     fun needsTools(task: String): Boolean = TOOL_WORDS.containsMatchIn(task)
     private val TOOL_WORDS = Regex(
-        """\b(search|look (it|them|up)|web|online|current|latest|news|weather|forecast|place|address|maps?\b|near|notion|calendar|gmail|inbox|slack|todoist|linear|github|discord|calendly|find|fact|verify|price|score|[a-z]+_[a-z_]+)""",
+        """\b(search|look (it|them|up)|web|online|current|latest|news|weather|forecast|place|address|maps?\b|near|notion|calendar|inbox|slack|todoist|linear|github|discord|calendly|find|fact|verify|price|score|[a-z]+_[a-z_]+)""",
         RegexOption.IGNORE_CASE,
     )
 
