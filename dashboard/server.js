@@ -417,7 +417,9 @@ setInterval(() => {
   db.prepare('DELETE FROM pair_codes WHERE expires < ?').run(t);
 }, 10 * 60 * 1000).unref();
 
-const clientIp = (req) => (TRUST_PROXY && req.headers['x-forwarded-for']?.split(',')[0].trim()) || req.socket.remoteAddress;
+// Behind one trusted proxy, the address it saw is the LAST X-Forwarded-For entry. Earlier entries come from the
+// client and can be anything, so taking the first let one client rotate fake IPs past every rate limit.
+const clientIp = (req) => (TRUST_PROXY && String(req.headers['x-forwarded-for'] || '').split(',').map((s) => s.trim()).filter(Boolean).pop()) || req.socket.remoteAddress;
 
 function readJson(req) {
   return new Promise((resolve, reject) => {
