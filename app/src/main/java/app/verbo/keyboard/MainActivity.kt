@@ -345,6 +345,11 @@ class MainActivity : Activity() {
             look.rowTile(look.greenBg, look.greenTint, R.drawable.ic_keyboard, "Try the keyboard", "Type a test line with Verbo") { open("try") },
         ))
 
+        column.addView(look.rowsCard(
+            look.rowTile(look.purpleBg, look.purpleTint, R.drawable.ic_sparkles, "Verbo Pro",
+                if (store.isPro) "Active · " + (if (store.proPlan == "lifetime" || store.proPlan == "server") "for life" else "until " + java.text.DateFormat.getDateInstance().format(java.util.Date(store.proUntil)))
+                else "Assistant, app shortcuts, auto actions") { open("pro") },
+        ))
         column.addView(look.sectionHead(R.drawable.ic_layers, look.accent, "Advanced Settings", "Power features and system controls"))
         column.addView(look.pair(
             look.gridTile(look.purpleBg, look.purpleTint, R.drawable.ic_circle_dashed, "Wheel Shortcuts", "Quick access actions") { open("wheel") },

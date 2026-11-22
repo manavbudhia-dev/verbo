@@ -10,6 +10,21 @@ permissions:
   contents: write
 
 jobs:
+  server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci
+      - name: Dashboard tests (sync, Google, login, Verbo Pro)
+        run: npm test
+
   apk:
     runs-on: ubuntu-latest
     timeout-minutes: 45

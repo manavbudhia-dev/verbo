@@ -30,7 +30,7 @@ class MessageListener : NotificationListenerService() {
         val n = sbn ?: return
         if (n.packageName !in CHAT_APPS || n.packageName == packageName) return
         val store = Store(this)
-        if (!store.watchMessages || !store.triggersOn || !store.assistantOn) return
+        if (!store.watchMessages || !store.triggersOn || !store.assistantOn || !store.isPro) return
         val message = read(n.notification) ?: return
         // Chat apps re-post the same notification as messages pile up: act once per message.
         val key = n.packageName + "|" + message.first + "|" + message.second

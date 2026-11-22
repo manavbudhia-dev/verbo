@@ -459,7 +459,8 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         val auto = matched.firstOrNull { it.auto }
         // An incoming message is handled by the notification reader itself; running it here too would ask twice.
         val autoStamp = if (fromIncoming) 0L else stamp
-        if (auto != null && clip != null && autoStamp != 0L && autoStamp != lastAutoClip && !busy && store.activeKey.isNotBlank()) {
+        // Running by itself is Pro; on Free the chip above still offers the same skill in one tap.
+        if (auto != null && clip != null && autoStamp != 0L && autoStamp != lastAutoClip && !busy && store.activeKey.isNotBlank() && store.isPro) {
             lastAutoClip = autoStamp
             main.post { runTrigger(auto, clip) }
         }
@@ -757,7 +758,16 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     }
 
     /** An app slot on the wheel: run its skill, share to it, open it filled in, or use its connected tools. */
+    /** True with Pro; otherwise says the feature is part of Pro, with Upgrade. */
+    private fun proOnly(feature: String): Boolean {
+        if (store.isPro) return true
+        showStatus("$feature is a Verbo Pro feature", "Upgrade" to { openPage("pro") })
+        return false
+    }
+
     internal fun runApp(app: Apps.App) {
+        // Apps that act through a connection (Slack, Notion, Todoist...) are Pro; drafts and shares stay free.
+        if (app.tokenField != null && !proOnly(app.name)) return
         app.skill?.let { runAct(it); return }
         val text = contextForActs()
         when (app.key) {
@@ -1856,8 +1866,8 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             showStatus("Verbo doesn't type into password fields")
             return
         }
-        if (!store.googleConnected) {
-            showChoices(if (store.deviceToken.isEmpty()) "Google Meet needs your dashboard" else "Google isn't connected yet", listOf(
+        if (!store.googleConnected || !store.isPro) {
+            showChoices(if (store.deviceToken.isEmpty()) "Google Meet needs your dashboard" else if (!store.isPro) "Google Meet links are a Verbo Pro feature" else "Google isn't connected yet", listOf(
                 "Instant link, no account" to {
                     hidePanel()
                     // A Jitsi room exists as soon as someone opens its address; a long random name keeps it private.
@@ -1865,7 +1875,8 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
                     insert("https://meet.jit.si/verbo-$room")
                 },
                 "Open Google Meet" to { hidePanel(); showTyping(); openLink("https://meet.google.com/new") },
-                "How to connect Google" to {
+                if (!store.isPro && store.deviceToken.isNotEmpty()) "Upgrade to Pro" to { hidePanel(); showTyping(); openPage("pro") }
+                else "How to connect Google" to {
                     hidePanel()
                     showTyping()
                     startActivity(Intent(this, PageActivity::class.java).putExtra("page", "automate").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))

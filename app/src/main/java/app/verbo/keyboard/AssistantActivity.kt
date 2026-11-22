@@ -150,6 +150,7 @@ class AssistantActivity : Activity() {
         list.removeAllViews()
         setMood(if (busy) BotView.Mood.WORK else BotView.Mood.IDLE)
         if (store.activeKey.isBlank()) { keyNeeded(); return }
+        if (!store.isPro) { proNeeded(); return }
         if (history.isEmpty()) emptyState()
         for (m in history) list.addView(bubble(m))
         if (busy) list.addView(thinking())
@@ -174,6 +175,19 @@ class AssistantActivity : Activity() {
         }, LinearLayout.LayoutParams(-1, -2))
         box.addView(look.purplePill("Add API key", R.drawable.ic_sparkles) {
             startActivity(Intent(this, PageActivity::class.java).putExtra("page", "ai"))
+        })
+        list.addView(box, LinearLayout.LayoutParams(-1, -2))
+    }
+
+    private fun proNeeded() {
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; setPadding(look.dp(10), look.dp(40), look.dp(10), 0) }
+        box.addView(BotView(this).apply { mood = BotView.Mood.COOL }, LinearLayout.LayoutParams(look.dp(130), look.dp(130)))
+        box.addView(look.text("Verbo Pro", 22f, bold = true).apply { gravity = Gravity.CENTER; setPadding(0, look.dp(14), 0, 0) }, LinearLayout.LayoutParams(-1, -2))
+        box.addView(look.text("Your personal assistant is part of Verbo Pro, with one-tap app shortcuts and auto actions.", 14.5f, look.muted).apply {
+            gravity = Gravity.CENTER; setPadding(look.dp(8), look.dp(6), look.dp(8), look.dp(18))
+        }, LinearLayout.LayoutParams(-1, -2))
+        box.addView(look.purplePill("See Verbo Pro", R.drawable.ic_sparkles) {
+            startActivity(Intent(this, PageActivity::class.java).putExtra("page", "pro"))
         })
         list.addView(box, LinearLayout.LayoutParams(-1, -2))
     }
@@ -274,7 +288,7 @@ class AssistantActivity : Activity() {
 
     internal fun send(text: String) {
         if (busy) return
-        if (store.activeKey.isBlank()) { render(); return }
+        if (store.activeKey.isBlank() || !store.isPro) { render(); return }
         history += Msg(true, text)
         // "remember my UPI is me@okicici" / "forget my UPI": handled on the phone, nothing is sent.
         val fact = Memory.parseRemember(text)

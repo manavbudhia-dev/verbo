@@ -49,7 +49,9 @@ object Sync {
 
     fun pair(store: Store, address: String, code: String, verifier: String? = null) {
         val url = normalise(address)
-        val body = JSONObject().put("code", code.trim()).put("name", Build.MODEL ?: "Phone").also { if (verifier != null) it.put("verifier", verifier) }.toString()
+        val body = JSONObject().put("code", code.trim()).put("name", Build.MODEL ?: "Phone")
+            .also { if (verifier != null) it.put("verifier", verifier) }
+            .also { if (store.deviceId.isNotEmpty()) it.put("deviceId", store.deviceId) }.toString()
         val res = request("POST", "$url/api/device/pair", null, body)
         store.serverUrl = url
         store.deviceToken = res.getString("token")

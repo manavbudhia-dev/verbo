@@ -21,6 +21,15 @@ class Store(context: Context) {
     val locked: Boolean = !(context.getSystemService(UserManager::class.java)?.isUserUnlocked ?: true)
     private val prefs: SharedPreferences? =
         if (locked) null else context.applicationContext.getSharedPreferences("verbo", Context.MODE_PRIVATE)
+    /**
+     * This phone's own id (Android's per-app id, hashed): the dashboard uses it so signing in again on the same
+     * phone, after a reinstall, replaces its old entry instead of using up one of the account's phones.
+     */
+    val deviceId: String = try {
+        val raw = android.provider.Settings.Secure.getString(context.contentResolver, android.provider.Settings.Secure.ANDROID_ID).orEmpty()
+        if (raw.isEmpty()) "" else java.security.MessageDigest.getInstance("SHA-256").digest(("verbo:" + raw).toByteArray()).joinToString("") { "%02x".format(it) }.take(40)
+    } catch (e: Exception) { "" }
+
     /** App storage that is never backed up (the answer cache lives here); null before the first unlock. */
     val filesDir: java.io.File? = if (locked) null else context.applicationContext.noBackupFilesDir
 
@@ -226,6 +235,16 @@ class Store(context: Context) {
         if (o.has("monthlyLimit") && "monthlyLimit" !in keep) e.putFloat("monthly_limit", o.optDouble("monthlyLimit", 0.0).toFloat().coerceIn(0f, 1000f))
         o.optJSONObject("keyboard")?.let { applyKeyboard(e, it, keep) }
         e.putBoolean("google_connected", o.optBoolean("googleConnected", false))
+        // The account's plan. A dashboard from before plans existed sends none: everything stays on there.
+        val plan = o.optJSONObject("plan")
+        if (plan != null) {
+            e.putLong("pro_until", if (plan.optBoolean("pro")) plan.optLong("until", 0L) else 0L)
+            e.putString("pro_plan", plan.optString("plan", "free"))
+            e.putInt("device_limit", plan.optInt("deviceLimit", 3))
+        } else if (!o.has("plan")) {
+            e.putLong("pro_until", Long.MAX_VALUE)
+            e.putString("pro_plan", "server")
+        }
         // Older dashboards don't list services; their Google sign-in covers Meet only.
         val services = o.optJSONArray("googleServices")?.let { a -> (0 until a.length()).map { a.optString(it) } }
             ?: if (o.optBoolean("googleConnected", false)) listOf("meet") else emptyList()
@@ -272,7 +291,8 @@ class Store(context: Context) {
     /** What the dashboard's Google sign-in allows: some of meet, calendar, gmail. */
     val googleServices: Set<String> get() = if (googleConnected) str("google_services").split(",").filter { it.isNotBlank() }.toSet() else emptySet()
 
-    fun unpair() { prefs?.edit()?.remove("server_url")?.remove("device_token")?.remove("last_sync")?.remove("google_connected")?.remove("google_services")?.remove("pending")?.apply() }
+    fun unpair() { prefs?.edit()?.remove("server_url")?.remove("device_token")?.remove("last_sync")?.remove("google_connected")?.remove("google_services")?.remove("pending")
+        ?.remove("pro_until")?.remove("pro_plan")?.apply() }
 
     // connections
     var weather: Boolean get() = bool("weather", true); set(v) = put("weather", v)
@@ -395,6 +415,20 @@ class Store(context: Context) {
     /** Plain text values kept on this phone only (not synced): the learnt Hinglish words. */
     fun text(key: String, default: String = ""): String = str(key, default)
     fun setText(key: String, value: String) { prefs?.edit()?.putString(key, value)?.apply() }
+
+    // ---------- Verbo Pro: the plan comes from the dashboard with every sync ----------
+
+    var proUntil: Long get() = prefs?.getLong("pro_until", 0L) ?: 0L
+        private set(v) { prefs?.edit()?.putLong("pro_until", v)?.apply() }
+    /** free, month, lifetime or gift. */
+    var proPlan: String get() = str("pro_plan", "free"); private set(v) { prefs?.edit()?.putString("pro_plan", v)?.apply() }
+    val deviceLimit: Int get() = prefs?.getInt("device_limit", 3) ?: 3
+
+    /** Sets the plan directly (the dashboard normally sends it); used by tests. */
+    internal fun setPlan(until: Long, plan: String) { proUntil = until; proPlan = plan }
+
+    /** True while the account has Pro. The plan's end time is absolute, so it holds offline too. */
+    val isPro: Boolean get() = proUntil > System.currentTimeMillis()
 
     /** Reuse answers for repeated requests (the answer cache). */
     var cacheOn: Boolean get() = bool("cache_on", true); set(v) = put("cache_on", v)

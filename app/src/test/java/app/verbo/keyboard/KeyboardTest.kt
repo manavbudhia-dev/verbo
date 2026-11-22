@@ -92,6 +92,8 @@ class KeyboardTest {
     fun setUp() {
         // Most tests look at the app itself, past the first-run sign-in screen.
         Store(RuntimeEnvironment.getApplication()).signInSkipped = true
+        // Most tests look at Pro features; the free plan has its own test.
+        Store(RuntimeEnvironment.getApplication()).setPlan(Long.MAX_VALUE, "lifetime")
         ime = Robolectric.buildService(TestIme::class.java).create().get()
         field = FakeField(RuntimeEnvironment.getApplication()) { ime }
         ime.field = field
@@ -1421,6 +1423,36 @@ class KeyboardTest {
         assertTrue(Ai.needsTools(Ai.skillTask(Store.PLACE_INSTRUCTION)))
         assertTrue(Ai.needsTools(Ai.skillTask(Store.NOTION_INSTRUCTION)))
         assertTrue(Ai.needsTools(Ai.skillTask(Trigger.BUILTIN.getValue("Who is"))))
+    }
+
+    @Test
+    fun theFreePlanLocksProFeaturesWithAnUpgrade() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        store.setPlan(0L, "free")
+        assertTrue(!store.isPro)
+        store.apiKey = "sk-ant-test-0000"
+        store.setToken("slackToken", "xoxb-test")
+        type("ship it")
+        ime.runApp(Apps.byKey("slack")!!)
+        assertTrue("an app shortcut says it's Pro: ${ime.statusMessage}", ime.statusMessage.contains("Verbo Pro"))
+        // Drafts and shares stay free.
+        ime.runApp(Apps.byKey("youtube")!!)
+        assertTrue(!ime.statusMessage.contains("Verbo Pro"))
+        // The assistant chat offers Pro instead.
+        val chat = Robolectric.buildActivity(AssistantActivity::class.java).setup().resume().get()
+        val v = chat.findViewById<View>(android.R.id.content)
+        layout(v)
+        assertTrue("the chat shows the Pro offer", findText(v, "See Verbo Pro") != null)
+        // The Pro page lists what Pro adds.
+        val page = Robolectric.buildActivity(PageActivity::class.java, android.content.Intent().putExtra("page", "pro")).setup().get()
+        val pv = page.findViewById<View>(android.R.id.content)
+        layout(pv)
+        assertTrue(findText(pv, "You are on Free") != null && findText(pv, "Personal assistant") != null)
+        // The dashboard's plan arrives with a sync.
+        store.applyRemote(org.json.JSONObject().put("plan", org.json.JSONObject().put("pro", true).put("plan", "month").put("until", System.currentTimeMillis() + 86_400_000L).put("deviceLimit", 3)))
+        assertTrue("a synced plan turns Pro on", store.isPro && store.proPlan == "month")
+        store.setToken("slackToken", "")
+        store.apiKey = ""
     }
 
     @Test

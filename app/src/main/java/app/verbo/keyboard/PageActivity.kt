@@ -51,6 +51,8 @@ class PageActivity : Activity() {
     override fun onResume() {
         super.onResume()
         if (resumed && (page == "welcome" || page == "dashboard" || page == "keys" || page == "automate" || page == "memory" || page == "copysettings")) { store = Store(this); render() }
+        // Back from paying in the browser: fetch the plan straight away.
+        if (resumed && page == "pro" && store.deviceToken.isNotEmpty()) refreshPlan()
         resumed = true
         // Coming back from the browser (the dashboard, say): refresh on its own, except on screens mid-edit.
         if (!page.contains("-new") && !page.contains("-edit") && page != "try") {
@@ -98,6 +100,7 @@ class PageActivity : Activity() {
             page == "usage" -> usagePage(column)
             page == "welcome" -> welcomePage(column)
             page == "keys" -> keysPage(column)
+            page == "pro" -> proPage(column)
             else -> tryPage(column)
         }
     }
@@ -525,6 +528,7 @@ class PageActivity : Activity() {
             ui.row(R.drawable.ic_languages, "Act on incoming messages",
                 if (!store.watchMessages) "Off" else if (access) "On: translates foreign messages as they arrive" else "Waiting for notification access",
                 ui.toggle(store.watchMessages) { on ->
+                    if (on && !store.isPro) { ui.toast("Acting on incoming messages is a Verbo Pro feature"); go("pro"); return@toggle }
                     store.watchMessages = on
                     if (on) {
                         // The ask was "translate a French message automatically": make sure that auto action exists and runs by itself.
@@ -1669,6 +1673,57 @@ class PageActivity : Activity() {
             store.onboarded = true
             finish()
         })
+    }
+
+    // ---------- Verbo Pro ----------
+
+    private fun proPage(column: LinearLayout) {
+        column.addView(ui.topBar("Verbo Pro", "Your plan follows your account to every phone"))
+        val signedIn = store.deviceToken.isNotEmpty()
+        val status = when {
+            store.isPro && (store.proPlan == "lifetime" || store.proPlan == "server") -> "Active for life. Thank you!"
+            store.isPro -> "Active until " + java.text.DateFormat.getDateInstance().format(java.util.Date(store.proUntil))
+            !signedIn -> "Sign in to buy Pro or bring back the Pro you already have"
+            else -> "Free plan: keyboard, wheel, translation, skills and acts"
+        }
+        column.addView(ui.rows(ui.row(R.drawable.ic_sparkles, if (store.isPro) "You have Verbo Pro" else "You are on Free", status)))
+        column.addView(ui.section(R.drawable.ic_zap, "What Pro adds"))
+        column.addView(ui.rows(
+            ui.row(R.drawable.ic_sparkles, "Personal assistant", "Chat with Verbo: it plans, writes and acts for you"),
+            ui.row(R.drawable.ic_plug, "One-tap app shortcuts", "Slack, Notion, Todoist, Linear, GitHub, Discord, Calendly"),
+            ui.row(R.drawable.ic_zap, "Auto actions that run by themselves", "Copied messages handled without a tap"),
+            ui.row(R.drawable.ic_languages, "Acts on incoming messages", "A French message arrives already translated"),
+            ui.row(R.drawable.ic_box, "Google Meet, Calendar and Gmail", "Links, events and emails from the keyboard"),
+        ))
+        when {
+            store.isPro -> Unit
+            !signedIn -> column.addView(ui.button("Continue with Google", R.drawable.ic_cloud, filled = true) {
+                store.signInSkipped = false
+                startActivity(android.content.Intent(this, SignInActivity::class.java))
+            })
+            else -> {
+                note(column, "\nPay on the web with UPI, a card or netbanking. Come back here and Pro turns on by itself.")
+                column.addView(ui.button("Upgrade on the web", R.drawable.ic_sparkles, filled = true) {
+                    try { startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(store.serverUrl + "/?tab=pro"))) }
+                    catch (e: Exception) { ui.toast("No browser found") }
+                })
+            }
+        }
+        if (signedIn) column.addView(ui.button("Refresh my plan", R.drawable.ic_refresh_cw) { refreshPlan() })
+        note(column, "\nOne account works on up to ${store.deviceLimit} phones at once; remove one on the dashboard under Settings › Phones.")
+    }
+
+    /** Asks the dashboard for the plan now (after paying on the web) and redraws. */
+    private fun refreshPlan() {
+        Thread {
+            val msg = try { Sync.pull(store); null } catch (e: Exception) { e.message ?: "Couldn't reach the dashboard" }
+            runOnUiThread {
+                if (isFinishing) return@runOnUiThread
+                store = Store(this)
+                if (msg != null) ui.toast(msg) else if (store.isPro) ui.toast("Verbo Pro is active")
+                render()
+            }
+        }.start()
     }
 
     // ---------- keys: hold a letter, per app ----------
