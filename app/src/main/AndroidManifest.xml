@@ -6,6 +6,8 @@
     <!-- Saving "add to calendar" results straight into the phone's calendar. -->
     <uses-permission android:name="android.permission.READ_CALENDAR" />
     <uses-permission android:name="android.permission.WRITE_CALENDAR" />
+    <!-- Showing what an auto action made of an incoming message (a translation, say). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <queries>
         <intent><action android:name="android.speech.RecognitionService" /></intent>
         <!-- Listing apps to pick from when a held key should act only in one app. -->
@@ -20,6 +22,10 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- First screen on a fresh install: Continue with Google brings back every saved setting. -->
+        <activity android:name=".SignInActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
+        <!-- Verbo the personal assistant: a chat that follows commands. -->
+        <activity android:name=".AssistantActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".PageActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <!-- WhatsApp & co. hand Verbo a message or file here; it waits in the keyboard's inbox. -->
         <activity android:name=".ShareActivity" android:exported="true" android:launchMode="singleTop" android:windowSoftInputMode="adjustResize">
@@ -53,6 +59,11 @@
         <!-- Invisible: the keyboard can't show permission prompts itself, so it opens this to ask and then save. -->
         <activity android:name=".CalendarPermissionActivity" android:exported="false" android:excludeFromRecents="true"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+        <!-- Off until the user turns on "Act on incoming messages" and grants notification access. -->
+        <service android:name=".MessageListener" android:label="Verbo: act on incoming messages" android:exported="true"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter><action android:name="android.service.notification.NotificationListenerService" /></intent-filter>
+        </service>
         <!-- directBootAware lets the keyboard work on the lock screen right after a reboot. -->
         <service android:name=".VerboIme" android:label="Verbo Keyboard" android:directBootAware="true"
             android:permission="android.permission.BIND_INPUT_METHOD" android:exported="true">

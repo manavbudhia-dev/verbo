@@ -77,6 +77,7 @@ class TestIme : VerboIme() {
     lateinit var field: FakeField
     override fun getCurrentInputConnection() = field.ic
     override fun getCurrentInputEditorInfo() = field.info
+    override fun isInputViewShown() = true
 }
 
 @RunWith(RobolectricTestRunner::class)
@@ -89,6 +90,10 @@ class KeyboardTest {
 
     @Before
     fun setUp() {
+        // Most tests look at the app itself, past the first-run sign-in screen.
+        Store(RuntimeEnvironment.getApplication()).signInSkipped = true
+        // Most tests look at Pro features; the free plan has its own test.
+        Store(RuntimeEnvironment.getApplication()).setPlan(Long.MAX_VALUE, "lifetime")
         ime = Robolectric.buildService(TestIme::class.java).create().get()
         field = FakeField(RuntimeEnvironment.getApplication()) { ime }
         ime.field = field
@@ -379,7 +384,8 @@ class KeyboardTest {
         type("hi")
         val keys = ime.keys!!
         layout(root)
-        assertEquals("default wheel has six shortcuts", 6, keys.wheelItems.size)
+        assertEquals("default wheel shows six shortcuts", 6, keys.wheelSlots)
+        assertTrue("more tools wait round the ring", keys.wheelItems.size > 6 && keys.wheelTurns)
         holdBar(keys)
         // Slide to the far right of the wheel (Clips is the last shortcut) and let go.
         val clips = Triple(0, keys.width * 0.86f, keys.height * 0.80f)
@@ -797,7 +803,11 @@ class KeyboardTest {
         clickLabel(root, "Welcome to Verbo, the agentic keyboard")
         assertTrue("tapping the banner remembers it", store.welcomed)
         assertTrue("the intro bubbles hello", findText(root, "Hey,\nI'm Verbo 👋") != null)
+        store.apiKey = ""
         clickLabel(root, "Let's Try It")
+        assertTrue("without a key the bot asks for one first", findText(root, "Add your API key first") != null)
+        clickLabel(root, "Not now")
+        ime.showBotPrompt()
         var edit = sheetFields(root as ViewGroup)[0]
         assertEquals("the prompt starts empty, not a fixed birthday task", "", edit.text.toString())
         assertEquals("at rest the prompt replaces the keys", View.GONE, ime.keys!!.visibility)
@@ -817,19 +827,50 @@ class KeyboardTest {
     }
 
     @Test
-    fun theIntroIsShownOnceAndTheBotThenOpensThePrompt() {
+    fun theBotIconAsksForAKeyFirstThenListensInOneTap() {
         val store = Store(RuntimeEnvironment.getApplication())
         store.welcomed = false
+        store.apiKey = ""
         layout(root)
         byDesc(root, "Meet Verbo, the keyboard bot")!!.performClick()
-        assertTrue("the first tap greets with the intro", findText(root, "Hey,\nI'm Verbo 👋") != null)
-        assertTrue("showing the intro remembers the welcome", store.welcomed)
-        ime.hidePanel()
-        assertEquals("the banner never returns after the intro", View.GONE, findText(root, "Welcome to Verbo, the agentic keyboard")!!.visibility)
+        assertTrue("with no AI key the bot asks for one first", findText(root, "Add your API key first") != null)
+        assertTrue("one tap to the AI settings", findText(root, "Add API key") != null)
+        assertTrue("opening the bot counts as the welcome", store.welcomed)
+        clickLabel(root, "Not now")
+        assertEquals("not now returns to the keys", View.VISIBLE, ime.keys!!.visibility)
+        assertEquals("the banner never returns", View.GONE, findText(root, "Welcome to Verbo, the agentic keyboard")!!.visibility)
+        // With a key, the same single tap goes straight into listening: no panel asking to tap again.
+        store.apiKey = "sk-ant-test-0000"
+        ime.onStartInputView(field.info, false)
+        layout(root)
         byDesc(root, "Meet Verbo, the keyboard bot")!!.performClick()
-        assertEquals("the intro does not repeat", null, findText(root, "Hey,\nI'm Verbo 👋"))
-        assertTrue("the bot opens the request panel instead", sheetFields(root as ViewGroup).isNotEmpty())
-        assertEquals("", sheetFields(root as ViewGroup)[0].text.toString())
+        assertEquals("no key prompt once a key is set", null, findText(root, "Add your API key first"))
+        assertEquals("no tap-to-speak panel", null, findText(root, "Tap Verbo to speak, or type and press Go"))
+        assertTrue("it went straight into the voice flow (here it asks for the mic permission)", findText(root, "Allow the microphone in the Verbo app") != null)
+        store.apiKey = ""
+    }
+
+    @Test
+    fun theShortcutWheelReopensWhereItWasTurned() {
+        val keys = ime.keys!!
+        layout(root)
+        holdBar(keys)
+        touch(keys, MotionEvent.ACTION_MOVE, listOf(rimAt(keys, 80.0)))
+        touch(keys, MotionEvent.ACTION_MOVE, listOf(rimAt(keys, 100.0)))
+        org.robolectric.shadows.ShadowLooper.idleMainLooper(800, java.util.concurrent.TimeUnit.MILLISECONDS)
+        val centre = Triple(0, keys.width / 2f, keys.height * 0.97f)
+        touch(keys, MotionEvent.ACTION_MOVE, listOf(centre))
+        touch(keys, MotionEvent.ACTION_UP, listOf(centre))
+        assertEquals("the turn is remembered", 1, Store(RuntimeEnvironment.getApplication()).wheelTurn)
+        // Next hold, and after the keyboard comes back: the fan opens on the turned tools, not the first six.
+        ime.onStartInputView(field.info, false)
+        val again = ime.keys!!
+        layout(root)
+        holdBar(again)
+        assertEquals("it reopens turned", 1f, again.wheelRotation, 0.001f)
+        assertEquals("the right-most slot still shows Auto-translate", "Auto-translate", again.wheelItems[again.wheelEntryAt(5)].label)
+        touch(again, MotionEvent.ACTION_MOVE, listOf(centre))
+        touch(again, MotionEvent.ACTION_UP, listOf(centre))
     }
 
     @Test
@@ -1052,43 +1093,377 @@ class KeyboardTest {
     }
 
     @Test
-    fun languageFanBezelHoldBecomesTheCompass() {
+    fun translateFanRollsOneFlagAtATimeToReachEveryLanguage() {
+        val store = Store(RuntimeEnvironment.getApplication())
         val keys = ime.keys!!
         layout(root)
-        val show = VerboIme::class.java.getDeclaredMethod("showLanguages", Boolean::class.javaPrimitiveType, Boolean::class.javaPrimitiveType)
-        show.isAccessible = true
-        show.invoke(ime, false, false)
+        showLanguages(false, false)
         val wheel = wheelIn(root)!!
         layout(root)
-        assertTrue("the fan starts flat", !wheel.spinning)
+        assertTrue("the fan starts flat, not as the compass", !wheel.spinning)
+        assertTrue("more languages wait round the ring", wheel.fanTurns)
         val d = wheel.resources.displayMetrics.density
+        val cx = wheel.width / 2f
         val cy = wheel.height - 40f * d
         val r = minOf(wheel.width * 0.46f, cy - 36f * d)
-        touch(wheel, MotionEvent.ACTION_MOVE, listOf(Triple(0, wheel.width / 2f, cy - r * 1.05f)))
-        org.robolectric.shadows.ShadowLooper.idleMainLooper(400, java.util.concurrent.TimeUnit.MILLISECONDS)
-        assertTrue("holding the blue rim spins the fan into the compass", wheel.spinning)
-        val centre = Triple(0, wheel.width / 2f, wheel.height * 0.56f)
-        touch(wheel, MotionEvent.ACTION_MOVE, listOf(centre))
-        touch(wheel, MotionEvent.ACTION_UP, listOf(centre))
-        assertEquals(View.VISIBLE, keys.visibility)
+        fun at(deg: Double, k: Float): Triple<Int, Float, Float> {
+            val a = Math.toRadians(deg)
+            return Triple(0, cx + (r * k * Math.cos(a)).toFloat(), cy - (r * k * Math.sin(a)).toFloat())
+        }
+        touch(wheel, MotionEvent.ACTION_MOVE, listOf(at(80.0, 1.05f)))
+        touch(wheel, MotionEvent.ACTION_MOVE, listOf(at(100.0, 1.05f)))
+        // A fast extra flick while the flag is still gliding is ignored.
+        touch(wheel, MotionEvent.ACTION_MOVE, listOf(at(160.0, 1.05f)))
+        assertEquals("a roll queues a turn instead of jumping", 0f, wheel.fanRotation, 0.001f)
+        org.robolectric.shadows.ShadowLooper.idleMainLooper(150, java.util.concurrent.TimeUnit.MILLISECONDS)
+        assertTrue("the flags glide over slowly", wheel.fanRotation > 0f && wheel.fanRotation < 1f)
+        org.robolectric.shadows.ShadowLooper.idleMainLooper(700, java.util.concurrent.TimeUnit.MILLISECONDS)
+        assertEquals("one roll locks exactly one flag", 1f, wheel.fanRotation, 0.001f)
+        // Lifting the finger after the roll keeps the wheel up on the new languages.
+        touch(wheel, MotionEvent.ACTION_UP, listOf(at(160.0, 1.05f)))
+        assertTrue("the wheel stays after a roll", wheelIn(root) === wheel)
+        assertEquals("the turn is remembered for next time", 1, store.langTurn)
+        // The right-most flag is now the first language beyond your five: a tap on it translates.
+        val arabic = wheel.ring[wheel.ringIndexAt(4)]
+        assertEquals("Arabic", arabic)
+        touch(wheel, MotionEvent.ACTION_DOWN, listOf(at(18.0, 0.74f)))
+        touch(wheel, MotionEvent.ACTION_UP, listOf(at(18.0, 0.74f)))
+        assertEquals("the running task replaces the wheel", null, wheelIn(root))
+        // Opened again, it shows the turned languages, not the first five.
+        showLanguages(false, false)
+        val again = wheelIn(root)!!
+        layout(root)
+        assertEquals("it reopens turned", 1f, again.fanRotation, 0.001f)
+        store.langTurn = 0
+    }
+
+    /** A point on the shortcut fan's blue rim at [deg] degrees (0 = right, 180 = left). */
+    private fun rimAt(keys: KeyboardView, deg: Double): Triple<Int, Float, Float> {
+        val wr = minOf(keys.width * 0.47f, keys.height * 0.80f)
+        val a = Math.toRadians(deg)
+        return Triple(0, keys.width / 2f + (wr * 1.05f * Math.cos(a)).toFloat(), keys.height - (wr * 1.05f * Math.sin(a)).toFloat())
     }
 
     @Test
-    fun shortcutWheelRimHoldSpinsTheCompassAndReleaseRunsTheTool() {
+    fun rollingTheRimTurnsTheFanOneIconAtATimeAndReleaseRunsTheNewTool() {
+        val keys = ime.keys!!
+        layout(root)
+        holdBar(keys)
+        touch(keys, MotionEvent.ACTION_MOVE, listOf(rimAt(keys, 80.0)))
+        touch(keys, MotionEvent.ACTION_MOVE, listOf(rimAt(keys, 100.0)))
+        assertEquals("a roll queues a turn instead of jumping", 0f, keys.wheelRotation, 0.001f)
+        // A fast second flick while the first icon is still gliding is ignored: no fast spin.
+        touch(keys, MotionEvent.ACTION_MOVE, listOf(rimAt(keys, 150.0)))
+        org.robolectric.shadows.ShadowLooper.idleMainLooper(150, java.util.concurrent.TimeUnit.MILLISECONDS)
+        assertTrue("the icon glides over slowly", keys.wheelRotation > 0f && keys.wheelRotation < 1f)
+        org.robolectric.shadows.ShadowLooper.idleMainLooper(700, java.util.concurrent.TimeUnit.MILLISECONDS)
+        assertEquals("one roll locks exactly one icon", 1f, keys.wheelRotation, 0.001f)
+        // Slot 6 now holds the first extra tool, Auto-translate.
+        val last = Triple(0, keys.width * 0.86f, keys.height * 0.80f)
+        touch(keys, MotionEvent.ACTION_MOVE, listOf(Triple(0, keys.width / 2f, keys.height * 0.97f)))
+        touch(keys, MotionEvent.ACTION_MOVE, listOf(last))
+        touch(keys, MotionEvent.ACTION_UP, listOf(last))
+        assertTrue("releasing runs the tool that turned into view: the auto-translate picker", wheelIn(root)!!.autoMode)
+    }
+
+    @Test
+    fun restingAtTheFanEndKeepsTurningButSlowly() {
         val keys = ime.keys!!
         layout(root)
         holdBar(keys)
         val wr = minOf(keys.width * 0.47f, keys.height * 0.80f)
-        touch(keys, MotionEvent.ACTION_MOVE, listOf(Triple(0, keys.width / 2f, keys.height - wr * 1.05f)))
-        org.robolectric.shadows.ShadowLooper.idleMainLooper(400, java.util.concurrent.TimeUnit.MILLISECONDS)
-        assertTrue("holding the blue rim turns the wheel into the compass", keys.compassOpen)
-        // Spin two slots (72°) so "auto", catalog index 2, lands under the needle.
-        val cr = minOf(keys.width * 0.42f, keys.height * 0.40f)
-        val a = Math.toRadians(-18.0)
-        val spin = Triple(0, keys.width / 2f + (cr * 0.9f * Math.cos(a)).toFloat(), keys.height * 0.56f + (cr * 0.9f * Math.sin(a)).toFloat())
-        touch(keys, MotionEvent.ACTION_MOVE, listOf(spin))
-        touch(keys, MotionEvent.ACTION_UP, listOf(spin))
-        assertTrue("releasing runs the spun-to tool: the auto-translate picker", wheelIn(root)!!.autoMode)
+        val end = Triple(0, keys.width / 2f + wr * 0.7f, keys.height - wr * 0.06f)
+        touch(keys, MotionEvent.ACTION_MOVE, listOf(end))
+        org.robolectric.shadows.ShadowLooper.idleMainLooper(300, java.util.concurrent.TimeUnit.MILLISECONDS)
+        assertTrue("the first icon is on its way", keys.wheelRotation > 0f && keys.wheelRotation < 1f)
+        org.robolectric.shadows.ShadowLooper.idleMainLooper(2100, java.util.concurrent.TimeUnit.MILLISECONDS)
+        assertTrue("it keeps turning, one locked icon at a time (${keys.wheelRotation})", keys.wheelRotation >= 3f && keys.wheelRotation <= 4f)
+        // Lifting at the end runs nothing.
+        touch(keys, MotionEvent.ACTION_UP, listOf(end))
+        assertEquals(View.VISIBLE, keys.visibility)
+    }
+
+    private fun chipTexts(): List<String> {
+        val row = VerboIme::class.java.getDeclaredField("chipsRow").apply { isAccessible = true }.get(ime) as ViewGroup
+        return (0 until row.childCount).mapNotNull { (row.getChildAt(it) as? android.widget.TextView)?.text?.toString() }
+    }
+
+    @Test
+    fun aFrenchMessageThatArrivedIsWaitingAboveTheKeysWithItsTranslation() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        store.watchMessages = true
+        store.incomingText = "Bonjour, est-ce que tu peux venir demain à la réunion ?"
+        store.incomingFrom = "Camille"
+        store.incomingApp = "com.chat"
+        store.incomingAt = System.currentTimeMillis()
+        store.incomingResult = "From French\nHi, can you come to the meeting tomorrow?\nTone: friendly, asking you to join"
+        store.incomingSkill = "Understand any language"
+        field.info.packageName = "com.chat"
+        ime.onStartInputView(field.info, false)
+        assertTrue("one tap shows the ready translation: ${chipTexts()}", chipTexts().any { it.contains("Understand any language") && it.contains("Camille") })
+        // In another app the message stays out of the way.
+        field.info.packageName = "com.other"
+        ime.onStartInputView(field.info, false)
+        assertTrue(chipTexts().none { it.contains("Camille") })
+        store.clearIncoming()
+        store.watchMessages = false
+    }
+
+    @Test
+    fun aMessageArrivingWhileTheKeyboardIsOpenShowsItsTranslationByItself() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        store.watchMessages = true
+        field.info.packageName = "com.whatsapp"
+        ime.onStartInputView(field.info, false)
+        layout(root)
+        // The notification reader stores the message, then tells the open keyboard.
+        store.incomingText = "Bonjour"
+        store.incomingFrom = "Navya"
+        store.incomingApp = "com.whatsapp"
+        store.incomingAt = System.currentTimeMillis()
+        store.incomingResult = ""
+        store.incomingSkill = ""
+        ime.onIncomingMessage(false)
+        assertTrue("the message is offered straight away: ${chipTexts()}", chipTexts().any { it.contains("Understand any language") })
+        // Its automatic translation arrives: the card opens without a tap.
+        store.incomingResult = "From French\nHello\nTone: a friendly greeting"
+        store.incomingSkill = "Understand any language"
+        ime.onIncomingMessage(true)
+        layout(root)
+        fun has(v: View, s: String): Boolean = (v is TextView && v.text.toString().contains(s)) ||
+            (v is ViewGroup && (0 until v.childCount).any { has(v.getChildAt(it), s) })
+        assertTrue("the translation card is open", has(root, "Hello") && ime.keys!!.visibility == View.GONE)
+        store.clearIncoming()
+        store.watchMessages = false
+    }
+
+    @Test
+    fun readsTheNewestMessageAndItsSenderFromAChatNotification() {
+        val app = RuntimeEnvironment.getApplication()
+        val msg = android.app.Notification.Builder(app, "x").setSmallIcon(R.drawable.ic_languages)
+            .setContentTitle("Camille").setContentText("Bonjour, tu viens demain ?").build()
+        assertEquals("Camille" to "Bonjour, tu viens demain ?", MessageListener.read(msg))
+        val summary = android.app.Notification.Builder(app, "x").setSmallIcon(R.drawable.ic_languages)
+            .setContentTitle("WhatsApp").setContentText("5 new messages").build()
+        org.junit.Assert.assertNull("a summary is not a message", MessageListener.read(summary))
+        val group = android.app.Notification.Builder(app, "x").setSmallIcon(R.drawable.ic_languages)
+            .setContentTitle("Camille").setContentText("Salut").setGroup("g").setGroupSummary(true).build()
+        org.junit.Assert.assertNull("a group summary is skipped", MessageListener.read(group))
+    }
+
+    @Test
+    fun aFreshInstallOpensOnContinueWithGoogle() {
+        val app = RuntimeEnvironment.getApplication()
+        val store = Store(app)
+        store.signInSkipped = false
+        store.unpair()
+        val main = Robolectric.buildActivity(MainActivity::class.java).setup().get()
+        assertTrue("the app hands over to the sign-in screen", main.isFinishing)
+        val next = org.robolectric.Shadows.shadowOf(app).nextStartedActivity
+        assertEquals(SignInActivity::class.java.name, next.component?.className)
+        val signIn = Robolectric.buildActivity(SignInActivity::class.java).setup().get()
+        val screen = signIn.findViewById<View>(android.R.id.content)
+        assertTrue("Google sign-in is offered first", findText(screen, "Continue with Google") != null)
+        clickLabel(screen, "Use without an account")
+        assertTrue("going without an account is remembered", store.signInSkipped)
+        assertTrue("and the sign-in screen steps aside", !SignInActivity.needed(store))
+        // A paired phone never sees it.
+        store.signInSkipped = false
+        store.deviceToken = "tok"
+        assertTrue(!SignInActivity.needed(store))
+        store.unpair()
+        store.signInSkipped = true
+    }
+
+    @Test
+    fun theKeyboardKeepsOneHeightWhetherOrNotThereAreSuggestions() {
+        val row = VerboIme::class.java.getDeclaredField("suggestRow").apply { isAccessible = true }.get(ime) as View
+        layout(root)
+        val idle = root.measuredHeight
+        assertEquals("with nothing typed the row is blank but keeps its space", View.INVISIBLE, row.visibility)
+        type("andr")
+        layout(root)
+        assertEquals("suggestions show while a word is typed", View.VISIBLE, row.visibility)
+        assertEquals("the keyboard did not grow", idle, root.measuredHeight)
+        type("oid ")
+        layout(root)
+        assertTrue("after the word the row is blank, not removed", row.visibility == View.INVISIBLE || row.visibility == View.VISIBLE)
+        assertEquals("the keyboard did not shrink", idle, root.measuredHeight)
+    }
+
+    @Test
+    fun theAssistantChatGreetsRemembersAndKeepsTheConversation() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        store.chat("[]")
+        store.apiKey = ""
+        var a = Robolectric.buildActivity(AssistantActivity::class.java).setup().resume().get()
+        var screen = a.findViewById<View>(android.R.id.content)
+        layout(screen)
+        assertTrue("without a key the assistant asks for one", findText(screen, "Add your API key first") != null)
+        store.apiKey = "sk-ant-test-0000"
+        a = Robolectric.buildActivity(AssistantActivity::class.java).setup().resume().get()
+        screen = a.findViewById(android.R.id.content)
+        layout(screen)
+        assertTrue("the mascot says hello", findText(screen, "Hi, I'm Verbo") != null)
+        assertTrue("ideas are offered", findText(screen, AssistantActivity.IDEAS[0]) != null)
+        // A "remember" command is handled on the phone and answered in the chat.
+        a.send("remember my UPI is me@okicici")
+        assertTrue("it remembers", store.memory.any { it.value == "me@okicici" })
+        layout(screen)
+        fun has(v: View, t: String): Boolean = (v is TextView && v.text.toString().contains(t)) ||
+            (v is ViewGroup && (0 until v.childCount).any { has(v.getChildAt(it), t) })
+        assertTrue("the reply is in the chat", has(screen, "I'll remember"))
+        // The conversation is still there next time.
+        val again = Robolectric.buildActivity(AssistantActivity::class.java).setup().resume().get()
+        val screen2 = again.findViewById<View>(android.R.id.content)
+        layout(screen2)
+        assertTrue("the chat is kept", has(screen2, "remember my UPI is me@okicici"))
+        store.chat("[]")
+        store.apiKey = ""
+    }
+
+    @Test
+    fun actionsWorkInOneTapAndOnlyLookupsOpenACard() {
+        assertTrue(!Acts.showsCard("Place"))
+        assertTrue(!Acts.showsCard("Schedule it"))
+        assertTrue(!Acts.showsCard("LinkedIn post"))
+        assertTrue(Acts.showsCard("Who is"))
+        assertTrue(Acts.showsCard("Find anything"))
+        assertTrue(Acts.showsCard("Reply options"))
+        // Place now sends a maps link instead of describing the place, also for skills saved before.
+        val store = Store(RuntimeEnvironment.getApplication())
+        val old = "The text names a place. Find it with the place search and return its name, address and a Google Maps link, with the map marker line."
+        store.skills = listOf(Skill("📍", "Place", old, "write", "l"))
+        assertEquals(Store.PLACE_INSTRUCTION, store.skills.first().instruction)
+        store.resetSkills()
+    }
+
+    @Test
+    fun appShortcutsSendOrSaveInOneTap() {
+        for (key in listOf("slack", "todoist", "linear", "github", "discord")) assertTrue("$key sends in one tap", Apps.byKey(key)!!.sends)
+        assertEquals("Notion saves the message", "Save to Notion", Apps.byKey("notion")!!.skill)
+        assertTrue("Notion's save is a one-tap act", !Acts.showsCard("Save to Notion"))
+        assertTrue("Slack posts with slack_send_message", Apps.byKey("slack")!!.task!!.contains("slack_send_message"))
+        // Email and LinkedIn open their ready draft at once, also for skills saved before.
+        val store = Store(RuntimeEnvironment.getApplication())
+        store.skills = listOf(Skill("📧", "Email", "Turn the text into a clear email with a short subject. Return the email text, then a final [[open:mailto:?subject=...&body=...]] line with both URL-encoded so it opens as a ready draft in Gmail.", "write"))
+        assertEquals(Store.EMAIL_INSTRUCTION, store.skills.first().instruction)
+        assertTrue(Store.EMAIL_INSTRUCTION.contains("[[go:"))
+        store.resetSkills()
+        // With nothing typed or copied, a send says so instead of sending an empty message.
+        store.apiKey = "sk-ant-test-0000"
+        store.setToken("slackToken", "xoxb-test")
+        field.text.clear()
+        ime.runApp(Apps.byKey("slack")!!)
+        assertTrue("asks for text first: ${ime.statusMessage}", ime.statusMessage.contains("Type something first"))
+        store.setToken("slackToken", "")
+        store.apiKey = ""
+    }
+
+    @Test
+    fun translationKnowsTheSourceLanguageOnThePhone() {
+        assertEquals("fr", Offline.sourceCode("Bonjour, est-ce que tu peux venir demain ?"))
+        assertEquals("es", Offline.sourceCode("Hola, ¿cómo estás? Nos vemos mañana"))
+        assertEquals("en", Offline.sourceCode("Can you send me the file today please?"))
+        assertEquals("hi", Offline.sourceCode("कल मिलते हैं"))
+        assertEquals("Hinglish goes to the AI service", null, Offline.sourceCode("bhai kal office aa raha hai kya"))
+        assertEquals("fr", Offline.languageCode("French"))
+        // Without a downloaded model it never blocks: null, and the AI service takes this one.
+        assertEquals(null, Offline.quick("Bonjour, tu viens demain ?", "English"))
+    }
+
+    @Test
+    fun repeatedRequestsComeBackFromTheCacheForFree() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        AnswerCache.clear(store)
+        val k = AnswerCache.key("claude:claude-haiku-5-5", "Task: polish", "i reached late  sorry", false, emptyList())
+        assertEquals("spacing doesn't matter", k, AnswerCache.key("claude:claude-haiku-5-5", "Task: polish", " i reached late sorry ", false, emptyList()))
+        assertTrue("another model is another answer", k != AnswerCache.key("claude:claude-sonnet-5-5", "Task: polish", "i reached late sorry", false, emptyList()))
+        assertEquals(null, AnswerCache.get(store, k))
+        AnswerCache.put(store, k, ActionResult("I reached late, sorry.", null), 0.0004, now = 1_000_000L)
+        val hit = AnswerCache.get(store, k, now = 2_000_000L)
+        assertEquals("I reached late, sorry.", hit?.text)
+        assertEquals(0.0004, AnswerCache.costOf(store, k), 1e-9)
+        // Asking again within two minutes of a reused answer means "try again": a fresh answer.
+        assertEquals(null, AnswerCache.get(store, k, now = 2_030_000L))
+        // Entries expire after 30 days.
+        AnswerCache.put(store, k, ActionResult("x", null), 0.0, now = 0L)
+        assertEquals(null, AnswerCache.get(store, k, now = 31L * 24 * 60 * 60 * 1000))
+        // "tomorrow" ties the answer to today's date.
+        val a = AnswerCache.key("m", "t", "meet tomorrow at 5", false, emptyList())
+        assertTrue(a.isNotEmpty())
+        AnswerCache.clear(store)
+        assertEquals(0, AnswerCache.size(store))
+    }
+
+    @Test
+    fun hinglishIsLearntSoItCanBeTranslatedOnThePhone() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        store.setText("hinglish_words", "{}")
+        val english = { w: String -> w in setOf("office", "meeting", "late") }
+        assertTrue(Hinglish.isHinglish("bhai kal office aa raha hai kya"))
+        assertTrue(!Hinglish.isHinglish("Can you send me the file today please?"))
+        // Known words and English words: confident enough for the phone.
+        assertEquals("भाई कल office आ रहा है क्या", Hinglish.toDevanagari("bhai kal office aa raha hai kya", emptyMap(), english))
+        // The user's own spellings are guesses at first...
+        assertEquals(null, Hinglish.toDevanagari("mko kese pta h", emptyMap(), english))
+        // ...until the AI service teaches them once.
+        val r = Hinglish.learn(store, ActionResult("How would I know?\n[[words:mko=मुझको, kese=कैसे, pta=पता, h=है]]", null))
+        assertEquals("the marker line is removed", "How would I know?", r.text)
+        assertEquals("मुझको कैसे पता है", Hinglish.toDevanagari("mko kese pta h", Hinglish.words(store), english))
+        assertEquals("into Hindi it is just the Devanagari", "मुझको कैसे पता है", Hinglish.quick(store, "mko kese pta h", "Hindi", english))
+        store.setText("hinglish_words", "{}")
+    }
+
+    @Test
+    fun writingJobsGoWithoutToolsSoTheyAreFaster() {
+        assertTrue(!Ai.needsTools(Ai.translateTask(listOf("French"))))
+        assertTrue(!Ai.needsTools(Ai.skillTask(Store.DEFAULT_SKILLS.first { it.name == "Polish" }.instruction)))
+        assertTrue(!Ai.needsTools(Ai.skillTask(Store.EMAIL_INSTRUCTION)))
+        assertTrue(Ai.needsTools(Ai.skillTask(Store.PLACE_INSTRUCTION)))
+        assertTrue(Ai.needsTools(Ai.skillTask(Store.NOTION_INSTRUCTION)))
+        assertTrue(Ai.needsTools(Ai.skillTask(Trigger.BUILTIN.getValue("Who is"))))
+    }
+
+    @Test
+    fun theFreePlanLocksProFeaturesWithAnUpgrade() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        store.setPlan(0L, "free")
+        assertTrue(!store.isPro)
+        store.apiKey = "sk-ant-test-0000"
+        store.setToken("slackToken", "xoxb-test")
+        type("ship it")
+        ime.runApp(Apps.byKey("slack")!!)
+        assertTrue("an app shortcut says it's Pro: ${ime.statusMessage}", ime.statusMessage.contains("Verbo Pro"))
+        // Drafts and shares stay free.
+        ime.runApp(Apps.byKey("youtube")!!)
+        val opened = org.robolectric.Shadows.shadowOf(ime).nextStartedActivity
+        assertTrue("YouTube still opens on Free", opened?.dataString?.contains("youtube.com") == true)
+        // The assistant chat offers Pro instead.
+        val chat = Robolectric.buildActivity(AssistantActivity::class.java).setup().resume().get()
+        val v = chat.findViewById<View>(android.R.id.content)
+        layout(v)
+        assertTrue("the chat shows the Pro offer", findText(v, "See Verbo Pro") != null)
+        // The Pro page lists what Pro adds.
+        val page = Robolectric.buildActivity(PageActivity::class.java, android.content.Intent().putExtra("page", "pro")).setup().get()
+        val pv = page.findViewById<View>(android.R.id.content)
+        layout(pv)
+        assertTrue(findText(pv, "You are on Free") != null && findText(pv, "Personal assistant") != null)
+        // The dashboard's plan arrives with a sync.
+        store.applyRemote(org.json.JSONObject().put("plan", org.json.JSONObject().put("pro", true).put("plan", "month").put("until", System.currentTimeMillis() + 86_400_000L).put("deviceLimit", 3)))
+        assertTrue("a synced plan turns Pro on", store.isPro && store.proPlan == "month")
+        store.setToken("slackToken", "")
+        store.apiKey = ""
+    }
+
+    @Test
+    fun typeAndActPillsComeBackAfterAStatusLine() {
+        val show = VerboIme::class.java.getDeclaredMethod("showStatus", String::class.java, emptyArray<Pair<String, () -> Unit>>().javaClass)
+        show.isAccessible = true
+        show.invoke(ime, "Done", emptyArray<Pair<String, () -> Unit>>())
+        type("h")
+        val scroll = VerboIme::class.java.getDeclaredField("chipsScroll").apply { isAccessible = true }.get(ime) as View
+        assertEquals("the Type / Act pills are back once typing resumes", View.VISIBLE, scroll.visibility)
     }
 
     /** A point on the compass rim at [deg] degrees, for flicking the language dial. */
@@ -1123,7 +1498,10 @@ class KeyboardTest {
         org.robolectric.shadows.ShadowLooper.idleMainLooper(700, java.util.concurrent.TimeUnit.MILLISECONDS)
         assertEquals("a second flick locks the next icon", 72f, wheel.compassRotation, 0.001f)
         touch(wheel, MotionEvent.ACTION_UP, listOf(compassAt(wheel, 80.0)))
-        assertEquals("releasing runs the locked language and closes the compass", null, wheelIn(root))
+        assertTrue("lifting after a spin keeps the compass up", wheelIn(root) === wheel && wheel.spinning)
+        touch(wheel, MotionEvent.ACTION_DOWN, listOf(compassAt(wheel, 80.0)))
+        touch(wheel, MotionEvent.ACTION_UP, listOf(compassAt(wheel, 80.0)))
+        assertEquals("a tap runs the locked language and closes the compass", null, wheelIn(root))
     }
 
     @Test
@@ -1134,6 +1512,8 @@ class KeyboardTest {
         layout(root)
         touch(wheel, MotionEvent.ACTION_MOVE, listOf(compassAt(wheel, 0.0)))
         touch(wheel, MotionEvent.ACTION_MOVE, listOf(compassAt(wheel, 180.0)))
+        touch(wheel, MotionEvent.ACTION_UP, listOf(compassAt(wheel, 180.0)))
+        touch(wheel, MotionEvent.ACTION_DOWN, listOf(compassAt(wheel, 180.0)))
         touch(wheel, MotionEvent.ACTION_UP, listOf(compassAt(wheel, 180.0)))
         assertEquals("the spun-to language is saved first", "Arabic", store.languages.first())
         assertTrue("the old languages stay", store.languages.containsAll(Store.DEFAULT_LANGUAGES))
@@ -1276,6 +1656,13 @@ class KeyboardTest {
 
     // ---------- pictures for checking layout by eye ----------
 
+    /** A full-screen activity at phone size (1080 x 2200). */
+    private fun snapSized(view: View, name: String) {
+        view.measure(View.MeasureSpec.makeMeasureSpec(1080, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(2200, View.MeasureSpec.EXACTLY))
+        view.layout(0, 0, 1080, 2200)
+        snap(view, name)
+    }
+
     private fun snap(view: View, name: String) {
         val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
         view.draw(Canvas(bitmap))
@@ -1328,14 +1715,20 @@ class KeyboardTest {
         // The wheel, mid-gesture, with the finger over Translate (leftmost).
         val wheelKeys = ime.keys!!
         holdBar(wheelKeys)
-        touch(wheelKeys, MotionEvent.ACTION_MOVE, listOf(Triple(0, wheelKeys.width * 0.5f, wheelKeys.height * 0.25f)))
+        // Points stay inside the tiles' band: sliding along the blue rim itself turns the ring.
+        touch(wheelKeys, MotionEvent.ACTION_MOVE, listOf(Triple(0, wheelKeys.width * 0.5f, wheelKeys.height * 0.40f)))
         snap(agentRoot, "wheel")
-        touch(wheelKeys, MotionEvent.ACTION_MOVE, listOf(Triple(0, wheelKeys.width * 0.14f, wheelKeys.height * 0.80f)))
-        touch(wheelKeys, MotionEvent.ACTION_UP, listOf(Triple(0, wheelKeys.width * 0.14f, wheelKeys.height * 0.80f)))
+        touch(wheelKeys, MotionEvent.ACTION_MOVE, listOf(Triple(0, wheelKeys.width * 0.20f, wheelKeys.height * 0.80f)))
+        val turned = wheelKeys.wheelRotation
+        val entry = wheelKeys.wheelEntryAt(0)
+        touch(wheelKeys, MotionEvent.ACTION_UP, listOf(Triple(0, wheelKeys.width * 0.20f, wheelKeys.height * 0.80f)))
         layout(agentRoot)
         snap(agentRoot, "panel-languages")
         // Mid-gesture on the light wheel: finger over the second flag, then release on Cancel.
-        val langWheel = wheelIn(agentRoot)!!
+        val langWheel = wheelIn(agentRoot)
+        org.junit.Assert.assertNotNull("releasing on the left-most slot opens Translate (size ${wheelKeys.width}x${wheelKeys.height}, " +
+            "turned $turned, slot 0 = entry $entry of ${wheelKeys.wheelItems.map { it.label }}, keys ${wheelKeys.visibility}, status '${ime.statusMessage}')", langWheel)
+        langWheel!!
         touch(langWheel, MotionEvent.ACTION_MOVE, listOf(Triple(0, langWheel.width * 0.30f, langWheel.height - 403f)))
         layout(agentRoot)
         snap(agentRoot, "panel-languages-pick")
@@ -1384,6 +1777,29 @@ class KeyboardTest {
         ime.showBotIntro()
         layout(agentRoot)
         snap(agentRoot, "bot-intro")
+        ime.showKeyNeeded()
+        layout(agentRoot)
+        snap(agentRoot, "bot-key-needed")
+        run {
+            val st = Store(RuntimeEnvironment.getApplication())
+            st.apiKey = "sk-ant-test-0000"
+            st.chat("[]")
+            val chat = Robolectric.buildActivity(AssistantActivity::class.java).setup().resume().get()
+            val v = chat.findViewById<View>(android.R.id.content)
+            layout(v); v.layout(0, 0, 1080, 2200); snapSized(v, "assistant-hello")
+            st.chat(org.json.JSONArray()
+                .put(org.json.JSONObject().put("u", true).put("t", "Remind me to call Mom tomorrow at 7pm"))
+                .put(org.json.JSONObject().put("u", false).put("t", "Done! I've set it for tomorrow at 7:00 PM: Call Mom.")
+                    .put("l", "https://calendar.google.com/calendar/render?action=TEMPLATE&text=Call%20Mom&dates=20261120T190000/20261120T193000"))
+                .put(org.json.JSONObject().put("u", true).put("t", "And write a birthday wish for Rahul on WhatsApp"))
+                .put(org.json.JSONObject().put("u", false).put("t", "Happy birthday Rahul! 🎉 Wishing you a year full of wins, laughs and great food. Have an amazing day!")
+                    .put("l", "https://wa.me/?text=Happy%20birthday%20Rahul")).toString())
+            val chat2 = Robolectric.buildActivity(AssistantActivity::class.java).setup().resume().get()
+            val v2 = chat2.findViewById<View>(android.R.id.content)
+            layout(v2); v2.layout(0, 0, 1080, 2200); snapSized(v2, "assistant-chat")
+            st.chat("[]")
+            st.apiKey = ""
+        }
         ime.showBotPrompt()
         layout(agentRoot)
         snap(agentRoot, "bot-prompt")
@@ -1437,21 +1853,24 @@ class KeyboardTest {
         touch(appKeys, MotionEvent.ACTION_UP, listOf(Triple(0, appKeys.width * 0.5f, appKeys.height * 0.97f)))
         store.wheel = Store.DEFAULT_WHEEL
         ime.onStartInputView(field.info, false)
-        // The shortcut wheel spun into its 360° compass by holding the blue rim.
+        // The shortcut fan rolled by its rim: mid-glide, then locked with Auto-translate, Notion and Slack in view.
         val cmpKeys = ime.keys!!
         val cmpRoot = cmpKeys.parent as View
         layout(cmpRoot)
         holdBar(cmpKeys)
-        val wr = minOf(cmpKeys.width * 0.47f, cmpKeys.height * 0.80f)
-        touch(cmpKeys, MotionEvent.ACTION_MOVE, listOf(Triple(0, cmpKeys.width / 2f, cmpKeys.height - wr * 1.05f)))
-        org.robolectric.shadows.ShadowLooper.idleMainLooper(400, java.util.concurrent.TimeUnit.MILLISECONDS)
-        val cr = minOf(cmpKeys.width * 0.42f, cmpKeys.height * 0.40f)
-        val sa = Math.toRadians(-18.0)
-        touch(cmpKeys, MotionEvent.ACTION_MOVE, listOf(Triple(0, cmpKeys.width / 2f + (cr * 0.9f * Math.cos(sa)).toFloat(), cmpKeys.height * 0.56f + (cr * 0.9f * Math.sin(sa)).toFloat())))
-        org.robolectric.shadows.ShadowLooper.idleMainLooper(220, java.util.concurrent.TimeUnit.MILLISECONDS)
+        touch(cmpKeys, MotionEvent.ACTION_MOVE, listOf(rimAt(cmpKeys, 80.0)))
+        touch(cmpKeys, MotionEvent.ACTION_MOVE, listOf(rimAt(cmpKeys, 100.0)))
+        org.robolectric.shadows.ShadowLooper.idleMainLooper(280, java.util.concurrent.TimeUnit.MILLISECONDS)
         layout(cmpRoot)
-        snap(cmpRoot, "wheel-compass")
-        val cmpCentre = Triple(0, cmpKeys.width / 2f, cmpKeys.height * 0.56f)
+        snap(cmpRoot, "wheel-turning")
+        for (k in 0 until 2) {
+            org.robolectric.shadows.ShadowLooper.idleMainLooper(800, java.util.concurrent.TimeUnit.MILLISECONDS)
+            touch(cmpKeys, MotionEvent.ACTION_MOVE, listOf(rimAt(cmpKeys, 100.0 + k * 20 + 20)))
+        }
+        org.robolectric.shadows.ShadowLooper.idleMainLooper(800, java.util.concurrent.TimeUnit.MILLISECONDS)
+        layout(cmpRoot)
+        snap(cmpRoot, "wheel-turned")
+        val cmpCentre = Triple(0, cmpKeys.width / 2f, cmpKeys.height * 0.97f)
         touch(cmpKeys, MotionEvent.ACTION_MOVE, listOf(cmpCentre))
         touch(cmpKeys, MotionEvent.ACTION_UP, listOf(cmpCentre))
         // Double-press space: the language compass of every language.

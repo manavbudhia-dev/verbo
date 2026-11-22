@@ -1,0 +1,81 @@
+name: Android build
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci
+      - name: Dashboard tests (sync, Google, login, Verbo Pro)
+        run: npm test
+
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: "platforms;android-35 build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build release APK
+        run: ./gradlew :app:assembleRelease --stacktrace
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: verbo-apk
+          path: app/build/outputs/apk/release/*.apk
+      - name: Publish APK as a pre-release
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
+          branch="${GITHUB_REF_NAME//\//-}"
+          tag="apk-$branch"
+          cp app/build/outputs/apk/release/app-release.apk "Verbo-$version.apk"
+          gh release delete "$tag" -y --cleanup-tag || true
+          gh release create "$tag" "Verbo-$version.apk" --prerelease --target "$GITHUB_SHA" \
+            --title "Verbo $version ($GITHUB_REF_NAME)" \
+            --notes "Release build of ${GITHUB_SHA::7} on $GITHUB_REF_NAME, signed with the debug key. Install on the phone directly."
+      - name: Unit tests
+        run: ./gradlew :app:testDebugUnitTest --stacktrace
+      - name: Attach screenshots to the pre-release
+        if: always() && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [ -d app/build/shots ] || exit 0
+          tag="apk-${GITHUB_REF_NAME//\//-}"
+          (cd app/build && zip -qr ../../shots.zip shots)
+          gh release upload "$tag" shots.zip --clobber || true
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: app/build/reports/tests/
+          if-no-files-found: ignore
+      - name: Show test failures
+        if: failure()
+        run: grep -h -A3 '<failure' app/build/test-results/testDebugUnitTest/*.xml | head -60 || true

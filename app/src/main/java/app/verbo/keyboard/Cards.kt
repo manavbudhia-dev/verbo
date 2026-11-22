@@ -143,6 +143,7 @@ object Cards {
     /** A short label for a trigger chip: "Who is David Miller" rather than just "Who is". */
     fun chipLabel(trigger: Trigger, text: String): String = when (trigger.kind) {
         "person" -> personName(text)?.let { "${trigger.skill} · $it" } ?: trigger.skill
+        "foreign" -> Acts.foreignLanguage(text)?.takeIf { it != "another language" }?.let { "${trigger.skill} · $it" } ?: trigger.skill
         else -> trigger.skill
     }
 }
@@ -154,7 +155,7 @@ data class Trigger(val kind: String, val keyword: String, val skill: String, val
         val BUILTIN = mapOf(
             "Who is" to "The text or the context names a person. Look them up on the web and reply with one item per line: their full name; a one-line headline with their role and organisation; then Current: their current role, Previous: their previous role, Education: where they studied, Location: where they are based; and last a LinkedIn people search link, https://www.linkedin.com/search/results/people/?keywords= followed by the name with spaces written as %20. Leave out any line you cannot verify. If you cannot tell who they are, say so in one line instead of guessing.",
             "Save event" to "The text describes an event or a meeting. Work out its title, date, start time and place, resolving words like tomorrow from today's date. Reply with one line describing it, then a final [[open:https://calendar.google.com/calendar/render?action=TEMPLATE&text=TITLE&dates=YYYYMMDDTHHMMSS/YYYYMMDDTHHMMSS&location=PLACE]] line in local time, one hour long if no end is given. If Google Calendar tools are available, save it with them instead.",
-            "Place" to "The text names a place. Find it with the place search and return its name, address and a Google Maps link, with the map marker line.",
+            "Place" to Store.PLACE_INSTRUCTION,
         )
         val DEFAULTS = listOf(Trigger("person", "", "Who is", false), Trigger("time", "", "Schedule it", false), Trigger("place", "", "Place", false), Trigger("foreign", "", "Understand any language", false))
     }
@@ -190,19 +191,34 @@ object Acts {
         return sb.toString()
     }
 
+    /**
+     * Lookups and choices open a card: what they find is for reading or picking, not for the field.
+     * Every other act puts its result straight into the field in one tap (Place, Schedule it, Email...).
+     */
+    fun showsCard(name: String) = CARD_ACTS.any { it.equals(name, ignoreCase = true) }
+    private val CARD_ACTS = listOf("Who is", "Find anything", "Fact check", "Explain simply", "Understand any language", "Extract what matters", "Reply options")
+
     /** True when a skill works on a copied message rather than on what the user typed. */
     fun needsCopied(instruction: String) = Regex("""copied|the context|message the user received|they received|names a person""", RegexOption.IGNORE_CASE).containsMatchIn(instruction)
 
-    /** Mostly written in a script other than Latin and Devanagari (Japanese, Arabic, Russian...): worth translating. */
-    fun isForeign(text: String): Boolean {
+    /**
+     * In a language the user doesn't read without help: French, Spanish or German as much as Japanese or
+     * Arabic. English, Hindi and Hinglish are home. Checked on the phone, nothing is sent.
+     */
+    fun isForeign(text: String): Boolean = foreignLanguage(text) != null
+
+    /** The foreign language [text] is in ("French"), "another language" for an unknown script, or null. */
+    fun foreignLanguage(text: String): String? {
+        LangDetect.detect(text)?.let { return if (it in LangDetect.HOME) null else it }
+        // A script the detector doesn't name: still foreign when it is most of the letters.
         val letters = text.filter { it.isLetter() }
-        if (letters.length < 4) return false
+        if (letters.length < 4) return null
         val other = letters.count { c ->
             val block = Character.UnicodeBlock.of(c)
             block != Character.UnicodeBlock.BASIC_LATIN && block != Character.UnicodeBlock.LATIN_1_SUPPLEMENT &&
                 block != Character.UnicodeBlock.LATIN_EXTENDED_A && block != Character.UnicodeBlock.LATIN_EXTENDED_B && block != Character.UnicodeBlock.DEVANAGARI
         }
-        return other * 10 >= letters.length * 4
+        return if (other * 10 >= letters.length * 4) "another language" else null
     }
 
     /** Acts that fit [text] best, most useful first: a date suggests Schedule it, a foreign message Understand, a link Save to Notion. */

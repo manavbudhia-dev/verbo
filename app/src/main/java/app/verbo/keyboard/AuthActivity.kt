@@ -18,7 +18,7 @@ class AuthActivity : Activity() {
         Thread {
             val message = try {
                 Sync.finishGoogle(store, code)
-                "Signed in. Your skills, agents and keys are here"
+                restored(Store(this))
             } catch (e: SyncException) {
                 e.message ?: "Sign-in failed"
             } catch (e: Exception) {
@@ -28,10 +28,23 @@ class AuthActivity : Activity() {
         }.start()
     }
 
+    /** What came back from the dashboard, in one line: so the user sees nothing needs typing again. */
+    private fun restored(store: Store): String {
+        val parts = ArrayList<String>()
+        if (store.activeKey.isNotEmpty()) parts += "your ${store.providerName} key"
+        val skills = store.skills.size
+        if (skills > 0) parts += "$skills skill" + if (skills == 1) "" else "s"
+        parts += "your settings"
+        return if (store.activeKey.isEmpty()) "Signed in. Add an AI key on the dashboard or here to start"
+        else "Welcome back. Restored " + parts.joinToString(", ")
+    }
+
     private fun done(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_LONG).show()
-        val page = if (Store(this).onboarded) "dashboard" else "welcome"
-        startActivity(Intent(this, PageActivity::class.java).putExtra("page", page).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP))
+        val store = Store(this)
+        // Not signed in after all (a failed or stale link): back to the sign-in screen when that is where we came from.
+        val intent = if (SignInActivity.needed(store)) Intent(this, SignInActivity::class.java) else SignInActivity.next(this)
+        startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP))
         finish()
     }
 }

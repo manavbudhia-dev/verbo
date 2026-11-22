@@ -13,7 +13,10 @@ import com.google.mlkit.genai.proofreading.ProofreadingRequest
 import com.google.mlkit.genai.rewriting.RewriterOptions
 import com.google.mlkit.genai.rewriting.Rewriting
 import com.google.mlkit.genai.rewriting.RewritingRequest
+import com.google.mlkit.common.model.DownloadConditions
+import com.google.mlkit.common.model.RemoteModelManager
 import com.google.mlkit.nl.translate.TranslateLanguage
+import com.google.mlkit.nl.translate.TranslateRemoteModel
 import com.google.mlkit.nl.translate.Translation
 import com.google.mlkit.nl.translate.TranslatorOptions
 import java.util.Locale
@@ -94,6 +97,72 @@ object Offline {
             } finally { translator.close() }
         }
     } catch (e: Throwable) { null }
+
+    // ---------- instant translation ----------
+
+    private val clients = HashMap<String, com.google.mlkit.nl.translate.Translator>()
+    @Volatile private var downloaded: Set<String>? = null
+    private val fetching = java.util.Collections.synchronizedSet(HashSet<String>())
+
+    /** Language models already on the phone (ML Kit codes), read once and refreshed after each download. */
+    private fun downloadedModels(): Set<String> = downloaded ?: try {
+        Tasks.await(RemoteModelManager.getInstance().getDownloadedModels(TranslateRemoteModel::class.java), 5, TimeUnit.SECONDS)
+            .map { it.language }.toSet().also { downloaded = it }
+    } catch (e: Throwable) { emptySet() }
+
+    /** ML Kit code of the language [text] is written in, from the phone's own detector; null for Hinglish or unclear text. */
+    fun sourceCode(text: String): String? {
+        val name = LangDetect.detect(text) ?: return if (english(text)) TranslateLanguage.ENGLISH else null
+        if (name == LangDetect.HINGLISH) return null // romanised Hindi needs the AI service to read it well
+        return languageCode(name)
+    }
+
+    /**
+     * Translates instantly on the phone with models that are already downloaded: no request, no cost, well
+     * under a second. Never downloads in the way; a missing model is fetched in the background on Wi-Fi and
+     * null is returned, so this one time the AI service translates. Blocking: call from a worker thread.
+     */
+    fun quick(text: String, target: String): String? = sourceCode(text)?.let { quickFrom(text, it, target) }
+
+    /** [quick] with the source language already known (an ML Kit code such as "hi"). */
+    fun quickFrom(text: String, from: String, target: String): String? = try {
+        val to = languageCode(target)
+        when {
+            to == null -> null
+            from == to -> text
+            else -> {
+                val have = downloadedModels() + TranslateLanguage.ENGLISH
+                if (from !in have || to !in have) { fetch(listOf(from, to)); null }
+                else {
+                    val translator = synchronized(clients) {
+                        clients.getOrPut("$from>$to") { Translation.getClient(TranslatorOptions.Builder().setSourceLanguage(from).setTargetLanguage(to).build()) }
+                    }
+                    Tasks.await(translator.translate(text), 10, TimeUnit.SECONDS)?.trim()?.ifEmpty { null }
+                }
+            }
+        }
+    } catch (e: Throwable) { null }
+
+    /** Downloads the translation models for these languages in the background, on Wi-Fi only. */
+    fun prefetch(languages: List<String>) = fetch(languages.mapNotNull { languageCode(it) } + TranslateLanguage.ENGLISH + TranslateLanguage.HINDI)
+
+    private fun fetch(codes: List<String>) {
+        val need = codes.distinct().filter { it !in (downloaded ?: emptySet()) && fetching.add(it) }
+        if (need.isEmpty()) return
+        Thread {
+            try {
+                val manager = RemoteModelManager.getInstance()
+                val wifi = DownloadConditions.Builder().requireWifi().build()
+                for (code in need) try {
+                    Tasks.await(manager.download(TranslateRemoteModel.Builder(code).build(), wifi), 10, TimeUnit.MINUTES)
+                } catch (e: Throwable) { }
+            } catch (e: Throwable) {
+            } finally {
+                downloaded = null
+                need.forEach { fetching.remove(it) }
+            }
+        }.start()
+    }
 
     /** One line for the settings page: whether Gemini Nano can run here. */
     fun status(context: Context): String = try {

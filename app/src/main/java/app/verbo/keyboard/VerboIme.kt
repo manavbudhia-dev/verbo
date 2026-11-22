@@ -115,11 +115,15 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         super.onCreate()
         store = Store(this)
         fb = Feedback(this)
+        // Translation models for your languages download quietly on Wi-Fi, so translating is instant and free.
+        try { Offline.prefetch(store.languages) } catch (e: Throwable) { }
+        MessageListener.onIncoming = { ready -> onIncomingMessage(ready) }
         Thread { try { dictionary.load(assets.open("words.txt")) } catch (e: Exception) { } }.start()
         main.postDelayed(autoSync, Sync.EVERY_MS)
     }
 
     override fun onDestroy() {
+        if (MessageListener.onIncoming != null) MessageListener.onIncoming = null
         main.removeCallbacks(autoSync)
         stopVoiceWatch()
         worker.shutdownNow()
@@ -185,7 +189,9 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             setPadding(dp(3), 0, 0, 0)
             addView(chipsRow)
         }
-        suggestRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; visibility = View.GONE }
+        // The suggestion row always keeps its height while typing (blank when there is nothing to suggest),
+        // so the keyboard never grows and shrinks as words start and end.
+        suggestRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; visibility = View.INVISIBLE }
         statusRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -216,8 +222,8 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         top.addView(BotView(this).apply {
             mood = BotView.Mood.HELLO
             contentDescription = "Meet Verbo, the keyboard bot"
-            // The intro is a one-time greeting; after that the bot opens straight to the request panel.
-            setOnClickListener { feedback(KeyboardView.Type.MODE); if (store.welcomed) showBotPrompt() else showBotIntro() }
+            // One tap and Verbo is listening: no second tap on the mascot. Without an AI key it asks for one first.
+            setOnClickListener { feedback(KeyboardView.Type.MODE); openBot() }
         }, LinearLayout.LayoutParams(dp(30), dp(30)).apply { setMargins(dp(4), 0, dp(6), 0) })
         val voice = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -262,13 +268,10 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         keys?.swipeEnabled = store.swipeTyping
         hindiOn = store.hindiScript
         val barActive = assistantOn && agentMode != "manual"
-        wheelIds = if (barActive && store.wheelOn) store.wheel else emptyList()
-        baseWheel = wheelIds
-        keys?.wheelItems = wheelIds.map { wheelItem(it, false) }
-        val catalogIds = Store.WHEEL_TOOLS.map { it.first } + skills.map { "skill:" + it.name } + Apps.ALL.map { Apps.id(it) }
-        keys?.wheelCatalogIds = catalogIds
-        keys?.wheelCatalog = catalogIds.map { wheelItem(it, false) }
-        keys?.barLabel = if (!barActive) "" else if (wheelIds.isEmpty()) "hold to act" else "hold for wheel"
+        baseWheel = if (barActive && store.wheelOn) store.wheel else emptyList()
+        setWheel(baseWheel, emptyList())
+        keys?.wheelTurn = store.wheelTurn
+        keys?.barLabel = if (!barActive) "" else if (baseWheel.isEmpty()) "hold to act" else "hold for wheel"
         keymap = store.keymap
         keys?.bound = if (assistantOn && store.keysOn) KeyAction.bound(keymap, skills, currentInputEditorInfo?.packageName) else emptySet()
     }
@@ -360,8 +363,24 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         val rest = baseWheel.filter { it !in fits }
         val keep = rest.take(Store.MAX_WHEEL - fits.size)
         val mid = keep.size / 2
-        wheelIds = keep.take(mid) + fits + keep.drop(mid)
-        keys?.wheelItems = wheelIds.map { wheelItem(it, it in fits) }
+        setWheel(keep.take(mid) + fits + keep.drop(mid), fits)
+    }
+
+    /**
+     * The wheel's ring: [front] fills the semicircle, and rolling the rim brings in more tools and apps,
+     * Auto-translate, Notion and Slack first, then the other tools, connected apps and your skills.
+     */
+    private fun setWheel(front: List<String>, suggested: List<String>) {
+        wheelIds = if (front.isEmpty()) emptyList() else front + wheelExtras().filter { it !in front }
+        keys?.wheelSlots = maxOf(1, front.size)
+        keys?.wheelItems = wheelIds.map { wheelItem(it, it in suggested) }
+    }
+
+    private fun wheelExtras(): List<String> {
+        val apps = Apps.ALL.map { Apps.id(it) }
+        // Apps with a token come before those still waiting to be connected.
+        val (ready, later) = apps.partition { id -> Apps.byId(id)?.let { it.tokenField == null || Apps.token(it, store).isNotEmpty() } ?: false }
+        return (listOf("auto", "app:notion", "app:slack") + Store.WHEEL_TOOLS.map { it.first } + ready + skills.map { "skill:" + it.name } + later).distinct()
     }
 
     private fun buildChips() {
@@ -377,8 +396,29 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             row.addView(inbox, chipParams())
         }
         val fresh = contextText == null && hasFreshClip()
+        // A message that just arrived in this chat (read from its notification, when the user allowed it)
+        // counts like a copied one: no copying needed to translate or answer it.
+        val incoming = if (contextText == null && !fresh && store.triggersOn && store.watchMessages && store.incomingFresh &&
+            store.incomingApp == currentInputEditorInfo?.packageName) store.incomingText else null
+        if (incoming != null && store.incomingAt != lastAttachedClip) {
+            lastAttachedClip = store.incomingAt
+            contextText = incoming
+            contextFromIncoming = true
+            refreshContext()
+        }
+        // What an automatic action already made of it (a translation): one tap shows it, nothing is asked again.
+        if (incoming != null || (contextText != null && contextText == store.incomingText && store.incomingFresh)) {
+            val done = store.incomingResult
+            if (done.isNotBlank()) {
+                val chip = chipView("⚡ " + store.incomingSkill.ifBlank { "Result" } + " · " + store.incomingFrom.ifBlank { "message" }.take(18),
+                    p.accent, p.accentPressed, p.onAccent)
+                chip.setOnClickListener { feedback(KeyboardView.Type.MODE); showIncomingResult() }
+                row.addView(chip, chipParams())
+            }
+        }
         // Triggers: the copied message is matched on the phone; a chip offers each matching skill.
         val clip = if (store.triggersOn) contextText ?: (if (fresh) readClip() else null) else null
+        val fromIncoming = clip != null && clip == store.incomingText && store.incomingFresh
         val matched = clip?.let { c -> store.triggers.filter { Cards.matches(it.kind, it.keyword, c) } }.orEmpty()
         val stamp = if (fresh) clipStamp() else 0L
         if (fresh && matched.isNotEmpty() && stamp != lastAttachedClip) {
@@ -386,11 +426,11 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             lastAttachedClip = stamp
             contextText = clip
             refreshContext()
-            suggestRow?.visibility = View.GONE
+            suggestRow?.visibility = View.INVISIBLE
             chipsScroll?.visibility = View.VISIBLE
         }
         // Quick replies to the copied message, fetched once per copy, one tap to put in the field.
-        val replyStamp = if (clip != null) clipStamp() else 0L
+        val replyStamp = if (fromIncoming) store.incomingAt else if (clip != null) clipStamp() else 0L
         if (clip != null && replyStamp != 0L && replyStamp != lastHistoryClip) { lastHistoryClip = replyStamp; store.addClipHistory(clip) }
         if (clip != null && store.smartReplies && replyStamp != 0L) {
             if (repliesFor == replyStamp) for (r in replies) {
@@ -415,10 +455,13 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             val empty = try { readTarget()?.text.isNullOrBlank() } catch (e: Exception) { false }
             if (empty) main.post { if (!busy) showActs() }
         }
-        // An automatic trigger runs once per copied message.
+        // An automatic trigger runs once per copied message, or once per incoming one the notification didn't already handle.
         val auto = matched.firstOrNull { it.auto }
-        if (auto != null && clip != null && stamp != 0L && stamp != lastAutoClip && !busy && store.activeKey.isNotBlank()) {
-            lastAutoClip = stamp
+        // An incoming message is handled by the notification reader itself; running it here too would ask twice.
+        val autoStamp = if (fromIncoming) 0L else stamp
+        // Running by itself is Pro; on Free the chip above still offers the same skill in one tap.
+        if (auto != null && clip != null && autoStamp != 0L && autoStamp != lastAutoClip && !busy && store.activeKey.isNotBlank() && store.isPro) {
+            lastAutoClip = autoStamp
             main.post { runTrigger(auto, clip) }
         }
         for (skill in skills) {
@@ -681,15 +724,12 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     }
 
     /** A shortcut on the wheel was chosen. */
-    override fun onWheel(index: Int) {
-        val id = wheelIds.getOrNull(index) ?: return
-        feedback(KeyboardView.Type.ENTER)
-        runShortcut(id)
+    override fun onWheelTurned(turn: Int) {
+        store.wheelTurn = turn
     }
 
-    /** The compass was spun and released: run whichever catalog entry landed under the needle. */
-    override fun onWheelCatalog(index: Int) {
-        val id = keys?.wheelCatalogIds?.getOrNull(index) ?: return
+    override fun onWheel(index: Int) {
+        val id = wheelIds.getOrNull(index) ?: return
         feedback(KeyboardView.Type.ENTER)
         runShortcut(id)
     }
@@ -718,7 +758,16 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     }
 
     /** An app slot on the wheel: run its skill, share to it, open it filled in, or use its connected tools. */
+    /** True with Pro; otherwise says the feature is part of Pro, with Upgrade. */
+    private fun proOnly(feature: String): Boolean {
+        if (store.isPro) return true
+        showStatus("$feature is a Verbo Pro feature", "Upgrade" to { openPage("pro") })
+        return false
+    }
+
     internal fun runApp(app: Apps.App) {
+        // Apps that act through a connection (Slack, Notion, Todoist...) are Pro; drafts and shares stay free.
+        if (app.tokenField != null && !proOnly(app.name)) return
         app.skill?.let { runAct(it); return }
         val text = contextForActs()
         when (app.key) {
@@ -743,8 +792,40 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
                     showStatus("Connect ${app.name} in Verbo to use it here", "Connect" to { openPage("automate") })
                     return
                 }
-                runTask("${app.name}…", app.task, card = true, retry = { runApp(app) })
+                if (app.sends) sendToApp(app) else runTask("${app.name}…", app.task, card = false, retry = { runApp(app) })
             }
+        }
+    }
+
+    /**
+     * Slack, Todoist, Linear, GitHub, Discord: one tap sends or saves the text there. The text that was sent
+     * leaves the field (like sending a message), and a status line says what happened, with Open and Undo.
+     */
+    private fun sendToApp(app: Apps.App) {
+        if (busy) return
+        if (store.activeKey.isBlank()) { showStatus("Add your ${store.providerName} API key to use actions", "Set up" to { openApp() }); return }
+        val target = readTarget() ?: return
+        val context = contextText ?: if (hasFreshClip()) readClip() else null
+        if (target.text.isBlank() && context == null) { showStatus("Type something first to send it to ${app.name}"); return }
+        store.recordUse(Apps.id(app))
+        launch("${app.name}…", app.task, Ai.userMessage(target.text, context), connected = true) { r ->
+            val line = r.text.lines().firstOrNull { it.isNotBlank() }?.take(70) ?: "Done"
+            val failed = Regex("""\b(fail|error|couldn|can't|cannot|not connected|unable)""", RegexOption.IGNORE_CASE).containsMatchIn(line)
+            val open = r.openUri?.let { uri -> openLabel(uri) to { openLink(uri) } }
+            if (!failed && target.text.isNotBlank()) {
+                // It went to the app: clear what was sent, the way a sent message leaves the box.
+                val now = readTarget()
+                if (now != null && now.text == target.text) {
+                    val ic = currentInputConnection
+                    ic?.beginBatchEdit()
+                    if (now.selection == null) ic?.deleteSurroundingText(now.before.length, now.after.length) else ic?.commitText("", 1)
+                    ic?.endBatchEdit()
+                    undo = target.text to ""
+                }
+            }
+            contextText = null
+            refreshContext()
+            showStatus(line, *listOfNotNull(open, if (undo != null && !failed) "Put text back" to { undoLast() } else null).toTypedArray())
         }
     }
 
@@ -820,16 +901,18 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     internal fun runAct(name: String) {
         val skill = actSkill(name) ?: run { showStatus("No act called “$name”"); return }
         store.recordUse("skill:" + skill.name)
+        sendAfter = skill.name.equals("Place", true)
         if (contextText == null && hasFreshClip()) readClip()?.let { contextText = it }
         refreshContext()
         val schedule = name.equals("Schedule it", true)
+        contextText?.let { if (understandQuickly(skill.name, it)) return }
         if (Acts.isChain(skill.instruction)) {
             val steps = Acts.chainSteps(skill.instruction)
             val task = Acts.chainTask(steps) { step -> actSkill(step)?.takeIf { !Acts.isChain(it.instruction) }?.instruction }
             runTask("${skill.name}…", task, card = true, retry = { runAct(name) }, then = { r -> finishChain(r) })
             return
         }
-        runTask("${skill.name}…", Ai.skillTask(skill.instruction), card = true, retry = { runAct(name) }, then = { r ->
+        runTask("${skill.name}…", Ai.skillTask(skill.instruction), card = Acts.showsCard(skill.name), retry = { runAct(name) }, then = { r ->
             val event = r.openUri?.let { PhoneCalendar.parseTemplate(it) }
             if (schedule && event != null) {
                 // One tap: the event is saved now, and the message carries the link so friends can add it too.
@@ -840,6 +923,31 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
                 r.copy(text = r.text + "\nAdd it to your calendar: " + r.openUri)
             } else r
         })
+    }
+
+    /**
+     * "Understand any language" on a received message: translated into English on the phone in a moment when
+     * the language's model is there, shown as a card. Returns false (and the AI service is used) otherwise.
+     */
+    private fun understandQuickly(name: String, message: String): Boolean {
+        if (!name.equals("Understand any language", true) || busy) return false
+        val from = Acts.foreignLanguage(message)?.takeIf { it != "another language" } ?: return false
+        busy = true
+        showStatus("Translating from $from…")
+        val token = ++generation
+        worker.execute {
+            val done = Offline.quick(message, "English")
+            main.post {
+                if (token != generation) return@post
+                busy = false
+                if (done != null && done != message) showResult(ActionResult("From $from\n$done", null), { chosen -> insert(chosen.text.substringAfter('\n')) }, null)
+                else {
+                    val skill = actSkill(name) ?: return@post
+                    runTask("${skill.name}…", Ai.skillTask(skill.instruction), card = true) { }
+                }
+            }
+        }
+        return true
     }
 
     /** After a chain: every calendar link becomes a saved event; the last other link stays as the button. */
@@ -1020,10 +1128,57 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(Color.parseColor("#22D3EE"), Color.parseColor("#4F46E5"))).apply { cornerRadius = dp(24).toFloat() }
-            setOnClickListener { feedback(KeyboardView.Type.MODE); showBotPrompt() }
+            setOnClickListener { feedback(KeyboardView.Type.MODE); openBot() }
         }, LinearLayout.LayoutParams(-1, dp(48)).apply { setMargins(dp(24), dp(10), dp(24), dp(6)) })
         addView(View(this@VerboIme), LinearLayout.LayoutParams(1, 0, 1f))
         addView(botGlobe())
+    }
+
+    /** The bot icon: listen for a request straight away, or ask for an AI key first when none is set. */
+    internal fun openBot() {
+        store.welcomed = true
+        welcome?.visibility = View.GONE
+        if (store.activeKey.isBlank()) { showKeyNeeded(); return }
+        voiceForBot = true
+        startVoice(true)
+    }
+
+    /** Shown instead of the bot until an AI key is saved: one tap to the AI settings. */
+    internal fun showKeyNeeded(): Unit = showPanel(dp(300)) {
+        background = paper(false)
+        addView(botTop({ hidePanel(); showTyping() }))
+        addView(View(this@VerboIme), LinearLayout.LayoutParams(1, 0, 0.5f))
+        addView(BotView(this@VerboIme).apply { mood = BotView.Mood.HELLO }, LinearLayout.LayoutParams(dp(84), dp(84)).apply { gravity = Gravity.CENTER_HORIZONTAL })
+        addView(TextView(this@VerboIme).apply {
+            text = "Add your API key first"
+            setTextColor(p.text)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+        }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+        addView(TextView(this@VerboIme).apply {
+            text = "Verbo answers with your own ${store.providerName} key. It stays on this phone."
+            setTextColor(p.muted)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            gravity = Gravity.CENTER
+        }, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(28), dp(4), dp(28), 0) })
+        addView(TextView(this@VerboIme).apply {
+            text = "Add API key"
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(Color.parseColor("#8B5CF6"), Color.parseColor("#4F46E5"))).apply { cornerRadius = dp(24).toFloat() }
+            setOnClickListener { feedback(KeyboardView.Type.MODE); hidePanel(); showTyping(); openPage("ai") }
+        }, LinearLayout.LayoutParams(-1, dp(48)).apply { setMargins(dp(24), dp(14), dp(24), 0) })
+        addView(TextView(this@VerboIme).apply {
+            text = "Not now"
+            setTextColor(p.muted)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            gravity = Gravity.CENTER
+            setOnClickListener { feedback(KeyboardView.Type.MODE); hidePanel(); showTyping() }
+        }, LinearLayout.LayoutParams(-1, dp(40)).apply { topMargin = dp(4) })
+        addView(View(this@VerboIme), LinearLayout.LayoutParams(1, 0, 1f))
     }
 
     internal fun showBotPrompt(initial: String = "", editing: Boolean = false): Unit =
@@ -1102,6 +1257,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         }
         val task = "You are Verbo, the user's personal assistant living on their keyboard. Do exactly what the user asks: write, reply, find, explain or plan. Use your tools when they help. Reply with only the message or answer itself, no preamble and no quotes around it."
         launch("Working on it", task, prompt, connected = true, card = true) { result ->
+            resultFromBot = true
             showResult(result, { chosen -> insert(chosen.text) }) { showBotPrompt(prompt) }
         }
     }
@@ -1118,7 +1274,39 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         buildChips()
         store.recordUse(store.triggerId(t))
         store.recordUse("skill:" + skill.name)
-        runTask("${skill.name}…", Ai.skillTask(skill.instruction), card = true) { runTrigger(t, clip) }
+        sendAfter = skill.name.equals("Place", true)
+        if (understandQuickly(skill.name, clip)) return
+        runTask("${skill.name}…", Ai.skillTask(skill.instruction), card = Acts.showsCard(skill.name)) { runTrigger(t, clip) }
+    }
+
+    /**
+     * A chat message arrived (read from its notification) while the keyboard may already be open.
+     * In that chat it becomes the context at once; when its automatic result (a translation) is ready
+     * and nothing else is on screen, the card opens by itself.
+     */
+    internal fun onIncomingMessage(ready: Boolean) {
+        if (!isInputViewShown || !store.watchMessages || !store.incomingFresh) return
+        if (store.incomingApp != currentInputEditorInfo?.packageName) return
+        // An older incoming message gives way to the new one; something the user copied on purpose stays.
+        if (contextText != null && contextText != store.incomingText && contextFromIncoming) contextText = null
+        buildChips()
+        if (ready && store.incomingResult.isNotBlank() && !busy && panel?.visibility != View.VISIBLE) {
+            val empty = try { readTarget()?.text.isNullOrBlank() } catch (e: Exception) { true }
+            if (empty) showIncomingResult()
+        }
+    }
+
+    /** True while [contextText] is a message that came in from a notification, not one the user copied. */
+    private var contextFromIncoming = false
+
+    /** The answer an automatic action already made of an incoming message, as a card with Copy / Insert. */
+    private fun showIncomingResult() {
+        val text = store.incomingResult
+        if (text.isBlank()) return
+        contextText = store.incomingText
+        refreshContext()
+        val target = readTarget()
+        showResult(ActionResult(text, null), { chosen -> if (target != null) deliver(target, chosen) else insert(chosen.text) }, null)
     }
 
     private fun useClipAsContext() {
@@ -1133,6 +1321,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             return
         }
         contextText = text.take(4000)
+        contextFromIncoming = false
         refreshContext()
         buildChips()
     }
@@ -1252,6 +1441,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             undo = null
             loadSettings()
             contextText = null // context belongs to the conversation it was copied for
+            contextFromIncoming = false
             buildChips()
             main.removeCallbacks(autoRun)
             autoLang = if (assistantOn) store.autoTranslate(info?.packageName) else null
@@ -1321,10 +1511,15 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     /** The strip shows suggestions while a word is being typed, and the skill keys otherwise. */
     private fun showTyping() {
         statusRow?.visibility = View.GONE
+        // A status line hides the Type / Act pills; bring them back whenever typing resumes.
+        chipsScroll?.visibility = View.VISIBLE
+        if (assistantOn && (chipsRow?.childCount ?: 0) == 0) buildChips()
         val row = suggestRow ?: return
         val labels = if (slashMatches.isNotEmpty()) slashMatches.map { (it.emoji + " " + it.name).trim() } else suggestions
         if (labels.isEmpty()) {
-            row.visibility = View.GONE
+            // Blank, not gone: the row keeps its space so the keys don't move.
+            for (i in 0 until row.childCount) (row.getChildAt(i) as TextView).apply { text = ""; isClickable = false }
+            row.visibility = View.INVISIBLE
             return
         }
         while (row.childCount < 3) {
@@ -1430,6 +1625,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         if (skill == null && rememberCommand()) return
         if (skill != null && Acts.isChain(skill.instruction)) { runAct(skill.name); return }
         if (skill != null) store.recordUse("skill:" + skill.name)
+        sendAfter = skill?.name.equals("Place", true)
         // Requests typed for the bar are answers to look at first, so they open as a card with Copy and Insert.
         // Skill keys rewrite your own text, so they apply straight away unless Agent Mode is "Ask first".
         runTask(
@@ -1598,6 +1794,9 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         }
     }
 
+    /** Set for a Place run: its link is sent right after it goes in (chat apps only). */
+    private var sendAfter = false
+
     private fun runTask(label: String, task: String?, card: Boolean, then: (ActionResult) -> ActionResult = { it }, retry: () -> Unit) {
         if (busy) return
         if (isPasswordField()) {
@@ -1618,7 +1817,8 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             showStatus("That's too much text for one action. Select a part of it")
             return
         }
-        launch(label, task, Ai.userMessage(target.text, context), connected = true, card = card) { raw ->
+        // Only requests that may need an app, a lookup or the web carry the tools: the rest are smaller and much faster.
+        launch(label, task, Ai.userMessage(target.text, context), connected = task == null || Ai.needsTools(task), card = card) { raw ->
             val result = then(raw)
             if (card) showResult(result, { chosen -> deliver(target, chosen) }) { hidePanel(); retry() }
             else deliver(target, result)
@@ -1666,8 +1866,8 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             showStatus("Verbo doesn't type into password fields")
             return
         }
-        if (!store.googleConnected) {
-            showChoices(if (store.deviceToken.isEmpty()) "Google Meet needs your dashboard" else "Google isn't connected yet", listOf(
+        if (!store.googleConnected || !store.isPro) {
+            showChoices(if (store.deviceToken.isEmpty()) "Google Meet needs your dashboard" else if (!store.isPro) "Google Meet links are a Verbo Pro feature" else "Google isn't connected yet", listOf(
                 "Instant link, no account" to {
                     hidePanel()
                     // A Jitsi room exists as soon as someone opens its address; a long random name keeps it private.
@@ -1675,7 +1875,8 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
                     insert("https://meet.jit.si/verbo-$room")
                 },
                 "Open Google Meet" to { hidePanel(); showTyping(); openLink("https://meet.google.com/new") },
-                "How to connect Google" to {
+                if (!store.isPro && store.deviceToken.isNotEmpty()) "Upgrade to Pro" to { hidePanel(); showTyping(); openPage("pro") }
+                else "How to connect Google" to {
                     hidePanel()
                     showTyping()
                     startActivity(Intent(this, PageActivity::class.java).putExtra("page", "automate").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -1719,13 +1920,21 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
                 languages = mine
                 all = Store.ALL_LANGUAGES
                 autoMode = auto
+                // It reopens on the languages it was last turned to, not back at the first five.
+                startTurn = store.langTurn
+                onFanTurned = { store.langTurn = it }
                 onPick = { i ->
-                    rememberLanguage(mine[i])
-                    if (auto) { hidePanel(); setAuto(mine[i]) } else translateInto(listOf(mine[i]))
+                    // The index is into the turning ring: your languages first, then every other one.
+                    val lang = ring.getOrNull(i)
+                    if (lang != null) {
+                        // The ring keeps its order (no reshuffle), so the turned view stays where the user left it.
+                        if (auto) { hidePanel(); setAuto(lang) } else translateInto(listOf(lang))
+                    }
                 }
                 onCompassPick = { i ->
                     val lang = Store.ALL_LANGUAGES[i]
                     rememberLanguage(lang)
+                    store.langTurn = 0 // the saved language now leads the fan: open it at the start
                     if (auto) { hidePanel(); setAuto(lang) } else translateInto(listOf(lang))
                 }
                 onTurn = { feedback(KeyboardView.Type.MODE) }
@@ -1745,7 +1954,32 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
 
     private fun translateInto(languages: List<String>) {
         hidePanel()
-        runTask(if (languages.size == 1) "Into ${languages[0]}…" else "Translating…", Ai.translateTask(languages), card = true) { showLanguages() }
+        val target = readTarget()
+        val text = target?.text.orEmpty()
+        val one = languages.singleOrNull()
+        // Your own text into one language: instantly on the phone when its model is downloaded, straight into the field.
+        if (one != null && target != null && text.isNotBlank() && text.length <= MAX_CHARS && !busy && !isPasswordField()) {
+            busy = true
+            showStatus("Into $one…")
+            val token = ++generation
+            worker.execute {
+                val done = Offline.quick(text, one) ?: Hinglish.quick(store, text, one) { dictionary.contains(it) }
+                main.post {
+                    if (token != generation) return@post
+                    busy = false
+                    when {
+                        // The AI service translates this one; Hinglish also teaches it the user's spellings for next time.
+                        done == null -> runTask("Into $one…", Ai.translateTask(languages) + if (Hinglish.isHinglish(text, { dictionary.contains(it) })) Hinglish.LEARN else "",
+                            card = false, then = { r -> Hinglish.learn(store, r) }) { showLanguages() }
+                        done == text -> showStatus("Already in $one")
+                        else -> deliver(target, ActionResult(done, null))
+                    }
+                }
+            }
+            return
+        }
+        // A received message (nothing typed) or several languages at once: a card to read.
+        runTask(if (one != null) "Into $one…" else "Translating…", Ai.translateTask(languages), card = text.isBlank() || one == null) { showLanguages() }
     }
 
     /** The full list: every language, all of mine at once, and the auto-translate switch. */
@@ -1777,6 +2011,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         autoLang = language
         lastAuto = ""
         store.setAutoTranslate(currentInputEditorInfo?.packageName, language)
+        if (language != null) try { Offline.prefetch(listOf(language)) } catch (e: Throwable) { }
         main.removeCallbacks(autoRun)
         refreshMode()
         showTyping()
@@ -1819,36 +2054,48 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     private fun autoTranslateNow() {
         val language = autoLang ?: return
         if (busy || listening || panel?.visibility == View.VISIBLE || isPasswordField()) return
-        if (store.activeKey.isBlank()) {
-            showStatus("Auto-translate needs your API key", "Set up" to { openApp() })
-            return
-        }
         val target = readTarget() ?: return
         val text = target.text
         // Nothing to do for an empty field, for text we just produced, or for a selection the user is working on.
         if (text.isBlank() || text == lastAuto || target.selection != null || text.length > AUTO_MAX_CHARS) return
-        launch("→ $language…", Ai.autoTranslateTask(language), text, connected = false) { result ->
-            val now = readTarget()
-            val unchanged = now != null && now.selection == null && now.before == target.before && now.after == target.after
-            if (!unchanged || result.text.isEmpty()) {
-                // The user kept typing: drop this translation and wait for the next pause.
-                showTyping()
-                scheduleAuto()
-                return@launch
+        // On the phone first: instant and free once the language's model is downloaded.
+        busy = true
+        val token = ++generation
+        worker.execute {
+            val done = Offline.quick(text, language) ?: Hinglish.quick(store, text, language) { dictionary.contains(it) }
+            main.post {
+                if (token != generation) return@post
+                busy = false
+                val learn = if (Hinglish.isHinglish(text, { dictionary.contains(it) })) Hinglish.LEARN else ""
+                if (done != null) applyAuto(target, text, ActionResult(done, null), language)
+                else if (store.activeKey.isBlank()) showStatus("Auto-translate needs your API key", "Set up" to { openApp() })
+                else launch("→ $language…", Ai.autoTranslateTask(language) + learn, text, connected = false) { result -> applyAuto(target, text, Hinglish.learn(store, result), language) }
             }
-            lastAuto = result.text
-            if (result.text == text) {
-                showTyping() // it was already in the target language
-                return@launch
-            }
-            val ic = currentInputConnection ?: return@launch
-            ic.beginBatchEdit()
-            ic.deleteSurroundingText(target.before.length, target.after.length)
-            ic.commitText(result.text, 1)
-            ic.endBatchEdit()
-            undo = text to result.text
-            showStatus("Translated into $language", "Undo" to { lastAuto = text; undoLast() })
         }
+    }
+
+    /** Puts an auto-translation in place of the text, unless the user kept typing meanwhile. */
+    private fun applyAuto(target: Target, text: String, result: ActionResult, language: String) {
+        val now = readTarget()
+        val unchanged = now != null && now.selection == null && now.before == target.before && now.after == target.after
+        if (!unchanged || result.text.isEmpty()) {
+            // The user kept typing: drop this translation and wait for the next pause.
+            showTyping()
+            scheduleAuto()
+            return
+        }
+        lastAuto = result.text
+        if (result.text == text) {
+            showTyping() // it was already in the target language
+            return
+        }
+        val ic = currentInputConnection ?: return
+        ic.beginBatchEdit()
+        ic.deleteSurroundingText(target.before.length, target.after.length)
+        ic.commitText(result.text, 1)
+        ic.endBatchEdit()
+        undo = text to result.text
+        showStatus("Translated into $language", "Undo" to { lastAuto = text; undoLast() })
     }
 
     private fun showRewrite() {
@@ -1992,8 +2239,9 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         botEdit = null
         listenBot = null
         window?.window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
-        // Same height as the keys and strip it replaces, so the app above doesn't jump.
-        val height = if (keepKeys) 0 else typingViews.filter { it.visibility == View.VISIBLE }.sumOf { it.height }
+        // Same height as the keys, strip and suggestion row it replaces, so the app above doesn't jump.
+        val height = if (keepKeys) 0 else typingViews.filter { it.visibility == View.VISIBLE }.sumOf { it.height } +
+            (suggestRow?.takeIf { it.visibility != View.GONE }?.height ?: 0)
         box.layoutParams = box.layoutParams.apply { this.height = maxOf(height, minHeight) }
         box.gravity = Gravity.TOP
         suggestRow?.visibility = View.GONE
@@ -2038,7 +2286,6 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         background = paper(false)
         addView(botTop(cancel))
         addView(View(this@VerboIme), LinearLayout.LayoutParams(1, 0, 0.5f))
-        addView(BotView(this@VerboIme).apply { mood = BotView.Mood.WORK }, LinearLayout.LayoutParams(dp(92), dp(92)).apply { gravity = Gravity.CENTER_HORIZONTAL })
         addView(TextView(this@VerboIme).apply {
             text = "Working on it…"
             setTextColor(p.muted)
@@ -2123,7 +2370,12 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         Cards.notion(r.text, r.openUri)?.plain() ?: Cards.list(r.text)?.plain() ?: r.text
 
     /** The result as a card: back, try again, copy, and insert into the field (or send, where the app allows it). */
+    /** Set just before showing the bot's own answer: only then does the cool mascot sit on the result bar. */
+    private var resultFromBot = false
+
     internal fun showResult(result: ActionResult, onInsert: (ActionResult) -> Unit, onRetry: (() -> Unit)?) = showPanel {
+        val bot = resultFromBot
+        resultFromBot = false
         steps = null
         val person = Ai.personCard(result.text)
         val notion = if (person == null) Cards.notion(result.text, result.openUri) else null
@@ -2274,10 +2526,15 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         val sends = imeOpts and EditorInfo.IME_MASK_ACTION == EditorInfo.IME_ACTION_SEND && imeOpts and EditorInfo.IME_FLAG_NO_ENTER_ACTION == 0
         bar.addView(side(R.drawable.ic_pencil_line, "Edit") { hidePanel(); onInsert(result) }, LinearLayout.LayoutParams(0, dp(52), 1f))
         bar.addView(View(this@VerboIme).apply { setBackgroundColor(Color.parseColor("#E5E7EB")) }, LinearLayout.LayoutParams(dp(1), dp(22)))
-        bar.addView(LinearLayout(this@VerboIme).apply {
+        // The cool bot sits in the middle only for the bot's own answers; an action's result gets Copy there.
+        if (bot) bar.addView(LinearLayout(this@VerboIme).apply {
             gravity = Gravity.CENTER
             clipChildren = false
             addView(BotView(this@VerboIme).apply { mood = BotView.Mood.COOL; translationY = -dp(12).toFloat() }, LinearLayout.LayoutParams(dp(54), dp(54)))
+        }, LinearLayout.LayoutParams(0, dp(52), 1f))
+        else bar.addView(side(R.drawable.ic_clipboard, "Copy") {
+            (getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(android.content.ClipData.newPlainText("Verbo", result.text))
+            hidePanel(); showStatus("Copied")
         }, LinearLayout.LayoutParams(0, dp(52), 1f))
         bar.addView(View(this@VerboIme).apply { setBackgroundColor(Color.parseColor("#E5E7EB")) }, LinearLayout.LayoutParams(dp(1), dp(22)))
         bar.addView(side(R.drawable.ic_arrow_up, if (sends) "Send" else "Apply") {
@@ -2440,6 +2697,13 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
 
     private fun deliver(target: Target, result: ActionResult) {
         val open = result.openUri?.let { uri -> openLabel(uri) to { openLink(uri) } }
+        // A Notion save or lookup is done once it's in Notion: say so, don't paste its title into the field.
+        if (result.openUri?.contains("notion.so") == true && Cards.notion(result.text, result.openUri) != null) {
+            contextText = null
+            refreshContext()
+            showStatus(result.text.lines().firstOrNull()?.take(60)?.ifBlank { null } ?: "Done", *listOfNotNull(open).toTypedArray())
+            return
+        }
         if (result.text.isEmpty()) {
             showStatus("Ready", *listOfNotNull(open).toTypedArray())
             return
@@ -2465,6 +2729,17 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         undo = target.text to chatText(result)
         contextText = null
         refreshContext()
+        // "Send my location": in a chat whose enter key sends, it goes out with the same tap.
+        if (sendAfter) {
+            sendAfter = false
+            val opts = currentInputEditorInfo?.imeOptions ?: 0
+            if (opts and EditorInfo.IME_MASK_ACTION == EditorInfo.IME_ACTION_SEND && opts and EditorInfo.IME_FLAG_NO_ENTER_ACTION == 0) {
+                ic.performEditorAction(EditorInfo.IME_ACTION_SEND)
+                undo = null
+                showStatus("Location sent")
+                return
+            }
+        }
         showStatus("Done", *listOfNotNull("Undo" to { undoLast() }, open).toTypedArray())
     }
 
@@ -2726,6 +3001,15 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             typeface = Typeface.DEFAULT_BOLD
             setPadding(dp(12), 0, 0, 0)
         }, LinearLayout.LayoutParams(0, -2, 1f))
+        if (forBot) header.addView(iconButton(R.drawable.ic_keyboard, "Type the request instead", p.muted) {
+            stopVoiceWatch()
+            rec?.cancel()
+            listening = false
+            voiceForBot = false
+            voiceSegments.setLength(0)
+            voicePartial = ""
+            showBotPrompt()
+        }, LinearLayout.LayoutParams(dp(40), dp(40)))
         header.addView(iconButton(R.drawable.ic_x, "Stop listening", p.muted) {
             stopVoiceWatch()
             rec?.cancel()
@@ -2847,7 +3131,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             row.addView(close, LinearLayout.LayoutParams(dp(40), dp(36)))
         }
         chipsScroll?.visibility = View.GONE
-        suggestRow?.visibility = View.GONE
+        suggestRow?.visibility = View.INVISIBLE
         row.visibility = View.VISIBLE
     }
 

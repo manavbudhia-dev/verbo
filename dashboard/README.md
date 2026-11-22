@@ -91,6 +91,28 @@ and the card offers **Reconnect**. While the consent screen is in "Testing", Goo
 seven days and allows up to 100 test users; publishing an app that uses the Gmail scopes needs Google's
 verification. Without this setup the Meeting link shortcut still offers an instant no-account (Jitsi) link.
 
+## Verbo Pro
+
+The app's free plan has the keyboard, the wheel, translation, skills and acts. **Pro** adds the assistant chat,
+one-tap app shortcuts (Slack, Notion, Todoist, Linear, GitHub, Discord, Calendly), auto actions that run by
+themselves, acting on incoming messages, and Google Meet / Calendar / Gmail. The plan is kept on this server with
+the account, so a copied APK unlocks nothing; an account can have at most `DEVICE_LIMIT` phones paired (signing in
+again on the same phone replaces its old entry, and phones can be removed under Settings → Phones).
+
+Payments go through [Razorpay](https://razorpay.com) payment links (UPI, cards, netbanking):
+
+1. Create a Razorpay account and, in **Test mode** first, make API keys. Put them in `.env` as
+   `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET`, with `PUBLIC_URL` set.
+2. **Webhooks → Add new webhook**: URL `https://your-domain/api/billing/webhook`, event `payment_link.paid`,
+   and a secret you also put in `.env` as `RAZORPAY_WEBHOOK_SECRET`. (The return page grants Pro too; the
+   webhook makes sure a payment counts even if the buyer closes the browser.)
+3. Set the prices (`PRO_LIFETIME_PAISE`, `PRO_MONTH_PAISE`, in paise) and restart.
+4. The dashboard's **Pro** page shows the plan and the buy buttons. Test a payment with Razorpay's test UPI or
+   card, then switch to Live keys.
+
+To give Pro by hand (testers, a payment taken another way): `docker compose exec dashboard node grant.js EMAIL lifetime`
+(or `month`, `days 90`, `free`). Emails in `ADMIN_EMAILS` always have Pro.
+
 ## Run without Docker
 
 Needs Node 22.13 or newer.

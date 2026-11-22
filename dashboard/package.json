@@ -6,7 +6,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node test/race.js && node test/google.js && node test/sync.js && node test/login.js"
+    "test": "node test/race.js && node test/google.js && node test/sync.js && node test/login.js && node test/pro.js"
   },
   "engines": { "node": ">=22.13" },
   "dependencies": {

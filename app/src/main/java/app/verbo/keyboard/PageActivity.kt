@@ -50,7 +50,9 @@ class PageActivity : Activity() {
     private var resumed = false
     override fun onResume() {
         super.onResume()
-        if (resumed && (page == "welcome" || page == "dashboard" || page == "keys" || page == "automate" || page == "memory")) { store = Store(this); render() }
+        if (resumed && (page == "welcome" || page == "dashboard" || page == "keys" || page == "automate" || page == "memory" || page == "copysettings")) { store = Store(this); render() }
+        // Back from paying in the browser: fetch the plan straight away.
+        if (resumed && page == "pro" && store.deviceToken.isNotEmpty()) refreshPlan()
         resumed = true
         // Coming back from the browser (the dashboard, say): refresh on its own, except on screens mid-edit.
         if (!page.contains("-new") && !page.contains("-edit") && page != "try") {
@@ -98,6 +100,7 @@ class PageActivity : Activity() {
             page == "usage" -> usagePage(column)
             page == "welcome" -> welcomePage(column)
             page == "keys" -> keysPage(column)
+            page == "pro" -> proPage(column)
             else -> tryPage(column)
         }
     }
@@ -286,6 +289,21 @@ class PageActivity : Activity() {
         ))
         note(column, "An estimate from the token counts your AI service reports, at its list prices (Haiku 5.5 $0.10 / $0.50, Sonnet 5.5 $2 / $10, Opus 5.5 $4 / $20 per million tokens in / out; web search $10 per 1,000)." +
             if (u.optBoolean("unpriced")) " Some requests used a model without a known price, so they count as $0." else "")
+        // The answer cache: repeated requests come back free.
+        column.addView(ui.text("Answer cache", 16f, bold = true).apply { setPadding(ui.dp(2), ui.dp(6), 0, ui.dp(6)) })
+        val hits = u.optInt("cacheHits")
+        val saved = u.optDouble("cacheSaved", 0.0)
+        val kept = AnswerCache.size(store)
+        column.addView(ui.rows(
+            ui.row(R.drawable.ic_zap, "Reuse answers for repeated requests", if (store.cacheOn) "$hits reused this month · saved about $${"%.3f".format(saved)}" else "Off: every request goes to your AI service",
+                ui.toggle(store.cacheOn) { store.cacheOn = it; render() }),
+            ui.row(R.drawable.ic_refresh_cw, "Clear saved answers", "$kept kept on this phone", ui.chevron()) {
+                AnswerCache.clear(store); ui.toast("Saved answers cleared"); render()
+            },
+        ))
+        note(column, "Polish, translations, replies and drafts you ask for again come back instantly and cost nothing. Sending, saving, " +
+            "lookups and anything that searches the web always run fresh, and a request about \"today\" or \"tomorrow\" is only reused the same day. " +
+            "Asking again right away gives a fresh answer. Answers stay on this phone for 30 days.")
         val skills = u.optJSONObject("skills")
         if (skills != null && skills.length() > 0) {
             column.addView(ui.text("Where it went", 16f, bold = true).apply { setPadding(ui.dp(2), ui.dp(6), 0, ui.dp(6)) })
@@ -420,7 +438,7 @@ class PageActivity : Activity() {
 
     private fun trigLine(t: Trigger) = when (t.kind) {
         "link" -> "When text is a URL"
-        "foreign" -> "When text is not in English"
+        "foreign" -> "When a message is in another language (French, Spanish, Japanese…)"
         "keyword" -> "When text has “${t.keyword}”"
         else -> "When text has " + (Cards.KINDS.firstOrNull { it.first == t.kind }?.second ?: t.kind)
     }
@@ -500,6 +518,34 @@ class PageActivity : Activity() {
             ui.row(R.drawable.ic_zap, "Suggest actions for copied text", "Checked on the phone only", ui.toggle(store.triggersOn) { store.triggersOn = it; render() }),
             ui.row(R.drawable.ic_pencil_line, "Quick replies when I copy", "Three short replies as chips, one small request per copy", ui.toggle(store.smartReplies) { store.smartReplies = it }),
             ui.row(R.drawable.ic_sparkles, "Show my acts when I copy", "Opens the acts in place of the keys, once per copy", ui.toggle(store.actsOnCopy) { store.actsOnCopy = it }),
+        ))
+        // Incoming messages: no copying at all. Needs notification access, which only the user can grant.
+        val access = MessageListener.hasAccess(this)
+        note(column, "\nAct on incoming messages: Verbo reads new WhatsApp, Telegram and SMS notifications on your phone. " +
+            "A message that matches an auto action set to run automatically (a French message and Understand any language, say) " +
+            "is sent to your AI key and the result comes as a notification, and waits above the keys when you reply. Nothing else leaves the phone.")
+        column.addView(ui.rows(
+            ui.row(R.drawable.ic_languages, "Act on incoming messages",
+                if (!store.watchMessages) "Off" else if (access) "On: translates foreign messages as they arrive" else "Waiting for notification access",
+                ui.toggle(store.watchMessages) { on ->
+                    if (on && !store.isPro) { ui.toast("Acting on incoming messages is a Verbo Pro feature"); go("pro"); return@toggle }
+                    store.watchMessages = on
+                    if (on) {
+                        // The ask was "translate a French message automatically": make sure that auto action exists and runs by itself.
+                        val list = store.triggers
+                        store.triggers = if (list.any { it.kind == "foreign" }) list.map { if (it.kind == "foreign") it.copy(auto = true) else it }
+                            else list + Trigger("foreign", "", "Understand any language", true)
+                        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+                            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 41)
+                        }
+                        if (!MessageListener.hasAccess(this)) {
+                            android.widget.Toast.makeText(this, "Turn on notification access for Verbo", android.widget.Toast.LENGTH_LONG).show()
+                            try { startActivity(MessageListener.accessIntent()) } catch (e: Exception) { }
+                        }
+                    }
+                    render()
+                }),
         ))
     }
 
@@ -1627,6 +1673,57 @@ class PageActivity : Activity() {
             store.onboarded = true
             finish()
         })
+    }
+
+    // ---------- Verbo Pro ----------
+
+    private fun proPage(column: LinearLayout) {
+        column.addView(ui.topBar("Verbo Pro", "Your plan follows your account to every phone"))
+        val signedIn = store.deviceToken.isNotEmpty()
+        val status = when {
+            store.isPro && (store.proPlan == "lifetime" || store.proPlan == "server") -> "Active for life. Thank you!"
+            store.isPro -> "Active until " + java.text.DateFormat.getDateInstance().format(java.util.Date(store.proUntil))
+            !signedIn -> "Sign in to buy Pro or bring back the Pro you already have"
+            else -> "Free plan: keyboard, wheel, translation, skills and acts"
+        }
+        column.addView(ui.rows(ui.row(R.drawable.ic_sparkles, if (store.isPro) "You have Verbo Pro" else "You are on Free", status)))
+        column.addView(ui.section(R.drawable.ic_zap, "What Pro adds"))
+        column.addView(ui.rows(
+            ui.row(R.drawable.ic_sparkles, "Personal assistant", "Chat with Verbo: it plans, writes and acts for you"),
+            ui.row(R.drawable.ic_plug, "One-tap app shortcuts", "Slack, Notion, Todoist, Linear, GitHub, Discord, Calendly"),
+            ui.row(R.drawable.ic_zap, "Auto actions that run by themselves", "Copied messages handled without a tap"),
+            ui.row(R.drawable.ic_languages, "Acts on incoming messages", "A French message arrives already translated"),
+            ui.row(R.drawable.ic_box, "Google Meet, Calendar and Gmail", "Links, events and emails from the keyboard"),
+        ))
+        when {
+            store.isPro -> Unit
+            !signedIn -> column.addView(ui.button("Continue with Google", R.drawable.ic_cloud, filled = true) {
+                store.signInSkipped = false
+                startActivity(android.content.Intent(this, SignInActivity::class.java))
+            })
+            else -> {
+                note(column, "\nPay on the web with UPI, a card or netbanking. Come back here and Pro turns on by itself.")
+                column.addView(ui.button("Upgrade on the web", R.drawable.ic_sparkles, filled = true) {
+                    try { startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(store.serverUrl + "/?tab=pro"))) }
+                    catch (e: Exception) { ui.toast("No browser found") }
+                })
+            }
+        }
+        if (signedIn) column.addView(ui.button("Refresh my plan", R.drawable.ic_refresh_cw) { refreshPlan() })
+        note(column, "\nOne account works on up to ${store.deviceLimit} phones at once; remove one on the dashboard under Settings › Phones.")
+    }
+
+    /** Asks the dashboard for the plan now (after paying on the web) and redraws. */
+    private fun refreshPlan() {
+        Thread {
+            val msg = try { Sync.pull(store); null } catch (e: Exception) { e.message ?: "Couldn't reach the dashboard" }
+            runOnUiThread {
+                if (isFinishing) return@runOnUiThread
+                store = Store(this)
+                if (msg != null) ui.toast(msg) else if (store.isPro) ui.toast("Verbo Pro is active")
+                render()
+            }
+        }.start()
     }
 
     // ---------- keys: hold a letter, per app ----------

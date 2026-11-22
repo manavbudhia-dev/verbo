@@ -21,6 +21,17 @@ class Store(context: Context) {
     val locked: Boolean = !(context.getSystemService(UserManager::class.java)?.isUserUnlocked ?: true)
     private val prefs: SharedPreferences? =
         if (locked) null else context.applicationContext.getSharedPreferences("verbo", Context.MODE_PRIVATE)
+    /**
+     * This phone's own id (Android's per-app id, hashed): the dashboard uses it so signing in again on the same
+     * phone, after a reinstall, replaces its old entry instead of using up one of the account's phones.
+     */
+    val deviceId: String = try {
+        val raw = android.provider.Settings.Secure.getString(context.contentResolver, android.provider.Settings.Secure.ANDROID_ID).orEmpty()
+        if (raw.isEmpty()) "" else java.security.MessageDigest.getInstance("SHA-256").digest(("verbo:" + raw).toByteArray()).joinToString("") { "%02x".format(it) }.take(40)
+    } catch (e: Exception) { "" }
+
+    /** App storage that is never backed up (the answer cache lives here); null before the first unlock. */
+    val filesDir: java.io.File? = if (locked) null else context.applicationContext.noBackupFilesDir
 
     private fun str(key: String, default: String = "") = prefs?.getString(key, default) ?: default
     private fun bool(key: String, default: Boolean) = prefs?.getBoolean(key, default) ?: default
@@ -85,6 +96,12 @@ class Store(context: Context) {
 
     // the wheel, translate languages and saved clips
     /** Holding the bar opens the shortcut wheel; when off it runs the assistant straight away. */
+    /** How far the shortcut wheel was last turned, in icons; it reopens there. */
+    var wheelTurn: Int get() = prefs?.getInt("wheel_turn", 0) ?: 0
+        set(v) { prefs?.edit()?.putInt("wheel_turn", v)?.apply() }
+    /** How far the translate fan was last turned, in flags; it reopens there. */
+    var langTurn: Int get() = prefs?.getInt("lang_turn", 0) ?: 0
+        set(v) { prefs?.edit()?.putInt("lang_turn", v)?.apply() }
     var wheelOn: Boolean get() = bool("wheel_on", true); set(v) = put("wheel_on", v)
     /** Up to MAX_WHEEL shortcut ids: a built-in tool from WHEEL_TOOLS, or "skill:" followed by a skill's name. */
     var wheel: List<String>
@@ -115,7 +132,7 @@ class Store(context: Context) {
     }
 
     // dashboard pairing
-    var serverUrl: String get() = str("server_url"); set(v) = put("server_url", v)
+    var serverUrl: String get() = moved(str("server_url")); set(v) = put("server_url", v)
     var deviceToken: String get() = str("device_token"); set(v) = put("device_token", v)
     var lastSync: Long
         get() = prefs?.getLong("last_sync", 0) ?: 0
@@ -218,6 +235,16 @@ class Store(context: Context) {
         if (o.has("monthlyLimit") && "monthlyLimit" !in keep) e.putFloat("monthly_limit", o.optDouble("monthlyLimit", 0.0).toFloat().coerceIn(0f, 1000f))
         o.optJSONObject("keyboard")?.let { applyKeyboard(e, it, keep) }
         e.putBoolean("google_connected", o.optBoolean("googleConnected", false))
+        // The account's plan. A dashboard from before plans existed sends none: everything stays on there.
+        val plan = o.optJSONObject("plan")
+        if (plan != null) {
+            e.putLong("pro_until", if (plan.optBoolean("pro")) plan.optLong("until", 0L) else 0L)
+            e.putString("pro_plan", plan.optString("plan", "free"))
+            e.putInt("device_limit", plan.optInt("deviceLimit", 3))
+        } else if (!o.has("plan")) {
+            e.putLong("pro_until", Long.MAX_VALUE)
+            e.putString("pro_plan", "server")
+        }
         // Older dashboards don't list services; their Google sign-in covers Meet only.
         val services = o.optJSONArray("googleServices")?.let { a -> (0 until a.length()).map { a.optString(it) } }
             ?: if (o.optBoolean("googleConnected", false)) listOf("meet") else emptyList()
@@ -264,7 +291,8 @@ class Store(context: Context) {
     /** What the dashboard's Google sign-in allows: some of meet, calendar, gmail. */
     val googleServices: Set<String> get() = if (googleConnected) str("google_services").split(",").filter { it.isNotBlank() }.toSet() else emptySet()
 
-    fun unpair() { prefs?.edit()?.remove("server_url")?.remove("device_token")?.remove("last_sync")?.remove("google_connected")?.remove("google_services")?.remove("pending")?.apply() }
+    fun unpair() { prefs?.edit()?.remove("server_url")?.remove("device_token")?.remove("last_sync")?.remove("google_connected")?.remove("google_services")?.remove("pending")
+        ?.remove("pro_until")?.remove("pro_plan")?.apply() }
 
     // connections
     var weather: Boolean get() = bool("weather", true); set(v) = put("weather", v)
@@ -285,6 +313,23 @@ class Store(context: Context) {
     fun clearInbox() {
         prefs?.edit()?.remove("inbox_text")?.remove("inbox_file")?.remove("inbox_name")?.remove("inbox_mime")
             ?.remove("inbox_from")?.remove("inbox_at")?.apply()
+    }
+    /** Read incoming chat notifications so auto actions can run without copying (off until the user turns it on). */
+    var watchMessages: Boolean get() = bool("watch_messages", false); set(v) = put("watch_messages", v)
+    /** The last chat message a notification brought in, kept on the phone for the keyboard to act on. */
+    var incomingText: String get() = str("incoming_text"); set(v) = put("incoming_text", v)
+    var incomingFrom: String get() = str("incoming_from"); set(v) = put("incoming_from", v)
+    var incomingApp: String get() = str("incoming_app"); set(v) = put("incoming_app", v)
+    var incomingAt: Long get() = prefs?.getLong("incoming_at", 0L) ?: 0L
+        set(v) { prefs?.edit()?.putLong("incoming_at", v)?.apply() }
+    /** What an automatic action already made of [incomingText], so the keyboard can show it without asking again. */
+    var incomingResult: String get() = str("incoming_result"); set(v) = put("incoming_result", v)
+    var incomingSkill: String get() = str("incoming_skill"); set(v) = put("incoming_skill", v)
+    /** Fresh for ten minutes: long enough to open the chat and answer. */
+    val incomingFresh: Boolean get() = incomingAt > 0 && System.currentTimeMillis() - incomingAt < 10 * 60 * 1000L && incomingText.isNotBlank()
+    fun clearIncoming() {
+        prefs?.edit()?.remove("incoming_text")?.remove("incoming_from")?.remove("incoming_app")?.remove("incoming_at")
+            ?.remove("incoming_result")?.remove("incoming_skill")?.apply()
     }
     var calendlyToken: String get() = str("calendly_token"); set(v) = put("calendly_token", v.trim())
     /** Slack, GitHub, Todoist, Linear and Discord, by dashboard field name (see [APP_TOKENS]). */
@@ -319,13 +364,15 @@ class Store(context: Context) {
     /** Off pauses every held-key action (skill keys too); held letters then just type. */
     var keysOn: Boolean get() = bool("keys_on", true); set(v) = put("keys_on", v)
     /** The first-run guide was finished or skipped. Kept on this phone only. */
+    /** The user chose "Use without an account" on the sign-in screen, so it isn't shown again. */
+    var signInSkipped: Boolean get() = bool("sign_in_skipped", false); set(v) { prefs?.edit()?.putBoolean("sign_in_skipped", v)?.apply() }
     var onboarded: Boolean get() = bool("onboarded", false); set(v) { prefs?.edit()?.putBoolean("onboarded", v)?.apply() }
     /** The keyboard's welcome banner was tapped; the bot intro has been offered once. */
     var welcomed: Boolean get() = bool("welcomed", false); set(v) { prefs?.edit()?.putBoolean("welcomed", v)?.apply() }
     /** Secret for the Google sign-in in progress: the dashboard only pairs the phone that holds it. */
     var authVerifier: String get() = str("auth_verifier"); set(v) { prefs?.edit()?.putString("auth_verifier", v)?.apply() }
     /** The dashboard that sign-in was started on. */
-    var authServer: String get() = str("auth_server"); set(v) { prefs?.edit()?.putString("auth_server", v)?.apply() }
+    var authServer: String get() = moved(str("auth_server")); set(v) { prefs?.edit()?.putString("auth_server", v)?.apply() }
 
     /** Suggest (or run) skills when a copied message matches a trigger. The matching happens on the phone; nothing is sent until a skill runs. */
     var triggersOn: Boolean get() = bool("triggers_on", true); set(v) = put("triggers_on", v)
@@ -333,6 +380,10 @@ class Store(context: Context) {
     var memory: List<Memory.Fact>
         get() = try { parseMemory(JSONArray(str("memory", "[]"))) } catch (e: Exception) { emptyList() }
         set(v) = put("memory", memoryJson(v).toString())
+
+    /** The assistant chat, as a JSON array of turns; kept on this phone only. */
+    fun chat(): String = str("assistant_chat", "[]")
+    fun chat(json: String) { prefs?.edit()?.putString("assistant_chat", json)?.apply() }
 
     fun remember(fact: Memory.Fact) { memory = memory.filter { !it.label.equals(fact.label, true) || fact.label == "Note" } + fact }
     fun forget(label: String): Boolean {
@@ -359,6 +410,35 @@ class Store(context: Context) {
         val o = try { JSONObject(str("usage", "{}")) } catch (e: Exception) { JSONObject() }
         return if (o.optString("month") == month) o else JSONObject().put("month", month).put("requests", 0).put("inTokens", 0L)
             .put("outTokens", 0L).put("searches", 0L).put("cost", 0.0).put("skills", JSONObject())
+    }
+
+    /** Plain text values kept on this phone only (not synced): the learnt Hinglish words. */
+    fun text(key: String, default: String = ""): String = str(key, default)
+    fun setText(key: String, value: String) { prefs?.edit()?.putString(key, value)?.apply() }
+
+    // ---------- Verbo Pro: the plan comes from the dashboard with every sync ----------
+
+    var proUntil: Long get() = prefs?.getLong("pro_until", 0L) ?: 0L
+        private set(v) { prefs?.edit()?.putLong("pro_until", v)?.apply() }
+    /** free, month, lifetime or gift. */
+    var proPlan: String get() = str("pro_plan", "free"); private set(v) { prefs?.edit()?.putString("pro_plan", v)?.apply() }
+    val deviceLimit: Int get() = prefs?.getInt("device_limit", 3) ?: 3
+
+    /** Sets the plan directly (the dashboard normally sends it); used by tests. */
+    internal fun setPlan(until: Long, plan: String) { proUntil = until; proPlan = plan }
+
+    /** True while the account has Pro. The plan's end time is absolute, so it holds offline too. */
+    val isPro: Boolean get() = proUntil > System.currentTimeMillis()
+
+    /** Reuse answers for repeated requests (the answer cache). */
+    var cacheOn: Boolean get() = bool("cache_on", true); set(v) = put("cache_on", v)
+
+    /** A request answered from the cache: counted this month, with what it would have cost. */
+    @Synchronized
+    fun recordCacheHit(saved: Double) {
+        val u = usage
+        u.put("cacheHits", u.optInt("cacheHits") + 1).put("cacheSaved", u.optDouble("cacheSaved", 0.0) + saved)
+        put("usage", u.toString())
     }
 
     @Synchronized
@@ -445,7 +525,13 @@ class Store(context: Context) {
     var skills: List<Skill>
         get() {
             val raw = prefs?.getString("skills", null) ?: return DEFAULT_SKILLS
-            return try { parseSkills(JSONArray(raw)).map { if (it.instruction == OLD_NOTION) it.copy(instruction = NOTION_INSTRUCTION) else it } } catch (e: Exception) { DEFAULT_SKILLS }
+            return try { parseSkills(JSONArray(raw)).map { when (it.instruction) {
+                OLD_NOTION -> it.copy(instruction = NOTION_INSTRUCTION)
+                OLD_PLACE -> it.copy(instruction = PLACE_INSTRUCTION) // used to describe the place; now it's a link to send
+                OLD_EMAIL -> it.copy(instruction = EMAIL_INSTRUCTION) // one tap: the draft opens, nothing to paste
+                OLD_LINKEDIN -> it.copy(instruction = LINKEDIN_INSTRUCTION)
+                else -> it
+            } } } catch (e: Exception) { DEFAULT_SKILLS }
         }
         set(v) = put("skills", skillsJson(v).toString())
 
@@ -532,7 +618,12 @@ class Store(context: Context) {
         fun keyHint(key: String) = if (key.length >= 8) key.takeLast(4) else ""
 
         /** The hosted dashboard, used by "Continue with Google" until the user pairs with another one. */
-        const val DEFAULT_SERVER = "https://verbo-env-fpemontcg1.ap-south-1a.lb.nimbuz.tech"
+        const val DEFAULT_SERVER = "https://verbo.zealcoder.in"
+        /** Where the dashboard used to live; a phone paired there follows it to [DEFAULT_SERVER]. */
+        private val OLD_SERVERS = listOf("https://verbo-env-fpemontcg1.ap-south-1a.lb.nimbuz.tech")
+
+        /** A saved address on the old host reads as the new one. */
+        fun moved(url: String): String = if (OLD_SERVERS.any { url.trimEnd('/').equals(it, ignoreCase = true) }) DEFAULT_SERVER else url
 
         const val MIN_HEIGHT = 80
         const val MAX_HEIGHT = 130
@@ -595,6 +686,13 @@ class Store(context: Context) {
         }
 
         /** The Notion skill before it opened the page itself; saved copies of it are upgraded. */
+        private const val OLD_EMAIL = "Turn the text into a clear email with a short subject. Return the email text, then a final [[open:mailto:?subject=...&body=...]] line with both URL-encoded so it opens as a ready draft in Gmail."
+        const val EMAIL_INSTRUCTION = "Turn the text into a clear email with a short subject. Return one short line saying the draft is ready, then a final [[go:mailto:?subject=...&body=...]] line with both URL-encoded, so the ready draft opens in Gmail at once."
+        private const val OLD_LINKEDIN = "Turn the text into a LinkedIn post: a strong first line, short paragraphs, no more than three hashtags at the end. Return the post, then a final [[open:https://www.linkedin.com/feed/?shareActive=true&text=...]] line with the post URL-encoded."
+        const val LINKEDIN_INSTRUCTION = "Turn the text into a LinkedIn post: a strong first line, short paragraphs, no more than three hashtags at the end. Return one short line saying the post is ready, then a final [[go:https://www.linkedin.com/feed/?shareActive=true&text=...]] line with the post URL-encoded, so LinkedIn opens with it at once."
+        private const val OLD_PLACE = "The text names a place. Find it with the place search and return its name, address and a Google Maps link, with the map marker line."
+        /** Place: one tap turns a typed place into its name and a maps link, ready to send. */
+        const val PLACE_INSTRUCTION = "The text names a place. Find it with the place search and reply with exactly two lines, ready to send in a chat: the place name with its area or city, then its Google Maps link https://www.google.com/maps/search/?api=1&query=NAME+ADDRESS (URL-encoded). Nothing else."
         private const val OLD_NOTION = "Search the user's Notion for the page the text describes and return its title and link. If Notion is not connected, say so in one line."
         const val NOTION_INSTRUCTION = "Find the Notion page that best matches the text, or the copied message if there is one, with notion_search: try the key names and topics, and search again with fewer words if nothing matches. Reply with exactly two lines: the page title, then Last edited: and when it was last edited in plain words (like Today at 10:42 AM), and end with [[open:PAGE_URL]]. If Notion is not connected, reply: Connect Notion in Verbo to search your pages, and end with [[open:https://www.notion.so]]."
 
@@ -607,11 +705,11 @@ class Store(context: Context) {
             Skill("🌍", "English", "Translate the text into natural English. If it is already English, leave the wording alone and only fix mistakes.", "translate", "t"),
             Skill("🧾", "Summarize", "Summarise the text as a few short key points, one per line. Keep names, numbers and dates.", "summarize", "s"),
             Skill("🔎", "Look up", "Treat the text as a question. Find the answer, searching the web if needed, and give it in one to three short sentences.", "write", "g"),
-            Skill("📍", "Place", "The text names a place. Find it with the place search and return its name, address and a Google Maps link, with the map marker line.", "write", "l"),
+            Skill("📍", "Place", PLACE_INSTRUCTION, "write", "l"),
             Skill("👤", "Who is", "The text or the context names a person. Look them up on the web and reply with one item per line: their full name; a one-line headline with their role and organisation; then Current: their current role, Previous: their previous role, Education: where they studied; and last a LinkedIn people search link, https://www.linkedin.com/search/results/people/?keywords= followed by the name with spaces written as %20. Leave out any line you cannot verify. If you cannot tell who they are, say so in one line instead of guessing.", "write", "w"),
             Skill("🗒️", "Notion", NOTION_INSTRUCTION, "write", "n"),
-            Skill("📧", "Email", "Turn the text into a clear email with a short subject. Return the email text, then a final [[open:mailto:?subject=...&body=...]] line with both URL-encoded so it opens as a ready draft in Gmail.", "write"),
-            Skill("💼", "LinkedIn post", "Turn the text into a LinkedIn post: a strong first line, short paragraphs, no more than three hashtags at the end. Return the post, then a final [[open:https://www.linkedin.com/feed/?shareActive=true&text=...]] line with the post URL-encoded.", "write"),
+            Skill("📧", "Email", EMAIL_INSTRUCTION, "write"),
+            Skill("💼", "LinkedIn post", LINKEDIN_INSTRUCTION, "write"),
             Skill("📋", "List", "Turn the text into a tidy list, one item per line, each starting with a dash. Keep the user's wording where you can.", "edit"),
         )
     }

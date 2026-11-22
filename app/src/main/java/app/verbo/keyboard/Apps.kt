@@ -10,30 +10,47 @@ object Apps {
         val skill: String? = null,
         val tokenField: String? = null,
         val task: String? = null,
+        /** The tap sends or saves the text somewhere else, so the field is cleared and a status line confirms. */
+        val sends: Boolean = false,
     )
 
+    /**
+     * One tap from the wheel or a held key does the app's own job with the text (or the copied message):
+     * a send or a save happens and a status line says so, with Open where there is something to see.
+     * Searching across apps stays with the "Find anything" act.
+     */
     val ALL = listOf(
-        App("notion", "Notion", Brand.notion, "Save the message to your Notion", skill = "Notion", tokenField = "notionToken"),
-        App("gmail", "Gmail", Brand.gmail, "Write the email and open a ready draft", skill = "Email"),
-        App("outlook", "Outlook", Brand.outlook, "Write the email and open a ready draft", skill = "Email"),
-        App("linkedin", "LinkedIn", Brand.linkedin, "Turn the text into a post and open LinkedIn", skill = "LinkedIn post"),
+        App("notion", "Notion", Brand.notion, "Save the text or copied message as a Notion page", skill = "Save to Notion", tokenField = "notionToken"),
+        App("gmail", "Gmail", Brand.gmail, "Write the email and open the ready draft", skill = "Email"),
+        App("outlook", "Outlook", Brand.outlook, "Write the email and open the ready draft", skill = "Email"),
+        App("linkedin", "LinkedIn", Brand.linkedin, "Write the post and open LinkedIn with it", skill = "LinkedIn post"),
         App("whatsapp", "WhatsApp", Brand.whatsapp, "Send the text to a chat you pick"),
         App("telegram", "Telegram", Brand.telegram, "Send the text to a chat you pick"),
         App("x", "X", Brand.x, "Open a post with your text filled in"),
         App("youtube", "YouTube", Brand.youtube, "Open a search with your text"),
         App("calendar", "Calendar", Brand.calendar, "Open an event with your text filled in"),
-        App("slack", "Slack", Brand.slack, "Search your Slack messages", tokenField = "slackToken",
-            task = "Search the user's Slack with slack_search for what the text or the copied message asks about. Return a short title line, then up to five numbered lines, most relevant first: 1. message snippet | channel | who | when. If one result is clearly the answer, end with its link on a final [[open:URL]] line. If nothing is found, say so in one line."),
-        App("github", "GitHub", Brand.github, "Search issues and pull requests", tokenField = "githubToken",
-            task = "Search the user's GitHub with github_search for what the text or the copied message asks about. Return a short title line, then up to five numbered lines, most relevant first: 1. title | repo | state | number. End with the best match's link on a final [[open:URL]] line. If nothing is found, say so in one line."),
-        App("todoist", "Todoist", Brand.todoist, "List and add your tasks", tokenField = "todoistToken",
-            task = "Use todoist_list_tasks to show the user's tasks that match what the text or the copied message asks about; if it asks to add a task, add it with the Todoist tools you have. Return a short title line then one numbered line per task: 1. task | due | project. If nothing matches, say so in one line."),
-        App("linear", "Linear", Brand.linear, "Search your team's issues", tokenField = "linearToken",
-            task = "Search the user's Linear with linear_search_issues for what the text or the copied message asks about. Return a short title line, then up to five numbered lines, most relevant first: 1. title | team | state | identifier. End with the best match's link on a final [[open:URL]] line. If nothing is found, say so in one line."),
-        App("discord", "Discord", Brand.discord, "Post the text to your server", tokenField = "discordWebhook",
-            task = "Send the text, or the copied message if there is one, to the user's Discord with discord_send_message. Reply with exactly one line confirming it was sent, or the error in one line if it failed."),
-        App("calendly", "Calendly", Brand.calendly, "Share your scheduling link", tokenField = "calendlyToken",
-            task = "Get the user's Calendly scheduling links with calendly_scheduling_links. Reply with one short line naming the best link to share, then that link on a final [[open:URL]] line. If none exist, say so in one line."),
+        App("slack", "Slack", Brand.slack, "Send the text to Slack", tokenField = "slackToken", sends = true,
+            task = "Send the user's text to Slack with slack_send_message, word for word (if they typed nothing, send the copied message). " +
+                "Post it to the channel or person the text names (like #design or \"to Priya\"), removing that address from the message; " +
+                "if none is named, find the team's general channel with slack_list_channels and post there. " +
+                "Reply with exactly one line: Sent to #CHANNEL, or the error in one line. If Slack returns a link to the message, end with [[open:URL]]."),
+        App("github", "GitHub", Brand.github, "Turn the text into an issue", tokenField = "githubToken", sends = true,
+            task = "Create a GitHub issue from the user's text (or the copied message) with github_create_issue. Use the repository the text names; " +
+                "if none is named, use the user's most recently updated repository from github_my_repos. A short title, the details as the body. " +
+                "Reply with exactly one line: Created issue #NUMBER in OWNER/REPO, then [[open:ISSUE_URL]] on a final line. If it fails, say why in one line."),
+        App("todoist", "Todoist", Brand.todoist, "Add the text as a task", tokenField = "todoistToken", sends = true,
+            task = "Add the user's text (or the copied message) to Todoist as a task with todoist_add_task: a short task name, and a due date if the text gives one " +
+                "(like tomorrow 5pm). Reply with exactly one line: Added to Todoist: TASK (due WHEN). If it fails, say why in one line."),
+        App("linear", "Linear", Brand.linear, "Turn the text into an issue", tokenField = "linearToken", sends = true,
+            task = "Create a Linear issue from the user's text (or the copied message) with linear_create_issue: a short title and the details as the description, " +
+                "in the team the text names or the user's first team. Reply with exactly one line: Created IDENTIFIER: TITLE, then [[open:ISSUE_URL]] on a final line. " +
+                "If it fails, say why in one line."),
+        App("discord", "Discord", Brand.discord, "Post the text to your server", tokenField = "discordWebhook", sends = true,
+            task = "Send the user's text, word for word (or the copied message if they typed nothing), to their Discord with discord_send_message. " +
+                "Reply with exactly one line: Sent to Discord, or the error in one line."),
+        App("calendly", "Calendly", Brand.calendly, "Put your scheduling link in the message", tokenField = "calendlyToken",
+            task = "Get the user's Calendly scheduling links with calendly_scheduling_links and pick the best one for the text. Reply with the user's own text " +
+                "if they typed any, then the link on its own line, ready to send. Nothing else. If there is no link, say so in one line."),
     )
 
     fun byKey(key: String) = ALL.firstOrNull { it.key == key }

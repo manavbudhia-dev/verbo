@@ -62,4 +62,12 @@ class KeyActionTest {
         // RFC 7636 example: the verifier's SHA-256, base64url without padding.
         assertEquals("E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM", Sync.challenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"))
     }
+
+    @Test
+    fun aPhonePairedWithTheOldHostFollowsTheDashboardToItsNewHome() {
+        assertEquals("https://verbo.zealcoder.in", Store.DEFAULT_SERVER)
+        assertEquals(Store.DEFAULT_SERVER, Store.moved("https://verbo-env-fpemontcg1.ap-south-1a.lb.nimbuz.tech"))
+        assertEquals(Store.DEFAULT_SERVER, Store.moved("https://verbo-env-fpemontcg1.ap-south-1a.lb.nimbuz.tech/"))
+        assertEquals("a self-hosted address is left alone", "https://my.server.dev", Store.moved("https://my.server.dev"))
+    }
 }

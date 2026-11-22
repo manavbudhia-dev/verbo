@@ -30,6 +30,9 @@ object Translit {
     )
     private const val HALANT = "्"
 
+    /** True when the built-in table has this word (so its Devanagari is certain, not a phonetic guess). */
+    fun known(word: String) = word.lowercase() in WORDS
+
     /** True for a word worth offering in Devanagari: only Latin letters, at least two. */
     fun applies(word: String) = word.length >= 2 && word.all { it in 'a'..'z' || it in 'A'..'Z' }
 

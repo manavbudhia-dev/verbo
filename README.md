@@ -5,11 +5,14 @@ An Android keyboard that acts on what you type.
 - **Fast typing** – one custom-drawn key view with per-finger tracking, word suggestions,
   auto-correct (backspace undoes a correction), double-space full stop, key sound and vibration.
 - **Shortcut wheel** – hold the wide ✦ bar and a wheel opens under your finger: slide to Ask AI, Translate,
-  Rewrite, Meeting link, Voice or Clips (or any skill you put there; up to six) and let go. Results open as a card in place of the keys
+  Rewrite, Meeting link, Voice or Clips (or any skill you put there; up to six) and let go. Roll a finger along the
+  blue rim (or rest it on an end arrow) and the fan turns one icon at a time, gliding slowly and locking on each, to
+  bring in Auto-translate, Notion, Slack and every other tool, app and skill. Results open as a card in place of the keys
   with Copy / Insert (Send in chat apps whose enter key sends), and a small map for a place.
 - **Meeting link** – a wheel shortcut that inserts a Google Meet link (with Google connected on the dashboard)
   or an instant no-account link.
-- **Translate** – pick a language, or translate into all of your languages at once.
+- **Translate** – pick a language, or translate into all of your languages at once. Roll the flag fan's rim
+  (or rest on an end arrow) and it turns one flag at a time, slowly locking on each, through every language.
 - **Auto-translate** – switch it on for a chat app and whatever you type is translated into the chosen
   language each time you pause, until you stop it.
 - **Create a skill** – describe what you want; the assistant drafts the skill for approval, then you put it on
@@ -18,6 +21,10 @@ An Android keyboard that acts on what you type.
 - **Clips** – save copied text and paste it any time.
 - **Skill library** – ready-made skills on shelves (Featured, Work, Social, Fun, Languages), added with one tap.
 - **Keys as shortcuts** – bind a skill to a letter and hold that key to run it (marked keys show a glow).
+- **Auto actions on messages** – a copied message is checked on the phone (who it names, a date, a place, another
+  language: French, Spanish and German as well as Japanese or Arabic) and the matching skill is offered or run.
+  Turn on **Act on incoming messages** (Copy settings) and grant notification access to skip copying: a French
+  WhatsApp message is translated as it arrives, shown as a notification, and waits above the keys when you reply.
 - **Context** – copy a message you received and tap "Use copied text" so the assistant knows what you are answering.
 - **Skill keys** – the strip above the keys. Each one applies a saved instruction to your
   text. Type `/` and a skill's name to run it as a command.

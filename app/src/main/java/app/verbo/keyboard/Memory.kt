@@ -23,7 +23,7 @@ object Memory {
     fun parseForget(text: String): String? =
         Regex("""^(?:please\s+)?(?:forget|bhool\s+jao)\s+(?:my\s+|mera\s+|meri\s+)?(.+)$""", RegexOption.IGNORE_CASE).find(text.trim().removeSuffix("."))?.groupValues?.get(1)?.trim()
 
-    private val HINGLISH = setOf(
+    val HINGLISH = setOf(
         "hai", "hain", "nahi", "nhi", "kya", "kar", "karo", "kr", "ho", "bhai", "haan", "ha", "theek", "thik", "acha", "accha", "mein", "main", "ka", "ki", "ko",
         "tum", "aap", "kal", "aaj", "abhi", "chal", "yaar", "bhi", "toh", "to", "se", "hu", "hoon", "raha", "rahi", "gaya", "kaise", "kyu", "kyun", "matlab",
     )

@@ -33,6 +33,25 @@ const GOOGLE_SCOPES = {
 };
 const GOOGLE_SCOPE = Object.values(GOOGLE_SCOPES).flat().join(' ');
 
+// Verbo Pro, sold through Razorpay payment links (UPI, cards, netbanking). Without the keys the buy buttons are hidden;
+// Pro can still be given with `node grant.js`. Prices are in paise (₹1 = 100).
+const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID || '';
+const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || '';
+const RAZORPAY_WEBHOOK_SECRET = process.env.RAZORPAY_WEBHOOK_SECRET || '';
+const RAZORPAY_API = (process.env.RAZORPAY_API_URL || 'https://api.razorpay.com').replace(/\/+$/, ''); // the tests stand in for it
+const RAZORPAY_ON = !!(RAZORPAY_KEY_ID && RAZORPAY_KEY_SECRET && PUBLIC_URL);
+const PLANS = {
+  month: { name: 'Verbo Pro · 1 month', amount: Number(process.env.PRO_MONTH_PAISE || 9900), days: 30 },
+  lifetime: { name: 'Verbo Pro · Lifetime', amount: Number(process.env.PRO_LIFETIME_PAISE || 49900), days: 0 },
+};
+const LIFETIME_UNTIL = Date.UTC(2100, 0, 1);
+// How many phones one account may have paired at once, so a bought plan isn't shared around.
+const DEVICE_LIMIT = Math.max(1, Number(process.env.DEVICE_LIMIT || 3));
+// Accounts that always have Pro (the owner, testers), by email, comma-separated.
+const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '').split(',').map((e) => e.trim().toLowerCase()).filter(Boolean);
+// Everything a paid plan unlocks, as the phone and the dashboard show it.
+const PRO_FEATURES = ['assistant', 'apps', 'autoActions', 'incoming', 'google'];
+
 if (!process.env.SECRET_KEY || process.env.SECRET_KEY.length < 32) {
   console.error('Set SECRET_KEY to a random string of at least 32 characters (e.g. `openssl rand -hex 32`).');
   process.exit(1);
@@ -55,7 +74,14 @@ for (const sql of [
   'ALTER TABLE users ADD COLUMN google_sub TEXT', // set once the account has signed in with Google
   'ALTER TABLE users ADD COLUMN name TEXT',
   'ALTER TABLE pair_codes ADD COLUMN challenge TEXT', // app sign-in: only the phone that started it can use the code
+  'ALTER TABLE users ADD COLUMN pro_until INTEGER NOT NULL DEFAULT 0', // Verbo Pro until this time (ms); 0 = free
+  'ALTER TABLE users ADD COLUMN pro_plan TEXT', // month | lifetime | gift
+  'ALTER TABLE devices ADD COLUMN device_key TEXT', // a hash of the phone's own id: signing in again on it replaces its old entry
 ]) { try { db.exec(sql); } catch { /* already there */ } }
+db.exec(`
+  CREATE TABLE IF NOT EXISTS payment_links (link_id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, plan TEXT NOT NULL, amount INTEGER NOT NULL, created INTEGER NOT NULL);
+  CREATE TABLE IF NOT EXISTS payments (payment_id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, plan TEXT NOT NULL, amount INTEGER NOT NULL, created INTEGER NOT NULL);
+`);
 
 const CATEGORIES = ['write', 'edit', 'translate', 'summarize'];
 const MODELS = ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5']; // first is the default: cheapest
@@ -150,6 +176,55 @@ function saveConfig(userId, config) {
   db.prepare('INSERT INTO configs (user_id, data, updated) VALUES (?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET data = excluded.data, updated = excluded.updated')
     .run(userId, encrypt(JSON.stringify(config)), updated);
   return updated;
+}
+
+// ---------- Verbo Pro ----------
+
+/** The account's plan: what the phone unlocks and the dashboard shows. */
+function planFor(userId) {
+  const u = db.prepare('SELECT email, pro_until, pro_plan FROM users WHERE id = ?').get(userId);
+  if (!u) return { pro: false, plan: 'free', until: 0, features: [], deviceLimit: DEVICE_LIMIT };
+  if (ADMIN_EMAILS.includes(String(u.email).toLowerCase())) return { pro: true, plan: 'lifetime', until: LIFETIME_UNTIL, features: PRO_FEATURES, deviceLimit: DEVICE_LIMIT };
+  const pro = u.pro_until > now();
+  return { pro, plan: pro ? (u.pro_plan || 'month') : 'free', until: pro ? u.pro_until : 0, features: pro ? PRO_FEATURES : [], deviceLimit: DEVICE_LIMIT };
+}
+
+function requirePro(userId) {
+  if (!planFor(userId).pro) throw new Bad(402, 'This is a Verbo Pro feature. Upgrade on the dashboard');
+}
+
+/** Gives the account a plan. A month adds 30 days to what is left; lifetime never ends. Returns the new plan. */
+function grantPro(userId, plan, days) {
+  const u = db.prepare('SELECT pro_until, pro_plan FROM users WHERE id = ?').get(userId);
+  if (!u) throw new Bad(404, 'No such account');
+  let until; let name;
+  if (plan === 'lifetime' || u.pro_plan === 'lifetime' && u.pro_until > now()) { until = LIFETIME_UNTIL; name = 'lifetime'; }
+  else { until = Math.max(now(), u.pro_until) + (days || PLANS.month.days) * 86400000; name = plan; }
+  db.prepare('UPDATE users SET pro_until = ?, pro_plan = ? WHERE id = ?').run(until, name, userId);
+  return planFor(userId);
+}
+
+/** Records a Razorpay payment once (the return page and the webhook may both report it) and grants its plan. */
+function paid(paymentId, linkId) {
+  const link = db.prepare('SELECT user_id, plan, amount FROM payment_links WHERE link_id = ?').get(linkId);
+  if (!link || !paymentId) return false;
+  const fresh = db.prepare('INSERT OR IGNORE INTO payments (payment_id, user_id, plan, amount, created) VALUES (?, ?, ?, ?, ?)')
+    .run(paymentId, link.user_id, link.plan, link.amount, now()).changes > 0;
+  if (fresh) grantPro(link.user_id, link.plan, PLANS[link.plan]?.days);
+  return true;
+}
+
+const hmac = (secret, text) => crypto.createHmac('sha256', secret).update(text).digest('hex');
+const sameHex = (a, b) => typeof a === 'string' && typeof b === 'string' && a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+
+function readRaw(req, max = 256 * 1024) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on('data', (c) => { size += c.length; if (size > max) { reject(new Bad(413, 'Too large')); req.destroy(); } else chunks.push(c); });
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
+  });
 }
 
 // Tokens for apps the keyboard can act in. Kept on the server and synced to paired phones, which make the calls.
@@ -481,8 +556,70 @@ const newCode = () => Array.from(crypto.randomBytes(8), (b) => CODE_ALPHABET[b %
 const routes = {
   'GET /api/me': (req) => {
     const token = sessionToken(req);
-    const row = token && db.prepare('SELECT u.email, u.name FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires > ?').get(sha(token), now());
-    return { body: { email: row?.email ?? null, name: row?.name || '', allowSignup: ALLOW_SIGNUP, googleLogin: GOOGLE_ON } };
+    const row = token && db.prepare('SELECT u.id, u.email, u.name FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires > ?').get(sha(token), now());
+    return { body: { email: row?.email ?? null, name: row?.name || '', allowSignup: ALLOW_SIGNUP, googleLogin: GOOGLE_ON, plan: row ? planFor(row.id) : null } };
+  },
+
+  // --- Verbo Pro ---
+
+  'GET /api/billing': (req) => ({
+    body: {
+      plan: planFor(requireUser(req)), enabled: RAZORPAY_ON,
+      prices: Object.fromEntries(Object.entries(PLANS).map(([k, v]) => [k, { name: v.name, amount: v.amount }])),
+    },
+  }),
+
+  // Makes a Razorpay payment link for the signed-in account and sends the browser to it.
+  'POST /api/billing/link': async (req) => {
+    const userId = requireUser(req);
+    limit('billing:' + userId, 20, 60 * 60 * 1000);
+    if (!RAZORPAY_ON) throw new Bad(400, 'Payments are not set up on this server');
+    const body = await readJson(req);
+    const plan = PLANS[body.plan];
+    if (!plan) throw new Bad(400, 'Unknown plan');
+    if (planFor(userId).plan === 'lifetime') throw new Bad(409, 'You already have Verbo Pro for life');
+    const email = db.prepare('SELECT email FROM users WHERE id = ?').get(userId).email;
+    let res;
+    try {
+      res = await fetch(RAZORPAY_API + '/v1/payment_links', {
+        method: 'POST', redirect: 'error', signal: AbortSignal.timeout(20000),
+        headers: { Authorization: 'Basic ' + Buffer.from(RAZORPAY_KEY_ID + ':' + RAZORPAY_KEY_SECRET).toString('base64'), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          amount: plan.amount, currency: 'INR', description: plan.name, reference_id: `vb${userId}-${body.plan}-${crypto.randomBytes(5).toString('hex')}`,
+          customer: { email }, notify: { email: false, sms: false }, reminder_enable: false,
+          callback_url: PUBLIC_URL + '/api/billing/return', callback_method: 'get', notes: { user_id: String(userId), plan: body.plan },
+        }),
+      });
+    } catch {
+      throw new Bad(502, 'Could not reach Razorpay. Try again');
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.id || !data.short_url) throw new Bad(502, 'Razorpay did not make the payment link. Try again');
+    db.prepare('INSERT INTO payment_links (link_id, user_id, plan, amount, created) VALUES (?, ?, ?, ?, ?)').run(data.id, userId, body.plan, plan.amount, now());
+    return { body: { url: data.short_url } };
+  },
+
+  // Razorpay sends the browser back here after paying. The signature proves the payment is real.
+  'GET /api/billing/return': (req) => {
+    const q = new URL(req.url, 'http://x').searchParams;
+    const linkId = q.get('razorpay_payment_link_id') || '';
+    const paymentId = q.get('razorpay_payment_id') || '';
+    const status = q.get('razorpay_payment_link_status') || '';
+    const expected = hmac(RAZORPAY_KEY_SECRET, [linkId, q.get('razorpay_payment_link_reference_id') || '', status, paymentId].join('|'));
+    const ok = RAZORPAY_ON && status === 'paid' && sameHex(expected, q.get('razorpay_signature') || '') && paid(paymentId, linkId);
+    return { status: 302, body: {}, headers: { Location: '/?pro=' + (ok ? 'active' : 'failed') } };
+  },
+
+  // Razorpay's server-to-server notice, so a payment counts even if the browser never came back.
+  'POST /api/billing/webhook': async (req) => {
+    const raw = await readRaw(req);
+    if (!RAZORPAY_WEBHOOK_SECRET || !sameHex(hmac(RAZORPAY_WEBHOOK_SECRET, raw), String(req.headers['x-razorpay-signature'] || ''))) throw new Bad(400, 'Bad signature');
+    let event;
+    try { event = JSON.parse(raw); } catch { throw new Bad(400, 'Invalid JSON'); }
+    if (event.event === 'payment_link.paid') {
+      paid(event.payload?.payment?.entity?.id, event.payload?.payment_link?.entity?.id);
+    }
+    return { body: { ok: true } };
   },
 
   'POST /api/signup': async (req, res) => {
@@ -558,18 +695,26 @@ const routes = {
     if (row.challenge && (typeof body.verifier !== 'string' || crypto.createHash('sha256').update(body.verifier).digest('base64url') !== row.challenge)) {
       throw new Bad(400, 'That sign-in was started on another phone. Try again');
     }
+    // The same phone signing in again (a reinstall) takes the place of its old entry instead of counting twice.
+    const deviceKey = typeof body.deviceId === 'string' && /^[A-Za-z0-9_-]{8,128}$/.test(body.deviceId) ? sha('device:' + body.deviceId) : null;
+    if (deviceKey) db.prepare('DELETE FROM devices WHERE user_id = ? AND device_key = ?').run(row.user_id, deviceKey);
+    const count = db.prepare('SELECT COUNT(*) AS n FROM devices WHERE user_id = ?').get(row.user_id).n;
+    if (count >= DEVICE_LIMIT) {
+      throw new Bad(403, `This account is already on ${count} phones, the most it can use. Remove one under Settings › Phones on the dashboard, then sign in again`);
+    }
     db.prepare('DELETE FROM pair_codes WHERE code = ?').run(code);
     const token = randomToken();
-    db.prepare('INSERT INTO devices (user_id, name, token_hash, created) VALUES (?, ?, ?, ?)')
-      .run(row.user_id, str(body.name ?? 'Phone', 60, 'Name') || 'Phone', sha(token), now());
+    db.prepare('INSERT INTO devices (user_id, name, token_hash, created, device_key) VALUES (?, ?, ?, ?, ?)')
+      .run(row.user_id, str(body.name ?? 'Phone', 60, 'Name') || 'Phone', sha(token), now(), deviceKey);
     return { body: { token } };
   },
 
   'GET /api/device/config': (req) => {
-    const { config, updated } = loadConfig(requireDevice(req).user_id);
+    const device = requireDevice(req);
+    const { config, updated } = loadConfig(device.user_id);
     // The Google sign-in stays on the server; the phone only learns whether it exists.
     const { googleRefresh, googleScopes, ...rest } = config;
-    return { body: { ...rest, googleConnected: GOOGLE_ON && !!googleRefresh, googleServices: googleServices(config), updated } };
+    return { body: { ...rest, googleConnected: GOOGLE_ON && !!googleRefresh, googleServices: googleServices(config), plan: planFor(device.user_id), updated } };
   },
 
   // The phone sends its own changes (a key typed on the phone, a setting flipped there) so that the
@@ -581,7 +726,7 @@ const routes = {
     const next = applyUpdate(config, body);
     const updated = saveConfig(device.user_id, next);
     const { googleRefresh, googleScopes, ...rest } = next;
-    return { body: { ...rest, googleConnected: GOOGLE_ON && !!googleRefresh, googleServices: googleServices(next), updated } };
+    return { body: { ...rest, googleConnected: GOOGLE_ON && !!googleRefresh, googleServices: googleServices(next), plan: planFor(device.user_id), updated } };
   },
 
   // --- the setup assistant ---
@@ -693,6 +838,7 @@ const routes = {
   /** Called by a paired keyboard: makes a new Google Meet room in the owner's account and returns its link. */
   'POST /api/device/meet': async (req) => {
     const device = requireDevice(req);
+    requirePro(device.user_id);
     limit('meet:' + device.user_id, 30, 60 * 60 * 1000);
     return { body: { url: await meetLink(device.user_id) } };
   },
@@ -700,6 +846,7 @@ const routes = {
   /** Called by a paired keyboard while the assistant works: one Calendar or Gmail action in the owner's account. */
   'POST /api/device/google': async (req) => {
     const device = requireDevice(req);
+    requirePro(device.user_id);
     limit('google:' + device.user_id, 120, 60 * 60 * 1000);
     const body = await readJson(req);
     return { body: { result: await googleAction(device.user_id, body) } };
