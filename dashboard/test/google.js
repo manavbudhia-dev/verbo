@@ -48,6 +48,7 @@ const server = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')]
   env: {
     ...process.env, PORT, DATA_DIR: dir, SECRET_KEY: 'x'.repeat(40), INSECURE_COOKIES: '1', NODE_NO_WARNINGS: '1',
     GOOGLE_CLIENT_ID: 'cid', GOOGLE_CLIENT_SECRET: 'csecret', PUBLIC_URL: 'http://localhost:' + PORT,
+    ADMIN_EMAILS: 'meet@test.co', // Meet, Calendar and Gmail on the phone are Verbo Pro features
     GOOGLE_TOKEN_URL: `http://localhost:${FAKE}/token`, GOOGLE_MEET_URL: `http://localhost:${FAKE}/spaces`,
     GOOGLE_API_URL: `http://localhost:${FAKE}`, GOOGLE_GMAIL_URL: `http://localhost:${FAKE}`,
   },

@@ -11,6 +11,14 @@ services:
       PUBLIC_URL: https://${DOMAIN}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      # Verbo Pro (see "Verbo Pro" in README). Without the Razorpay keys the buy buttons are hidden.
+      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-}
+      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-}
+      RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET:-}
+      PRO_LIFETIME_PAISE: ${PRO_LIFETIME_PAISE:-49900}
+      PRO_MONTH_PAISE: ${PRO_MONTH_PAISE:-9900}
+      DEVICE_LIMIT: ${DEVICE_LIMIT:-3}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
     volumes:
       - verbo-data:/data
 

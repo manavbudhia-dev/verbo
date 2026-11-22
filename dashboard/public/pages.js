@@ -416,6 +416,54 @@ function analyticsTab() {
   ];
 }
 
+// ---------- Verbo Pro ----------
+
+const PRO_FEATURES = [
+  ['sparkles', 'Personal assistant', 'Chat with Verbo in the app: it plans, writes and acts for you.'],
+  ['plug', 'One-tap app shortcuts', 'Send to Slack and Discord, save to Notion, add Todoist tasks, file Linear and GitHub issues.'],
+  ['zap', 'Auto actions that run by themselves', 'A copied message is translated, scheduled or looked up without a tap.'],
+  ['message_square', 'Acts on incoming messages', 'A French WhatsApp message arrives already translated.'],
+  ['calendar', 'Google Meet, Calendar and Gmail', 'Meeting links, events and emails straight from the keyboard.'],
+];
+const rupees = (paise) => '₹' + (paise / 100).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+
+async function buy(plan) {
+  try {
+    const { url } = await api('POST', '/api/billing/link', { plan });
+    location.href = url; // Razorpay's page: UPI, cards or netbanking. It sends the browser back here.
+  } catch (e) { toast(e.message); }
+}
+
+function proTab() {
+  const b = state.billing;
+  if (!b) return h('div', { class: 'card' }, h('p', { class: 'muted' }, 'Loading…'));
+  const p = b.plan;
+  const status = p.pro
+    ? (p.plan === 'lifetime' ? 'Verbo Pro for life. Thank you!' : `Verbo Pro until ${new Date(p.until).toLocaleDateString()}`)
+    : 'Free plan: the keyboard, the wheel, translation, skills and acts.';
+  const offer = (plan, title, note, strong) => h('div', { class: 'card', style: strong ? 'border:2px solid var(--accent, #7c3aed)' : '' },
+    h('h2', null, title), h('p', { style: 'font-size:2rem;font-weight:700;margin:6px 0' }, rupees(b.prices[plan].amount)),
+    h('p', { class: 'muted' }, note),
+    h('button', { class: 'btn ' + (strong ? 'primary' : ''), style: 'margin-top:12px;width:100%;justify-content:center', disabled: !b.enabled,
+      onclick: () => buy(plan) }, icon('zap'), plan === 'month' && p.pro && p.plan !== 'lifetime' ? 'Add a month' : 'Get ' + title));
+  return [
+    h('div', { class: 'head' }, h('div', null, h('h1', null, 'Verbo Pro'), h('p', { class: 'muted sub' }, 'Your plan follows your account to every phone you sign in on.'))),
+    h('div', { class: 'stack' },
+      h('div', { class: 'card row' }, h('div', { class: 'grow' }, h('h2', null, p.pro ? 'You have Pro' : 'You are on Free'), h('p', { class: 'muted' }, status)),
+        h('span', { class: 'badge', style: 'font-size:.95rem;padding:6px 12px' }, p.pro ? 'PRO' : 'FREE')),
+      h('div', { class: 'card' }, h('h2', null, 'What Pro adds'),
+        PRO_FEATURES.map(([ic, title, about]) => h('div', { class: 'setting' }, h('div', { class: 'what' }, h('div', null, icon(ic), ' ', title), h('p', { class: 'muted small' }, about)),
+          h('span', null, p.pro ? '✓' : '')))),
+      p.plan !== 'lifetime' && h('div', { style: 'display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px' },
+        offer('lifetime', 'Lifetime', 'Pay once, Pro forever. Uses your own AI key.', true),
+        offer('month', '1 month', '30 days of Pro. Buy again whenever you like; days add up.', false)),
+      !b.enabled && p.plan !== 'lifetime' && h('p', { class: 'muted' }, 'Payments are not set up on this server yet.'),
+      h('div', { class: 'card' }, h('h2', null, 'Phones'), h('p', { class: 'muted' },
+        `One account can be signed in on up to ${p.deviceLimit} phones at once. Remove one under Settings → Phones to sign in on another.`),
+        h('button', { class: 'btn', style: 'margin-top:10px', onclick: () => go('settings') }, icon('smartphone'), 'Manage phones'))),
+  ];
+}
+
 // ---------- shell ----------
 
 const TABS = [
@@ -425,6 +473,7 @@ const TABS = [
   ['keys', 'Keys', 'keyboard', keysTab],
   ['connections', 'Connections', 'plug', connectionsTab],
   ['analytics', 'Analytics', 'chart', analyticsTab],
+  ['pro', 'Pro', 'zap', proTab],
   ['settings', 'Settings', 'settings', settingsTab],
 ];
 
@@ -432,6 +481,7 @@ async function go(tab) {
   state.tab = tab;
   if (tab !== 'agents') state.editing = null;
   if (tab === 'settings') state.devices = await api('GET', '/api/devices').catch(() => state.devices);
+  if (tab === 'pro') state.billing = await api('GET', '/api/billing').catch(() => state.billing);
   render();
   window.scrollTo(0, 0);
 }
@@ -484,7 +534,7 @@ function stripHead(nodes) {
 }
 
 async function load() {
-  [state.config, state.devices] = await Promise.all([api('GET', '/api/config'), api('GET', '/api/devices')]);
+  [state.config, state.devices, state.billing] = await Promise.all([api('GET', '/api/config'), api('GET', '/api/devices'), api('GET', '/api/billing').catch(() => null)]);
   render();
   if (!local.get('tour')) setTimeout(() => tour(), 400);
 }
@@ -492,6 +542,16 @@ async function load() {
 (async () => {
   try {
     // Back from Google's sign-in page: say how it went, open the right tab, and tidy the address bar.
+    // The app's Upgrade button opens /?tab=pro.
+    const tab = new URLSearchParams(location.search).get('tab');
+    if (tab && TABS.some((t) => t[0] === tab)) { state.tab = tab; history.replaceState(null, '', '/'); }
+    // Back from Razorpay: say how the payment went and show the plan.
+    const pro = new URLSearchParams(location.search).get('pro');
+    if (pro) {
+      state.tab = 'pro';
+      history.replaceState(null, '', '/');
+      setTimeout(() => toast(pro === 'active' ? 'Verbo Pro is active. Your phones get it on their next sync' : 'The payment did not complete'), 300);
+    }
     const google = new URLSearchParams(location.search).get('google');
     if (google) {
       state.tab = 'connections';
