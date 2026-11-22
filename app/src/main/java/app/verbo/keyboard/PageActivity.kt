@@ -1844,20 +1844,31 @@ class PageActivity : Activity() {
 
     // ---------- dashboard ----------
 
+    /** Opens the account's dashboard in the browser, where the same Google sign-in shows the same account. */
+    private fun openDashboard(address: String) {
+        val url = address.ifBlank { Store.DEFAULT_SERVER }.trimEnd('/') + "/"
+        try { startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))) }
+        catch (e: Exception) { ui.toast("No browser found to open the dashboard") }
+    }
+
     private fun dashboardPage(column: LinearLayout) {
         column.addView(ui.topBar("Web dashboard", "Manage skills and connections in a browser"))
         if (store.deviceToken.isNotEmpty()) {
             val last = if (store.lastSync == 0L) "not yet" else DateUtils.getRelativeTimeSpanString(store.lastSync).toString()
             column.addView(ui.rows(ui.row(R.drawable.ic_cloud, "Paired with " + store.serverUrl.removePrefix("https://"), "Last sync: $last")))
+            // One tap to the same account in the browser: the dashboard asks for the same Google sign-in once.
+            column.addView(ui.button("Open my dashboard", R.drawable.ic_monitor, filled = true) { openDashboard(store.serverUrl) }
+                .apply { (layoutParams as? LinearLayout.LayoutParams)?.bottomMargin = ui.dp(10) })
             note(column, "Skills, keys, connections and keyboard settings stay in step both ways on their own — about once a minute while the keyboard is up, and whenever you open Verbo. A change made here is sent to the dashboard first, so it is never replaced by an older copy. Sync now is there for the moments you want it this second.")
             val buttons = LinearLayout(this)
-            buttons.addView(ui.button("Sync now", R.drawable.ic_refresh_cw, filled = true) { background({ Sync.pull(store) }, "Synced") }, LinearLayout.LayoutParams(0, -2, 1f).apply { rightMargin = ui.dp(6) })
+            buttons.addView(ui.button("Sync now", R.drawable.ic_refresh_cw) { background({ Sync.pull(store) }, "Synced") }, LinearLayout.LayoutParams(0, -2, 1f).apply { rightMargin = ui.dp(6) })
             buttons.addView(ui.button("Unpair", R.drawable.ic_x) { store.unpair(); render() }, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = ui.dp(6) })
             column.addView(buttons)
             return
         }
         note(column, "Sign in with Google: this phone joins your account on the Verbo dashboard, and skills, agents, keys and connections sync both ways.")
         column.addView(ui.button("Continue with Google", R.drawable.ic_cloud, filled = true) { signInWithGoogle() })
+        column.addView(ui.button("Open the dashboard", R.drawable.ic_monitor) { openDashboard(Store.DEFAULT_SERVER) })
         column.addView(ui.section(R.drawable.ic_keyboard, "Or pair with a code"))
         note(column, "For your own server, or without Google: on the dashboard open Settings → Phones → Pair a phone.")
         val box = ui.cardBox().apply { setPadding(ui.dp(14), ui.dp(8), ui.dp(14), ui.dp(12)) }

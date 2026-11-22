@@ -1457,6 +1457,22 @@ class KeyboardTest {
     }
 
     @Test
+    fun theDashboardPageOpensMyDashboardInOneTap() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        store.serverUrl = "https://verbo.zealcoder.in"
+        store.deviceToken = "tok"
+        val page = Robolectric.buildActivity(PageActivity::class.java, android.content.Intent().putExtra("page", "dashboard")).setup().get()
+        val v = page.findViewById<View>(android.R.id.content)
+        layout(v)
+        val button = findText(v, "Open my dashboard")
+        assertTrue("the button is there when paired", button != null)
+        (button!!.parent as View).performClick()
+        val opened = org.robolectric.Shadows.shadowOf(page).nextStartedActivity
+        assertEquals("it opens the account's dashboard", "https://verbo.zealcoder.in/", opened?.dataString)
+        store.unpair()
+    }
+
+    @Test
     fun typeAndActPillsComeBackAfterAStatusLine() {
         val show = VerboIme::class.java.getDeclaredMethod("showStatus", String::class.java, emptyArray<Pair<String, () -> Unit>>().javaClass)
         show.isAccessible = true
