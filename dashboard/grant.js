@@ -5,7 +5,7 @@
 //   node grant.js someone@gmail.com days 90      90 more days
 //   node grant.js someone@gmail.com free         back to the free plan
 //   node grant.js someone@gmail.com              show the account's plan
-// With Docker: docker compose exec verbo node grant.js someone@gmail.com lifetime
+// With Docker: docker compose exec dashboard node grant.js someone@gmail.com lifetime
 'use strict';
 const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
