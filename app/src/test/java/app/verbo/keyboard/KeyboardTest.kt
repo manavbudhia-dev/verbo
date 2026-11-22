@@ -1437,7 +1437,8 @@ class KeyboardTest {
         assertTrue("an app shortcut says it's Pro: ${ime.statusMessage}", ime.statusMessage.contains("Verbo Pro"))
         // Drafts and shares stay free.
         ime.runApp(Apps.byKey("youtube")!!)
-        assertTrue(!ime.statusMessage.contains("Verbo Pro"))
+        val opened = org.robolectric.Shadows.shadowOf(ime).nextStartedActivity
+        assertTrue("YouTube still opens on Free", opened?.dataString?.contains("youtube.com") == true)
         // The assistant chat offers Pro instead.
         val chat = Robolectric.buildActivity(AssistantActivity::class.java).setup().resume().get()
         val v = chat.findViewById<View>(android.R.id.content)
