@@ -1379,6 +1379,24 @@ class PageActivity : Activity() {
 
     private fun typingPage(column: LinearLayout) {
         column.addView(ui.topBar("Typing", "Corrections, suggestions and shortcuts"))
+        // Debug builds only: Touch Target Debug Mode. Release builds never show it.
+        if (TouchDebug.available) {
+            column.addView(ui.section(R.drawable.ic_keyboard, "Touch Target Debug Mode (debug build)"))
+            column.addView(ui.rows(
+                ui.row(R.drawable.ic_keyboard, "Show touch targets", "Key faces, touch areas and sizes in dp; logs every touch to logcat (tag VerboTouch)",
+                    ui.toggle(store.touchDebug) { store.touchDebug = it; TouchDebug.enabled = it }),
+                ui.row(R.drawable.ic_zap, "Session summary", "Accuracy ${"%.1f".format(TouchDebug.accuracy * 100)}% · error rate ${"%.1f".format(TouchDebug.errorRate * 100)}% · ${TouchDebug.keyPresses} presses", ui.chevron()) {
+                    val text = TouchDebug.summary(TouchDebug.ALL_KEYS)
+                    android.app.AlertDialog.Builder(this).setTitle("Touch session").setMessage(text)
+                        .setPositiveButton("Copy") { _, _ ->
+                            (getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(android.content.ClipData.newPlainText("Touch session", text))
+                            ui.toast("Copied")
+                        }
+                        .setNegativeButton("Reset") { _, _ -> TouchDebug.reset(); render() }
+                        .setNeutralButton("Close", null).show()
+                },
+            ))
+        }
         column.addView(ui.rows(
             ui.row(R.drawable.ic_spell_check, "Auto-correct", "Fix typos as you type; backspace puts your word back", ui.toggle(store.autoCorrect) { store.autoCorrect = it }),
             ui.row(R.drawable.ic_message_square_more, "Suggestions", "Word completions above the keys", ui.toggle(store.suggestions) { store.suggestions = it }),

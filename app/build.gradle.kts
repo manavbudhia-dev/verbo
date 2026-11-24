@@ -11,8 +11,8 @@ android {
         applicationId = "app.verbo.keyboard"
         minSdk = 26
         targetSdk = 35
-        versionCode = 37
-        versionName = "0.29.1"
+        versionCode = 38
+        versionName = "0.30.0"
         // Real phones only: the offline-translation library is ~17 MB per processor type, and x86 is for emulators.
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
@@ -25,6 +25,8 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
+    // BuildConfig.DEBUG gates the Touch Target Debug Mode: it exists in debug builds only.
+    buildFeatures { buildConfig = true }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

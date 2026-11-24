@@ -40,6 +40,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Build release APK
         run: ./gradlew :app:assembleRelease --stacktrace
+      - name: Build debug APK (with Touch Target Debug Mode)
+        run: ./gradlew :app:assembleDebug --stacktrace
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
@@ -54,10 +56,11 @@ jobs:
           branch="${GITHUB_REF_NAME//\//-}"
           tag="apk-$branch"
           cp app/build/outputs/apk/release/app-release.apk "Verbo-$version.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "Verbo-$version-debug.apk"
           gh release delete "$tag" -y --cleanup-tag || true
-          gh release create "$tag" "Verbo-$version.apk" --prerelease --target "$GITHUB_SHA" \
+          gh release create "$tag" "Verbo-$version.apk" "Verbo-$version-debug.apk" --prerelease --target "$GITHUB_SHA" \
             --title "Verbo $version ($GITHUB_REF_NAME)" \
-            --notes "Release build of ${GITHUB_SHA::7} on $GITHUB_REF_NAME, signed with the debug key. Install on the phone directly."
+            --notes "Release build of ${GITHUB_SHA::7} on $GITHUB_REF_NAME, signed with the debug key. Install on the phone directly. The -debug APK adds Touch Target Debug Mode (Settings › Typing) and types slower; use it only for testing."
       - name: Unit tests
         run: ./gradlew :app:testDebugUnitTest --stacktrace
       - name: Attach screenshots to the pre-release

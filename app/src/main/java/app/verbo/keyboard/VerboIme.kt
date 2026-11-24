@@ -152,7 +152,13 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         voicePartial = ""
         p = KeyTheme.of(this, store.theme, store.customAccent)
 
-        val root = LinearLayout(this).apply {
+        // The root also lets Touch Target Debug Mode see toolbar taps; it only watches, then passes every event on.
+        val root = object : LinearLayout(this) {
+            override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+                if (TouchDebug.enabled) watchToolbar(ev)
+                return super.dispatchTouchEvent(ev)
+            }
+        }.apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(p.bg)
             setPadding(0, dp(4), 0, dp(6))
@@ -246,6 +252,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         }
         top.addView(voice, LinearLayout.LayoutParams(-2, dp(36)).apply { setMargins(0, 0, dp(6), 0) })
         root.addView(top, LinearLayout.LayoutParams(-1, dp(46)))
+        toolbar = top
         root.addView(suggestRow, LinearLayout.LayoutParams(-1, dp(40)))
 
         keys = KeyboardView(this, p, store.heightPercent / 100f, store.keyShape, store.numberRow).also {
@@ -258,7 +265,39 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         return root
     }
 
+    /** The row above the keys (Type/Act pills, the bot, Voice), watched by Touch Target Debug Mode. */
+    private var toolbar: View? = null
+
+    /** Debug builds: logs toolbar touches and counts each tap, flagging ones that look accidental. */
+    private fun watchToolbar(ev: android.view.MotionEvent) {
+        val bar = toolbar ?: return
+        val kb = keys ?: return
+        if (bar.visibility != View.VISIBLE || ev.y < bar.top || ev.y > bar.bottom) return
+        val action = when (ev.actionMasked) { android.view.MotionEvent.ACTION_DOWN -> "ACTION_DOWN"; android.view.MotionEvent.ACTION_UP -> "ACTION_UP"; else -> return }
+        val density = resources.displayMetrics.density
+        val name = toolbarItemAt(bar, ev.x, ev.y - bar.top)
+        TouchDebug.log("$action toolbar", ev.getPointerId(0), ev.x, ev.y, density, name)
+        if (action == "ACTION_UP") TouchDebug.toolbarTap(name, (kb.top - ev.y) / density, android.os.SystemClock.uptimeMillis())
+    }
+
+    /** What a toolbar touch is on: a pill's text, or the bot's or Voice's description. */
+    private fun toolbarItemAt(v: View, x: Float, y: Float): String {
+        if (v is android.view.ViewGroup) {
+            val sx = x + v.scrollX
+            for (i in v.childCount - 1 downTo 0) {
+                val c = v.getChildAt(i)
+                if (c.visibility == View.VISIBLE && sx >= c.left && sx < c.right && y >= c.top && y < c.bottom) return toolbarItemAt(c, sx - c.left, y - c.top)
+            }
+        }
+        return (v as? TextView)?.text?.toString()?.takeIf { it.isNotBlank() }
+            ?: v.contentDescription?.toString()?.substringBefore('.')?.takeIf { it.isNotBlank() }
+            ?: (v as? android.view.ViewGroup)?.let { g -> (0 until g.childCount).firstNotNullOfOrNull { (g.getChildAt(it) as? TextView)?.text?.toString() } }
+            ?: "toolbar"
+    }
+
     private fun loadSettings() {
+        TouchDebug.enabled = store.touchDebug
+        keys?.touchDebug = TouchDebug.enabled
         fb.configure(store)
         correctOn = store.autoCorrect
         suggestOn = store.suggestions
@@ -1427,6 +1466,12 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         expectedAt.clear()
         cursor = newSelStart
         resync()
+    }
+
+    override fun onFinishInputView(finishingInput: Boolean) {
+        super.onFinishInputView(finishingInput)
+        // Touch debug: the session so far goes to logcat each time the keyboard closes.
+        if (TouchDebug.enabled && TouchDebug.keyPresses + TouchDebug.toolbarTaps > 0) TouchDebug.logSummary()
     }
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {

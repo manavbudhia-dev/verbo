@@ -84,6 +84,12 @@ class KeyboardView(
 
     private class Press(var key: Key) {
         var done = false
+        // Touch debug only: where the finger went down, the key face under it, and whether it was a hold.
+        var downX = 0f
+        var downY = 0f
+        var aimed: Key? = null
+        var repeat = false
+        var held = false
         /** Points the finger passed through, for swipe typing; null when this press can't become a swipe. */
         var path: ArrayList<Gesture.P>? = null
         var swiping = false
@@ -348,9 +354,118 @@ class KeyboardView(
             edge.strokeCap = Paint.Cap.BUTT
         }
         if (wheelOpen) drawWheel(canvas)
+        else if (touchDebug) drawTouchDebug(canvas)
     }
 
     // ---------- touch ----------
+
+    // ---------- Touch Target Debug Mode (debug builds only; it only watches) ----------
+
+    /** The overlay and the logging are on: set from Settings › Typing in debug builds. */
+    var touchDebug = false
+        set(v) { field = v && TouchDebug.available; invalidate() }
+
+    private fun keyName(k: Key): String = when (k.type) {
+        Type.CHAR -> k.label
+        Type.SHIFT -> "Shift"
+        Type.BACKSPACE -> "Backspace"
+        Type.BAR -> "Space"
+        Type.ENTER -> "Enter"
+        Type.MODE -> k.label
+    }
+
+    /** The key whose face (what is drawn) is under a point, or null in a gap. */
+    private fun faceAt(x: Float, y: Float): Key? = rows.flatten().firstOrNull { it.rect.contains(x, y) }
+
+    /** The whole area that sends a touch to [k]: its row's full height, out to halfway across each gap. */
+    private fun touchRect(k: Key): RectF {
+        val row = rows[k.row]
+        val i = row.indexOf(k)
+        val left = if (i == 0) 0f else (row[i - 1].rect.right + k.rect.left) / 2
+        val right = if (i == row.size - 1) width.toFloat() else (k.rect.right + row[i + 1].rect.left) / 2
+        val top = k.row * rowHeight
+        val bottom = if (k.row == rows.size - 1) maxOf(height.toFloat(), top + rowHeight) else top + rowHeight
+        return RectF(left, top, right, bottom)
+    }
+
+    /** Every key's face and touch area, as the debug overlay draws them (also for tests). */
+    fun touchTargets(): List<TouchDebug.Target> = rows.flatten().map { TouchDebug.Target(keyName(it), RectF(it.rect), touchRect(it)) }
+
+    /** The names of every key in the current layout, for the summary's coverage line. */
+    fun keyNames(): List<String> = rows.flatten().map { keyName(it) }
+
+    private val clearHighlight = Runnable { invalidate() }
+
+    private fun debugDown(press: Press, x: Float, y: Float) {
+        press.downX = x
+        press.downY = y
+        press.aimed = faceAt(x, y)
+        press.repeat = TouchDebug.keyDown(keyName(press.key), android.os.SystemClock.uptimeMillis())
+    }
+
+    private fun debugUp(press: Press?, x: Float, y: Float, gesture: Boolean) {
+        if (press == null) return
+        TouchDebug.pressEnded(keyName(press.key), press.aimed?.let { keyName(it) }, gesture || press.swiping || press.held, press.repeat,
+            press.downX, press.downY, x, y, android.os.SystemClock.uptimeMillis())
+        handler.removeCallbacks(clearHighlight)
+        handler.postDelayed(clearHighlight, 700)
+    }
+
+    private val dbg = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    /** Faces in cyan, touch areas in dashed magenta, sizes in dp, the last touch highlighted, recent touch points. */
+    private fun drawTouchDebug(canvas: Canvas) {
+        dbg.shader = null
+        dbg.textAlign = Paint.Align.CENTER
+        val dashes = android.graphics.DashPathEffect(floatArrayOf(4 * d, 3 * d), 0f)
+        val now = android.os.SystemClock.uptimeMillis()
+        val last = TouchDebug.last?.takeIf { now - it.at < 700 }
+        for (k in rows.flatten()) {
+            val t = touchRect(k)
+            if (last != null && keyName(k) == last.received) {
+                dbg.style = Paint.Style.FILL
+                dbg.color = when (last.outcome) {
+                    TouchDebug.Outcome.CORRECT -> if (last.repeated) 0x55FFA500 else 0x5522C55E
+                    TouchDebug.Outcome.GESTURE -> 0x553B82F6
+                    else -> 0x55EF4444
+                }
+                canvas.drawRect(t, dbg)
+            }
+            dbg.style = Paint.Style.STROKE
+            dbg.strokeWidth = 1f * d
+            dbg.pathEffect = dashes
+            dbg.color = Color.MAGENTA
+            canvas.drawRect(t.left + 0.5f * d, t.top + 0.5f * d, t.right - 0.5f * d, t.bottom - 0.5f * d, dbg)
+            dbg.pathEffect = null
+            dbg.color = Color.CYAN
+            canvas.drawRect(k.rect, dbg)
+            dbg.style = Paint.Style.FILL
+            dbg.textSize = 7.5f * sp
+            dbg.color = Color.MAGENTA
+            canvas.drawText("${(t.width() / d).toInt()}×${(t.height() / d).toInt()}", t.centerX(), t.bottom - 2 * d, dbg)
+            dbg.color = Color.CYAN
+            canvas.drawText("${(k.rect.width() / d).toInt()}×${(k.rect.height() / d).toInt()}", k.rect.centerX(), k.rect.top + 8.5f * sp, dbg)
+        }
+        // Recent touches: where each went down (dot) and came up (ring), joined when the finger slid.
+        for (p in TouchDebug.recent(12)) {
+            dbg.color = when (p.outcome) { TouchDebug.Outcome.CORRECT -> 0xFF16A34A.toInt(); TouchDebug.Outcome.GESTURE -> 0xFF2563EB.toInt(); else -> 0xFFDC2626.toInt() }
+            dbg.style = Paint.Style.FILL
+            canvas.drawCircle(p.downX, p.downY, 3 * d, dbg)
+            dbg.style = Paint.Style.STROKE
+            canvas.drawCircle(p.upX, p.upY, 4.5f * d, dbg)
+            canvas.drawLine(p.downX, p.downY, p.upX, p.upY, dbg)
+        }
+        // The session so far, in a corner.
+        val line = "acc ${"%.0f".format(TouchDebug.accuracy * 100)}% · err ${"%.0f".format(TouchDebug.errorRate * 100)}% · n ${TouchDebug.keyPresses}"
+        dbg.style = Paint.Style.FILL
+        dbg.textAlign = Paint.Align.LEFT
+        dbg.textSize = 9 * sp
+        dbg.color = 0xCC000000.toInt()
+        canvas.drawRect(0f, 0f, dbg.measureText(line) + 8 * d, 12 * sp, dbg)
+        dbg.color = Color.WHITE
+        canvas.drawText(line, 4 * d, 9.5f * sp, dbg)
+        dbg.textAlign = Paint.Align.CENTER
+    }
 
     /** The key under a point; touches that land in the gaps go to the closest key in that row. */
     private fun keyAt(x: Float, y: Float): Key? {
@@ -382,6 +497,7 @@ class KeyboardView(
     private val keyHold = Runnable {
         val press = presses.values.firstOrNull { it.key.type == Type.CHAR && !it.done && mode == Mode.LETTERS && it.key.label[0] in bound } ?: return@Runnable
         press.done = true
+        press.held = true
         listener?.onKeyHeld(press.key.label[0])
         invalidate()
     }
@@ -389,6 +505,7 @@ class KeyboardView(
     private val barHold = Runnable {
         val entry = presses.entries.firstOrNull { it.value.key.type == Type.BAR && !it.value.done } ?: return@Runnable
         entry.value.done = true
+        entry.value.held = true
         listener?.onWheelOpening()
         if (wheelItems.isEmpty()) {
             listener?.onBarHeld()
@@ -569,6 +686,7 @@ class KeyboardView(
             if (rows !== layout) break
         }
         val press = Press(key)
+        if (touchDebug) debugDown(press, x, y)
         presses[id] = press
         listener?.onPress(key.type)
         when (key.type) {
@@ -630,6 +748,21 @@ class KeyboardView(
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(e: MotionEvent): Boolean {
+        // Touch debug: log the raw points and note the press before the keyboard handles the event; nothing here changes it.
+        var ending: Press? = null
+        if (touchDebug) {
+            val name = { x: Float, y: Float -> keyAt(x, y)?.let { keyName(it) } }
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN ->
+                    TouchDebug.log("ACTION_DOWN", e.getPointerId(e.actionIndex), e.getX(e.actionIndex), e.getY(e.actionIndex), d, name(e.getX(e.actionIndex), e.getY(e.actionIndex)))
+                MotionEvent.ACTION_MOVE -> for (i in 0 until e.pointerCount) TouchDebug.log("ACTION_MOVE", e.getPointerId(i), e.getX(i), e.getY(i), d, name(e.getX(i), e.getY(i)))
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
+                    TouchDebug.log("ACTION_UP", e.getPointerId(e.actionIndex), e.getX(e.actionIndex), e.getY(e.actionIndex), d, name(e.getX(e.actionIndex), e.getY(e.actionIndex)))
+                    ending = presses[e.getPointerId(e.actionIndex)]
+                }
+            }
+        }
+        val wheelWasOpen = wheelOpen
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN ->
                 down(e.getPointerId(e.actionIndex), e.getX(e.actionIndex), e.getY(e.actionIndex))
@@ -674,7 +807,10 @@ class KeyboardView(
                 val now = keyAt(e.getX(i), e.getY(i))
                 if (now != null && now !== press.key && now.type == Type.CHAR) { press.key = now; handler.removeCallbacks(keyHold) }
             }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> up(e.getPointerId(e.actionIndex))
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
+                up(e.getPointerId(e.actionIndex))
+                if (ending != null) debugUp(ending, e.getX(e.actionIndex), e.getY(e.actionIndex), gesture = wheelWasOpen)
+            }
             MotionEvent.ACTION_CANCEL -> {
                 if (wheelOpen) { spin.settle(); rememberTurn() }
                 wheelOpen = false

@@ -430,6 +430,9 @@ class Store(context: Context) {
     /** True while the account has Pro. The plan's end time is absolute, so it holds offline too. */
     val isPro: Boolean get() = proUntil > System.currentTimeMillis()
 
+    /** Touch Target Debug Mode (debug builds only). */
+    var touchDebug: Boolean get() = bool("touch_debug", false); set(v) { prefs?.edit()?.putBoolean("touch_debug", v)?.apply() }
+
     /** Reuse answers for repeated requests (the answer cache). */
     var cacheOn: Boolean get() = bool("cache_on", true); set(v) = put("cache_on", v)
 

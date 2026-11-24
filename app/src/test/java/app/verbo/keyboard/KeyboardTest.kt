@@ -1473,6 +1473,40 @@ class KeyboardTest {
     }
 
     @Test
+    fun touchDebugCountsToolbarTapsAndFlagsAccidentalOnes() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        store.touchDebug = true
+        TouchDebug.reset()
+        ime.onStartInputView(field.info, false)
+        layout(root)
+        assertTrue("the debug build turns it on", TouchDebug.enabled && ime.keys!!.touchDebug)
+        val bar = VerboIme::class.java.getDeclaredField("toolbar").apply { isAccessible = true }.get(ime) as View
+        val d = root.resources.displayMetrics.density
+        fun tapToolbar() {
+            val x = 30 * d
+            val y = bar.top + bar.height / 2f
+            val t = SystemClock.uptimeMillis()
+            root.dispatchTouchEvent(MotionEvent.obtain(t, t, MotionEvent.ACTION_DOWN, x, y, 0))
+            root.dispatchTouchEvent(MotionEvent.obtain(t, t, MotionEvent.ACTION_UP, x, y, 0))
+        }
+        tapToolbar()
+        assertEquals("a toolbar tap is counted", 1, TouchDebug.toolbarTaps)
+        assertEquals("a calm tap isn't flagged", 0, TouchDebug.toolbarAccidental)
+        assertTrue("it knows which pill: ${TouchDebug.summary(TouchDebug.ALL_KEYS)}", TouchDebug.summary(TouchDebug.ALL_KEYS).contains("Type 1"))
+        // Typing, then the toolbar a moment later: likely an accidental activation.
+        val keys = ime.keys!!
+        val k = keys.touchTargets().first { it.name == "k" }.face
+        touch(keys, MotionEvent.ACTION_DOWN, listOf(Triple(0, k.centerX(), k.centerY())))
+        touch(keys, MotionEvent.ACTION_UP, listOf(Triple(0, k.centerX(), k.centerY())))
+        tapToolbar()
+        assertEquals("a tap right after typing is flagged", 1, TouchDebug.toolbarAccidental)
+        store.touchDebug = false
+        ime.onStartInputView(field.info, false)
+        assertTrue("switched off again", !TouchDebug.enabled)
+        TouchDebug.reset()
+    }
+
+    @Test
     fun typeAndActPillsComeBackAfterAStatusLine() {
         val show = VerboIme::class.java.getDeclaredMethod("showStatus", String::class.java, emptyArray<Pair<String, () -> Unit>>().javaClass)
         show.isAccessible = true
