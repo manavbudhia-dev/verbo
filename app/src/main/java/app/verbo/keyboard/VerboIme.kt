@@ -281,18 +281,25 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     }
 
     /** What a toolbar touch is on: a pill's text, or the bot's or Voice's description. */
-    private fun toolbarItemAt(v: View, x: Float, y: Float): String {
+    private fun toolbarItemAt(v: View, x: Float, y: Float): String = nameAt(v, x, y) ?: "toolbar"
+
+    /** The deepest named thing under a point; an unnamed icon takes the name of the pill around it. */
+    private fun nameAt(v: View, x: Float, y: Float): String? {
         if (v is android.view.ViewGroup) {
             val sx = x + v.scrollX
             for (i in v.childCount - 1 downTo 0) {
                 val c = v.getChildAt(i)
-                if (c.visibility == View.VISIBLE && sx >= c.left && sx < c.right && y >= c.top && y < c.bottom) return toolbarItemAt(c, sx - c.left, y - c.top)
+                if (c.visibility == View.VISIBLE && sx >= c.left && sx < c.right && y >= c.top && y < c.bottom) {
+                    nameAt(c, sx - c.left, y - c.top)?.let { return it }
+                    break
+                }
             }
         }
         return (v as? TextView)?.text?.toString()?.takeIf { it.isNotBlank() }
             ?: v.contentDescription?.toString()?.substringBefore('.')?.takeIf { it.isNotBlank() }
-            ?: (v as? android.view.ViewGroup)?.let { g -> (0 until g.childCount).firstNotNullOfOrNull { (g.getChildAt(it) as? TextView)?.text?.toString() } }
-            ?: "toolbar"
+            ?: (v as? android.view.ViewGroup)?.takeIf { it.childCount in 1..3 }?.let { g ->
+                (0 until g.childCount).firstNotNullOfOrNull { (g.getChildAt(it) as? TextView)?.text?.toString()?.takeIf { t -> t.isNotBlank() } }
+            }
     }
 
     private fun loadSettings() {
