@@ -90,6 +90,7 @@ class KeyboardView(
         var aimed: Key? = null
         var repeat = false
         var held = false
+        var edge = false
         /** Points the finger passed through, for swipe typing; null when this press can't become a swipe. */
         var path: ArrayList<Gesture.P>? = null
         var swiping = false
@@ -396,17 +397,35 @@ class KeyboardView(
 
     private val clearHighlight = Runnable { invalidate() }
 
+    /**
+     * The key the finger meant: the face under it, or, just outside a face, the only key that can be meant
+     * there (left of the first key, right of the last, above or below a face). Null only in the gap between
+     * two faces, where either could be meant. The Boolean says it was outside the face.
+     */
+    private fun aimAt(x: Float, y: Float): Pair<Key?, Boolean> {
+        faceAt(x, y)?.let { return it to false }
+        val row = rows.getOrNull((y / rowHeight).toInt().coerceIn(0, rows.size - 1)) ?: return null to false
+        row.firstOrNull { x >= it.rect.left && x <= it.rect.right }?.let { return it to true }
+        if (x < row.first().rect.left) return row.first() to true
+        if (x > row.last().rect.right) return row.last() to true
+        return null to false
+    }
+
     private fun debugDown(press: Press, x: Float, y: Float) {
         press.downX = x
         press.downY = y
-        press.aimed = faceAt(x, y)
+        val (aimed, edge) = aimAt(x, y)
+        press.aimed = aimed
+        press.edge = edge
         press.repeat = TouchDebug.keyDown(keyName(press.key), android.os.SystemClock.uptimeMillis())
     }
 
     private fun debugUp(press: Press?, x: Float, y: Float, gesture: Boolean) {
         if (press == null) return
-        TouchDebug.pressEnded(keyName(press.key), press.aimed?.let { keyName(it) }, gesture || press.swiping || press.held, press.repeat,
-            press.downX, press.downY, x, y, android.os.SystemClock.uptimeMillis())
+        val aimed = press.aimed
+        TouchDebug.pressEnded(keyName(press.key), aimed?.let { keyName(it) }, gesture || press.swiping || press.held, press.repeat,
+            press.downX, press.downY, x, y, android.os.SystemClock.uptimeMillis(), press.edge,
+            if (aimed == null) 0f else (press.downX - aimed.rect.centerX()) / d, if (aimed == null) 0f else (press.downY - aimed.rect.centerY()) / d)
         handler.removeCallbacks(clearHighlight)
         handler.postDelayed(clearHighlight, 700)
     }
@@ -812,6 +831,12 @@ class KeyboardView(
                 if (ending != null) debugUp(ending, e.getX(e.actionIndex), e.getY(e.actionIndex), gesture = wheelWasOpen)
             }
             MotionEvent.ACTION_CANCEL -> {
+                // Touch debug: presses the system takes back here never reach a key, so they are counted as lost.
+                if (touchDebug) {
+                    val gone = presses.values.filter { !it.done }
+                    TouchDebug.log("ACTION_CANCEL", e.getPointerId(0), e.x, e.y, d, null)
+                    TouchDebug.cancelled(gone.size, gone.map { keyName(it.key) })
+                }
                 if (wheelOpen) { spin.settle(); rememberTurn() }
                 wheelOpen = false
                 wheelPick = -1

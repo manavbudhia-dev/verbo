@@ -172,6 +172,41 @@ class TouchTargetTest {
     @Test @Config(qualifiers = "w360dp-h780dp-xxxhdpi")
     fun densePhoneAtXxxhdpi() = acceptance()
 
+    @Test @Config(qualifiers = "w411dp-h891dp-420dpi")
+    fun edgeHitsCountAsCorrectAndCancelledTouchesAsLost() {
+        val d = keys.resources.displayMetrics.density
+        // Left of A's face, in the margin of the inset row: only A can be meant, and A receives it.
+        val a = target("a")
+        tap(a.touch.left + 4 * d, a.face.centerY())
+        assertEquals("a", typed.toString())
+        assertEquals("an edge hit is correct", 1, TouchDebug.correct)
+        assertEquals(1, TouchDebug.edgeHits)
+        assertEquals(0, TouchDebug.missed)
+        // Right of L's face, and just above Q's face: the same.
+        val l = target("l")
+        tap(l.touch.right - 4 * d, l.face.centerY())
+        val q = target("q")
+        tap(q.face.centerX(), q.touch.top + 1 * d)
+        assertEquals("al" + "q", typed.toString())
+        assertEquals(3, TouchDebug.edgeHits)
+        // Between two faces it is still a miss.
+        val s2 = target("s").face
+        val d2 = target("d").face
+        tap((s2.right + d2.left) / 2, s2.centerY())
+        assertEquals(1, TouchDebug.missed)
+        // The system takes a touch back before the finger lifts: nothing is typed, and it is counted as lost.
+        val before = typed.length
+        keys.onTouchEvent(event(MotionEvent.ACTION_DOWN, q.face.centerX(), q.face.centerY()))
+        keys.onTouchEvent(event(MotionEvent.ACTION_CANCEL, q.face.centerX(), q.face.centerY()))
+        assertEquals("a cancelled touch types nothing", before, typed.length)
+        assertEquals(1, TouchDebug.lost)
+        // Taps landing to the left of A's centre show up as the thumb's bias.
+        repeat(6) { tap(a.face.left + 3 * d, a.face.centerY()) }
+        val summary = TouchDebug.summary(TouchDebug.ALL_KEYS)
+        assertTrue("the summary names the bias: $summary", summary.contains("Thumb lands off centre: a ") && summary.contains("left"))
+        assertTrue("and the lost touch: $summary", summary.contains("lost 1"))
+    }
+
     @Test
     fun offMeansNothingIsCountedAndReleaseBuildsHaveNoDebugMode() {
         assertEquals("only debug builds have the tool", BuildConfig.DEBUG, TouchDebug.available)
