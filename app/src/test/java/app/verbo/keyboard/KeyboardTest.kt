@@ -2091,3 +2091,4 @@ class KeyboardTest {
         store.smartTouch = true
     }
 }
+private const val PERSON = "Ada Lovelace\nMathematician and writer\nLocation: London, England\nCurrent: Countess of Lovelace\nPrevious: Analytical Engine notes with Charles Babbage\nEducation: Private tutoring in mathematics and science\nhttps://www.linkedin.com/search/results/people/?keywords=Ada%20Lovelace"
