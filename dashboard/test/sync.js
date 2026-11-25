@@ -63,7 +63,7 @@ function request(method, url, body, headers = {}) {
     check('keyboard settings are stored, bad ones dropped', down.keyboard.theme === 'ocean' && down.keyboard.heightPercent === 110 && !('bogus' in down.keyboard) && !('soundVolume' in down.keyboard));
     const seen = (await request('GET', '/api/config', null, web)).body;
     check('dashboard shows the key as saved with a hint, never the key', seen.customKeySet === true && seen.customKeyHint === '1234' && !('customKey' in seen));
-    check('dashboard sees the phone\'s keyboard settings merged with defaults', seen.keyboard.theme === 'ocean' && seen.keyboard.keyShape === 'raised' && seen.keyboard.wheel.join() === 'ai,voice');
+    check('dashboard sees the phone\'s keyboard settings merged with defaults', seen.keyboard.theme === 'ocean' && seen.keyboard.keyShape === 'soft' && seen.keyboard.wheel.join() === 'ai,voice');
     await request('PUT', '/api/config', { keyboard: { keyShape: 'glass' } }, web);
     check('a setting changed on the web reaches the phone and keeps the rest', (() => 0)() === 0 && await (async () => {
       const k = (await request('GET', '/api/device/config', null, phone)).body.keyboard;

@@ -1386,7 +1386,7 @@ class PageActivity : Activity() {
                 ui.row(R.drawable.ic_keyboard, "Show touch targets", "Key faces, touch areas and sizes in dp; logs every touch to logcat (tag VerboTouch)",
                     ui.toggle(store.touchDebug) { store.touchDebug = it; TouchDebug.enabled = it }),
                 ui.row(R.drawable.ic_zap, "Session summary", "Accuracy ${"%.1f".format(TouchDebug.accuracy * 100)}% · error rate ${"%.1f".format(TouchDebug.errorRate * 100)}% · ${TouchDebug.keyPresses} presses", ui.chevron()) {
-                    val text = TouchDebug.summary(TouchDebug.ALL_KEYS)
+                    val text = TouchDebug.summary(TouchDebug.layoutKeys)
                     android.app.AlertDialog.Builder(this).setTitle("Touch session").setMessage(text)
                         .setPositiveButton("Copy") { _, _ ->
                             (getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(android.content.ClipData.newPlainText("Touch session", text))
@@ -1401,6 +1401,7 @@ class PageActivity : Activity() {
             ui.row(R.drawable.ic_spell_check, "Auto-correct", "Fix typos as you type; backspace puts your word back", ui.toggle(store.autoCorrect) { store.autoCorrect = it }),
             ui.row(R.drawable.ic_message_square_more, "Suggestions", "Word completions above the keys", ui.toggle(store.suggestions) { store.suggestions = it }),
             ui.row(R.drawable.ic_keyboard, "Swipe typing", "Slide across the letters to write a word", ui.toggle(store.swipeTyping) { store.swipeTyping = it }),
+            ui.row(R.drawable.ic_keyboard, "Smart touch", "Like iPhone: a tap near the border goes to the letter that fits the word", ui.toggle(store.smartTouch) { store.smartTouch = it }),
             ui.row(R.drawable.ic_languages, "Hindi script suggestions", "Type Hinglish, tap the word in Devanagari: kaise → कैसे", ui.toggle(store.hindiScript) { store.hindiScript = it }),
         ))
         column.addView(ui.rows(ui.row(R.drawable.ic_keyboard, "Text shortcuts", if (store.shortcuts.isEmpty()) "Type ;addr to put in your address" else "${store.shortcuts.size} saved", ui.chevron()) { go("textshortcuts") }))
@@ -2388,6 +2389,8 @@ class PageActivity : Activity() {
 
         column.addView(ui.section(R.drawable.ic_keyboard, "Key shape"))
         column.addView(ui.rows(
+            choice(R.drawable.ic_keyboard, "Soft", "Big rounded keys, emoji key, globe on space", store.keyShape == "soft") { store.keyShape = "soft" },
+            choice(R.drawable.ic_keyboard, "iPhone", "iOS proportions: slim keys, wide gaps, space and return", store.keyShape == "iphone") { store.keyShape = "iphone" },
             choice(R.drawable.ic_keyboard, "Raised", "3D keys that sink when pressed", store.keyShape == "raised") { store.keyShape = "raised" },
             choice(R.drawable.ic_keyboard, "Rounded", "Soft corners, low profile", store.keyShape == "rounded") { store.keyShape = "rounded" },
             choice(R.drawable.ic_keyboard, "Square", "Sharp corners, widest keys", store.keyShape == "square") { store.keyShape = "square" },

@@ -225,32 +225,43 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
 
         val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         top.addView(strip, LinearLayout.LayoutParams(0, -1, 1f))
-        top.addView(BotView(this).apply {
+        // Soft style (the Type/Act mock-up): the bot and the mic sit in round buttons of their own.
+        val roundButtons = store.keyShape == "soft"
+        val bot = BotView(this).apply {
             mood = BotView.Mood.HELLO
             contentDescription = "Meet Verbo, the keyboard bot"
             // One tap and Verbo is listening: no second tap on the mascot. Without an AI key it asks for one first.
             setOnClickListener { feedback(KeyboardView.Type.MODE); openBot() }
-        }, LinearLayout.LayoutParams(dp(30), dp(30)).apply { setMargins(dp(4), 0, dp(6), 0) })
+        }
+        if (roundButtons) {
+            top.addView(View(this).apply { setBackgroundColor((p.muted and 0x00FFFFFF) or 0x55000000) }, LinearLayout.LayoutParams(dp(1), dp(22)).apply { setMargins(dp(4), 0, dp(6), 0) })
+            top.addView(FrameLayout(this).apply {
+                background = pressable(p.key, p.keyPressed, 20)
+                setOnClickListener { feedback(KeyboardView.Type.MODE); openBot() }
+                addView(bot.apply { isClickable = false }, FrameLayout.LayoutParams(dp(30), dp(30), Gravity.CENTER))
+            }, LinearLayout.LayoutParams(dp(40), dp(40)).apply { setMargins(0, 0, dp(6), 0) })
+        } else top.addView(bot, LinearLayout.LayoutParams(dp(30), dp(30)).apply { setMargins(dp(4), 0, dp(6), 0) })
         val voice = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setPadding(dp(12), 0, dp(14), 0)
-            background = pressable(p.key, p.keyPressed, 18)
+            if (roundButtons) setPadding(0, 0, 0, 0) else setPadding(dp(12), 0, dp(14), 0)
+            background = pressable(p.key, p.keyPressed, if (roundButtons) 20 else 18)
             contentDescription = "Voice. Tap to ask Verbo, hold to dictate"
             setOnClickListener { feedback(KeyboardView.Type.MODE); voiceForBot = true; startVoice(true) }
             setOnLongClickListener { feedback(KeyboardView.Type.MODE); voiceForBot = false; startVoice(false); true }
             addView(ImageView(this@VerboIme).apply {
                 setImageResource(R.drawable.ic_mic)
                 setColorFilter(p.text)
-            }, LinearLayout.LayoutParams(dp(15), dp(15)).apply { rightMargin = dp(6) })
-            addView(TextView(this@VerboIme).apply {
+            }, if (roundButtons) LinearLayout.LayoutParams(dp(20), dp(20)) else LinearLayout.LayoutParams(dp(15), dp(15)).apply { rightMargin = dp(6) })
+            if (!roundButtons) addView(TextView(this@VerboIme).apply {
                 text = "Voice"
                 setTextColor(p.text)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
                 typeface = Typeface.DEFAULT_BOLD
             })
         }
-        top.addView(voice, LinearLayout.LayoutParams(-2, dp(36)).apply { setMargins(0, 0, dp(6), 0) })
+        top.addView(voice, if (roundButtons) LinearLayout.LayoutParams(dp(40), dp(40)).apply { setMargins(0, 0, dp(8), 0) }
+            else LinearLayout.LayoutParams(-2, dp(36)).apply { setMargins(0, 0, dp(6), 0) })
         root.addView(top, LinearLayout.LayoutParams(-1, dp(46)))
         toolbar = top
         root.addView(suggestRow, LinearLayout.LayoutParams(-1, dp(40)))
@@ -313,6 +324,10 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         skills = store.skills
         keys?.swipeEnabled = store.swipeTyping
         hindiOn = store.hindiScript
+        keys?.spaceLanguage = if (hindiOn) "English · हिन्दी" else "English (US)"
+        smartOn = store.smartTouch
+        // The user's Hinglish counts for smart touch too: common words and the spellings Verbo has learnt.
+        smartWords = if (smartOn) (Memory.HINGLISH + Hinglish.words(store).keys).toList() else emptyList()
         val barActive = assistantOn && agentMode != "manual"
         baseWheel = if (barActive && store.wheelOn) store.wheel else emptyList()
         setWheel(baseWheel, emptyList())
@@ -325,6 +340,65 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     private var baseWheel: List<String> = emptyList()
     private var keymap: List<KeyAction> = emptyList()
     private var hindiOn = false
+    private var smartOn = true
+    private var smartWords: List<String> = emptyList()
+
+    /** Smart touch: the odds of each next letter for the word being typed (null outside plain text typing). */
+    override fun letterOdds(): FloatArray? {
+        if (!smartOn || !textField || numericField || isPasswordField() || botEdit?.isFocused == true) return null
+        val prefix = word.toString().lowercase()
+        if (prefix.startsWith("/")) return null
+        return dictionary.nextLetterOdds(prefix, smartWords)
+    }
+
+    // ---------- emoji ----------
+
+    override fun onEmoji() = showEmoji(if (store.recentEmoji.isEmpty()) 1 else 0)
+
+    /** The emoji panel: recent ones first, then a few sets; tapping one types it, ABC goes back to the letters. */
+    private fun showEmoji(tab: Int) = showPanel {
+        val header = LinearLayout(this@VerboIme).apply { gravity = Gravity.CENTER_VERTICAL }
+        header.addView(chipView("ABC", p.fnKey, p.keyPressed, p.text).apply {
+            setOnClickListener { feedback(KeyboardView.Type.MODE); hidePanel() }
+        }, LinearLayout.LayoutParams(dp(56), dp(36)).apply { setMargins(dp(2), 0, dp(4), 0) })
+        val tabs = LinearLayout(this@VerboIme).apply { gravity = Gravity.CENTER_VERTICAL }
+        EMOJI_TABS.forEachIndexed { i, (icon, _) ->
+            tabs.addView(TextView(this@VerboIme).apply {
+                text = icon
+                gravity = Gravity.CENTER
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 19f)
+                background = if (i == tab) rounded(p.keyPressed, 14) else null
+                setOnClickListener { feedback(KeyboardView.Type.MODE); showEmoji(i) }
+            }, LinearLayout.LayoutParams(dp(38), dp(34)))
+        }
+        header.addView(HorizontalScrollView(this@VerboIme).apply { isHorizontalScrollBarEnabled = false; addView(tabs) }, LinearLayout.LayoutParams(0, -2, 1f))
+        header.addView(iconButton(R.drawable.ic_delete, "Delete") { feedback(KeyboardView.Type.BACKSPACE); onBackspace() }, LinearLayout.LayoutParams(dp(44), dp(40)))
+        addView(header)
+        val list = if (tab == 0) store.recentEmoji else EMOJI_TABS[tab].second.split(' ')
+        val grid = LinearLayout(this@VerboIme).apply { orientation = LinearLayout.VERTICAL }
+        if (list.isEmpty()) grid.addView(TextView(this@VerboIme).apply {
+            text = "Emoji you use show up here"
+            setTextColor(p.muted)
+            setPadding(dp(12), dp(16), dp(12), dp(16))
+        })
+        list.chunked(8).forEach { chunk ->
+            val row = LinearLayout(this@VerboIme)
+            for (e in chunk) row.addView(TextView(this@VerboIme).apply {
+                text = e
+                gravity = Gravity.CENTER
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 25f)
+                background = pressable(Color.TRANSPARENT, p.keyPressed, 12)
+                setOnClickListener {
+                    feedback(KeyboardView.Type.CHAR)
+                    onChar(e)
+                    store.recentEmoji = listOf(e) + store.recentEmoji.filter { it != e }
+                }
+            }, LinearLayout.LayoutParams(0, dp(46), 1f))
+            repeat(8 - chunk.size) { row.addView(View(this@VerboIme), LinearLayout.LayoutParams(0, 1, 1f)) }
+            grid.addView(row)
+        }
+        addView(android.widget.ScrollView(this@VerboIme).apply { addView(grid) }, LinearLayout.LayoutParams(-1, 0, 1f))
+    }
     /** The word a swipe just put in (with its trailing space), so a suggestion or backspace can replace it. */
     private var swiped: String? = null
 
@@ -3190,6 +3264,16 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     private fun dp(v: Int) = (v * resources.displayMetrics.density + 0.5f).toInt()
 
     companion object {
+        /** The emoji panel's tabs: an icon and the emoji in it (tab 0 is filled from the recently used ones). */
+        val EMOJI_TABS: List<Pair<String, String>> = listOf(
+            "🕘" to "",
+            "😀" to "😀 😃 😄 😁 😆 😅 😂 🤣 😊 😇 🙂 🙃 😉 😌 😍 🥰 😘 😗 😙 😚 😋 😛 😝 😜 🤪 🤨 🧐 🤓 😎 🥳 😏 😒 😞 😔 😟 😕 🙁 😣 😖 😫 😩 🥺 😢 😭 😤 😠 😡 🤯 😳 🥵 🥶 😱 😨 😰 😥 😓 🤗 🤔 🤭 🤫 😶 😐 😑 😬 🙄 😯 😮 😲 🥱 😴 🤤 😪 😵 🤐 🥴 🤢 🤮 🤧 😷 🤒 🤕",
+            "👍" to "👍 👎 👌 ✌️ 🤞 🤟 🤘 🤙 👈 👉 👆 👇 ☝️ ✋ 🤚 🖐️ 🖖 👋 🤝 🙏 👏 🙌 👐 🤲 💪 ✍️ 💅 🤳 🙋 🙆 🙅 🤷 🤦 🙇",
+            "❤️" to "❤️ 🧡 💛 💚 💙 💜 🖤 🤍 🤎 💔 ❣️ 💕 💞 💓 💗 💖 💘 💝 ✨ ⭐ 🌟 🔥 💯 ✅ ❌ ⚡ 🎉 🎊 🎁 🎂 🪔 🙏",
+            "🐶" to "🐶 🐱 🐭 🐹 🐰 🦊 🐻 🐼 🐨 🐯 🦁 🐮 🐷 🐸 🐵 🙈 🙉 🙊 🐔 🐧 🐦 🦆 🦉 🐝 🦋 🐌 🐢 🐍 🐙 🐬 🐳 🌸 🌹 🌻 🌴 🍀 🌈 ☀️ 🌙 ⛅ ☔ ❄️",
+            "🍕" to "🍎 🍌 🍉 🍇 🍓 🥭 🍍 🥥 🥑 🍅 🌶️ 🌽 🥕 🍞 🧀 🍳 🍔 🍟 🍕 🌭 🥪 🌮 🍜 🍝 🍛 🍣 🍱 🥟 🍦 🍩 🍪 🍫 🍬 ☕ 🍵 🥤 🍺 🍷",
+            "⚽" to "⚽ 🏏 🏀 🏈 🎾 🏸 🎮 🎯 🎲 🎵 🎶 🎤 🎧 🎬 📷 📱 💻 ⌚ 📞 💡 📚 ✏️ 📌 📎 🔒 🔑 💰 💳 🚗 🚕 🚌 🚆 ✈️ 🚀 🏠 🏢 🗺️ 📍",
+        )
         private const val MAX_CHARS = 20000
         private const val AUTO_PAUSE_MS = 1600L
         private const val AUTO_MAX_CHARS = 2000

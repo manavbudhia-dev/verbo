@@ -239,14 +239,14 @@ const KEYBOARD_FIELDS = {
   assistantOn: 'boolean', numberRow: 'boolean', sound: 'boolean', haptic: 'boolean', autoCorrect: 'boolean',
   suggestions: 'boolean', wheelOn: 'boolean', batterySaver: 'boolean', keysOn: 'boolean',
   agentMode: ['auto', 'ask', 'manual'], theme: THEMES,
-  keyShape: ['raised', 'rounded', 'square', 'bubble', 'glass', 'outline', 'flat'],
+  keyShape: ['soft', 'iphone', 'raised', 'rounded', 'square', 'bubble', 'glass', 'outline', 'flat'],
   soundPack: ['system', 'typewriter', 'mechanical', 'pop', 'drop', 'soft'], hapticStrength: ['light', 'medium', 'strong'],
   heightPercent: [80, 130], soundVolume: [5, 100], customAccent: [-2147483648, 2147483647],
   wheel: 'list', languages: 'list',
 };
 const KEYBOARD_DEFAULTS = {
   assistantOn: true, numberRow: false, sound: true, haptic: true, autoCorrect: true, suggestions: true, wheelOn: true,
-  batterySaver: true, keysOn: true, agentMode: 'auto', theme: 'system', keyShape: 'raised', soundPack: 'system', hapticStrength: 'medium',
+  batterySaver: true, keysOn: true, agentMode: 'auto', theme: 'system', keyShape: 'soft', soundPack: 'system', hapticStrength: 'medium',
   heightPercent: 100, soundVolume: 60, wheel: ['translate', 'rewrite', 'ai', 'meet', 'voice', 'clips'],
   languages: ['English', 'Hindi', 'Spanish', 'French', 'Chinese (Simplified)'],
 };

@@ -695,7 +695,7 @@ function keyboardCard() {
     setting('Assistant', 'Skill keys, the wheel and voice commands', toggle(k.assistantOn, set('assistantOn'), 'Assistant')),
     setting('When a skill finishes', null, select(k.agentMode, [['auto', 'Apply the result straight away'], ['ask', 'Show it first, then I decide'], ['manual', 'Only run skill keys I tap']], set('agentMode'), 'Agent mode')),
     setting('Look', null, select(k.theme, [['system', 'Follow the phone'], ['dark', 'Dark'], ['light', 'Light'], ['amoled', 'Amoled black'], ['ocean', 'Ocean blue'], ['forest', 'Forest green'], ['sunset', 'Sunset'], ['rose', 'Rose'], ['mint', 'Mint'], ['custom', 'Custom accent (set on the phone)']], set('theme'), 'Theme')),
-    setting('Key style', null, select(k.keyShape, [['raised', 'Raised'], ['rounded', 'Rounded'], ['square', 'Square'], ['bubble', 'Bubble'], ['glass', 'Glass'], ['outline', 'Outline'], ['flat', 'Flat']], set('keyShape'), 'Key style')),
+    setting('Key style', null, select(k.keyShape, [['soft', 'Soft'], ['iphone', 'iPhone'], ['raised', 'Raised'], ['rounded', 'Rounded'], ['square', 'Square'], ['bubble', 'Bubble'], ['glass', 'Glass'], ['outline', 'Outline'], ['flat', 'Flat']], set('keyShape'), 'Key style')),
     setting('Key height', `${k.heightPercent}%`, h('input', { type: 'range', min: 80, max: 130, step: 5, value: k.heightPercent, 'aria-label': 'Key height', onchange: (e) => set('heightPercent')(Number(e.target.value)) })),
     setting('Number row', 'Show 1–0 above the letters', toggle(k.numberRow, set('numberRow'), 'Number row')),
     setting('Key sound', null, h('div', { class: 'row' },

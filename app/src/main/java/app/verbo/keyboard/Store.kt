@@ -78,7 +78,13 @@ class Store(context: Context) {
         get() = (prefs?.getInt("height_percent", 100) ?: 100).coerceIn(MIN_HEIGHT, MAX_HEIGHT)
         set(v) = putInt("height_percent", v.coerceIn(MIN_HEIGHT, MAX_HEIGHT))
     /** Key style, one of SHAPES. "raised" is a 3D key that sinks when pressed; "flat" shows letters only. */
-    var keyShape: String get() = str("key_shape", "raised"); set(v) = put("key_shape", v)
+    var keyShape: String get() = str("key_shape", "soft"); set(v) = put("key_shape", v)
+    /** Smart touch: near a border between two letters, the one likelier to come next in the word gets the tap. */
+    var smartTouch: Boolean get() = bool("smart_touch", true); set(v) = put("smart_touch", v)
+    /** Emoji picked lately, newest first, for the emoji panel's first tab. */
+    var recentEmoji: List<String>
+        get() = str("recent_emoji", "").split(' ').filter { it.isNotEmpty() }
+        set(v) = put("recent_emoji", v.take(32).joinToString(" "))
     var numberRow: Boolean get() = bool("number_row", false); set(v) = put("number_row", v)
     var sound: Boolean get() = bool("sound", true); set(v) = put("sound", v)
     var haptic: Boolean get() = bool("haptic", true); set(v) = put("haptic", v)
@@ -642,7 +648,7 @@ class Store(context: Context) {
             "Vietnamese", "Thai", "Dutch", "Polish", "Swahili",
         )
         val THEMES = listOf("system", "dark", "light", "amoled", "custom", "ocean", "rose", "forest", "sunset", "mint")
-        val SHAPES = listOf("raised", "rounded", "square", "bubble", "glass", "outline", "flat")
+        val SHAPES = listOf("soft", "iphone", "raised", "rounded", "square", "bubble", "glass", "outline", "flat")
         val CATEGORIES = listOf("write", "edit", "translate", "summarize")
 
         private fun parseSkills(arr: JSONArray) = (0 until arr.length()).map {

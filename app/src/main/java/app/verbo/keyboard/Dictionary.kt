@@ -55,6 +55,42 @@ class Dictionary {
 
     fun contains(word: String) = ready && indexOf(word.lowercase()) >= 0
 
+    private val oddsCache = object : LinkedHashMap<String, FloatArray>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, FloatArray>?) = size > 48
+    }
+
+    /**
+     * How likely each letter a..z is to come next after [prefix] (lower case, 0..1, summing to 1), from the
+     * word list weighted by commonness, plus [extra] words (the user's Hinglish) counted as very common.
+     * Null when nothing known starts that way, so smart touch stays out of the way.
+     */
+    @Synchronized
+    fun nextLetterOdds(prefix: String, extra: Collection<String> = emptyList()): FloatArray? {
+        if (!ready || prefix.length > 24 || prefix.any { it !in 'a'..'z' }) return null
+        val key = prefix + "|" + extra.size
+        oddsCache[key]?.let { return it.takeIf { o -> o.isNotEmpty() } }
+        val odds = FloatArray(26)
+        var i = if (prefix.isEmpty()) 0 else lower.binarySearch(prefix).let { if (it < 0) -it - 1 else it }
+        val n = prefix.length
+        while (i < lower.size && lower[i].startsWith(prefix)) {
+            val w = lower[i]
+            if (w.length > n) {
+                val c = w[n]
+                if (c in 'a'..'z') odds[c - 'a'] += TIER_WEIGHT[(tier[i] / 10).coerceIn(0, TIER_WEIGHT.size - 1)]
+            }
+            i++
+        }
+        for (w in extra) if (w.length > n && w.startsWith(prefix)) {
+            val c = w[n]
+            if (c in 'a'..'z') odds[c - 'a'] += TIER_WEIGHT[1] * 2
+        }
+        val total = odds.sum()
+        if (total <= 0f) { oddsCache[key] = FloatArray(0); return null }
+        for (k in odds.indices) odds[k] /= total
+        oddsCache[key] = odds
+        return odds
+    }
+
     /** Up to [max] likely words starting with [typed], most common first. */
     fun completions(typed: String, max: Int): List<String> {
         if (!ready || typed.isEmpty()) return emptyList()
@@ -111,6 +147,8 @@ class Dictionary {
         if (typed[0].isUpperCase()) word.replaceFirstChar { it.uppercase() } else word
 
     companion object {
+        /** Weight of one word by its tier / 10: the most common words count far more than rare ones. */
+        private val TIER_WEIGHT = floatArrayOf(1f, 1f, 0.3f, 0.09f, 0.03f, 0.01f, 0.004f, 0.002f, 0.001f, 0.001f, 0.001f)
         private val FIXED = mapOf(
             "i" to "I", "im" to "I'm", "ive" to "I've", "dont" to "don't", "cant" to "can't", "wont" to "won't",
             "didnt" to "didn't", "doesnt" to "doesn't", "isnt" to "isn't", "wasnt" to "wasn't", "arent" to "aren't",

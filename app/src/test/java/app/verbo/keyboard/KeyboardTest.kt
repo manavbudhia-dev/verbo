@@ -92,6 +92,8 @@ class KeyboardTest {
     fun setUp() {
         // Most tests look at the app itself, past the first-run sign-in screen.
         Store(RuntimeEnvironment.getApplication()).signInSkipped = true
+        // Most tests were written for the classic key row (comma and full stop beside space); Soft has its own test.
+        Store(RuntimeEnvironment.getApplication()).keyShape = "raised"
         // Most tests look at Pro features; the free plan has its own test.
         Store(RuntimeEnvironment.getApplication()).setPlan(Long.MAX_VALUE, "lifetime")
         ime = Robolectric.buildService(TestIme::class.java).create().get()
@@ -894,7 +896,6 @@ class KeyboardTest {
         ime.onVoiceResult("Write a thank you note", forBot = true, command = true, smart = true)
         assertTrue(findText(root, "Add your ${store.providerName} API key to use actions") != null)
         // "Just type" dictates the words straight into the field.
-        field.text.clear()
         ime.onVoiceResult("hello there", forBot = true, command = false, smart = true)
         assertEquals("hello there", field.text.toString())
         // Blank speech is reported, not run.
@@ -1353,7 +1354,6 @@ class KeyboardTest {
         // With nothing typed or copied, a send says so instead of sending an empty message.
         store.apiKey = "sk-ant-test-0000"
         store.setToken("slackToken", "xoxb-test")
-        field.text.clear()
         ime.runApp(Apps.byKey("slack")!!)
         assertTrue("asks for text first: ${ime.statusMessage}", ime.statusMessage.contains("Type something first"))
         store.setToken("slackToken", "")
@@ -1803,7 +1803,6 @@ class KeyboardTest {
         // A copied message that names a person and a time: the trigger chips.
         ime.hidePanel()
         val kept = field.text.toString()
-        field.text.clear()
         val clipboard = RuntimeEnvironment.getApplication().getSystemService(android.content.ClipboardManager::class.java)
         val copied = android.content.ClipData.newPlainText("m", "We're meeting with David Miller from Google Cloud tomorrow")
         ime.clock = { org.robolectric.shadows.ShadowSystem.currentTimeMillis() } // the test clipboard stamps clips with its own clock
@@ -1933,7 +1932,6 @@ class KeyboardTest {
         touch(lw, MotionEvent.ACTION_MOVE, listOf(lwCentre))
         touch(lw, MotionEvent.ACTION_UP, listOf(lwCentre))
         // The double-press typed one space; reset the field so the banner check below is exact.
-        field.text.clear()
         field.text.append(kept)
         android.text.Selection.setSelection(field.text, kept.length)
         store.theme = "system"
@@ -2038,6 +2036,58 @@ class KeyboardTest {
         touch(slot, MotionEvent.ACTION_UP, listOf(Triple(0, dx, dy)))
         store.wheel = Store.DEFAULT_WHEEL
     }
-}
 
-private const val PERSON = "Ada Lovelace\nMathematician and writer\nLocation: London, England\nCurrent: Countess of Lovelace\nPrevious: Analytical Engine notes with Charles Babbage\nEducation: Private tutoring in mathematics and science\nhttps://www.linkedin.com/search/results/people/?keywords=Ada%20Lovelace"
+    @Test
+    fun softLookHasRoundBotAndMicAnEmojiKeyAndSmartTouch() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        store.keyShape = "soft"
+        store.theme = "light"
+        ime.onStartInputView(field.info, false)
+        val kb = ime.keys!!
+        val softRoot = kb.parent as View
+        layout(softRoot)
+        snap(softRoot, "keyboard-soft-light")
+        assertTrue("an emoji key beside ?123", kb.keyNames().containsAll(listOf("?123", "Emoji", ",", "Space", ".", "Enter")))
+        assertTrue("the mic is a round button with no text", findText(softRoot, "Voice") == null)
+        // Emoji: the key opens the panel, a tap types one and remembers it, ABC goes back.
+        val face = kb.touchTargets().first { it.name == "Emoji" }.face
+        touch(kb, MotionEvent.ACTION_DOWN, listOf(Triple(0, face.centerX(), face.centerY())))
+        touch(kb, MotionEvent.ACTION_UP, listOf(Triple(0, face.centerX(), face.centerY())))
+        val panelRoot = kb.parent as View
+        layout(panelRoot)
+        snap(panelRoot, "keyboard-soft-emoji")
+        clickLabel(panelRoot, "😂")
+        assertTrue("the emoji is typed: ${field.text}", field.text.toString().endsWith("😂"))
+        assertEquals(listOf("😂"), store.recentEmoji)
+        clickLabel(panelRoot, "ABC")
+        assertEquals(View.VISIBLE, kb.visibility)
+
+        store.keyShape = "iphone"
+        ime.onStartInputView(field.info, false)
+        (ime.keys!!.parent as View).let { layout(it); snap(it, "keyboard-iphone-light") }
+        assertTrue("iPhone: 123, emoji, space, return", ime.keys!!.keyNames().takeLast(4) == listOf("123", "Emoji", "Space", "Enter"))
+
+        // Smart touch with the real word list: after "th", a tap on R's edge next to E types E.
+        store.keyShape = "raised"
+        ime.onStartInputView(field.info, false)
+        val keys = ime.keys!!
+        layout(keys.parent as View)
+        type(" th")
+        val r = keys.touchTargets().first { it.name == "r" }
+        val e = keys.touchTargets().first { it.name == "e" }
+        val x = e.touch.right + r.touch.width() * 0.08f
+        touch(keys, MotionEvent.ACTION_DOWN, listOf(Triple(0, x, r.face.centerY())))
+        touch(keys, MotionEvent.ACTION_UP, listOf(Triple(0, x, r.face.centerY())))
+        assertTrue("th + border tap = the: ${field.text}", field.text.toString().endsWith("the"))
+        // Switched off, the same tap is R.
+        store.smartTouch = false
+        ime.onStartInputView(field.info, false)
+        val plain = ime.keys!!
+        layout(plain.parent as View)
+        type(" th")
+        touch(plain, MotionEvent.ACTION_DOWN, listOf(Triple(0, x, r.face.centerY())))
+        touch(plain, MotionEvent.ACTION_UP, listOf(Triple(0, x, r.face.centerY())))
+        assertTrue("off: ${field.text}", field.text.toString().endsWith("thr"))
+        store.smartTouch = true
+    }
+}

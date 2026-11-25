@@ -54,7 +54,7 @@ class KeyboardView(
 ) : View(context) {
 
     enum class Mode { LETTERS, SYMBOLS, MORE_SYMBOLS }
-    enum class Type { CHAR, SHIFT, BACKSPACE, MODE, BAR, ENTER }
+    enum class Type { CHAR, SHIFT, BACKSPACE, MODE, BAR, ENTER, EMOJI }
 
     interface Listener {
         fun onChar(text: String)
@@ -74,6 +74,13 @@ class KeyboardView(
         fun onWheelTurned(turn: Int) {}
         /** The space bar was tapped twice quickly: open the language compass. */
         fun onSpaceDouble() {}
+        /** The emoji key (Soft and iPhone styles) was tapped. */
+        fun onEmoji() {}
+        /**
+         * Smart touch: how likely each letter a..z is to come next in the word being typed (0..1), or null to
+         * leave touches alone. Asked when a finger lands, after any earlier key has been typed.
+         */
+        fun letterOdds(): FloatArray? = null
     }
 
     private class Key(val type: Type, val label: String, val weight: Float, val target: Mode? = null) {
@@ -91,6 +98,9 @@ class KeyboardView(
         var repeat = false
         var held = false
         var edge = false
+        /** Smart touch's letter odds for this press, and whether they moved it off the nearest key. */
+        var odds: FloatArray? = null
+        var smart = false
         /** Points the finger passed through, for swipe typing; null when this press can't become a swipe. */
         var path: ArrayList<Gesture.P>? = null
         var swiping = false
@@ -159,6 +169,9 @@ class KeyboardView(
     /** Letters that run a skill when held. They are marked with a small glow. */
     var bound: Set<Char> = emptySet()
         set(value) { if (field != value) { field = value; invalidate() } }
+    /** The language shown on the space bar in the Soft style ("English (US)"). */
+    var spaceLanguage = "English (US)"
+        set(value) { if (field != value) { field = value; invalidate() } }
     /** Text on the wide bar; empty when the assistant can't be triggered from it. */
     var barLabel = ""
         set(value) { if (field != value) { field = value; invalidate() } }
@@ -167,15 +180,18 @@ class KeyboardView(
     private val sp = resources.displayMetrics.scaledDensity
     // Keys are kept wide: hairline gaps between them and almost no margin at the screen edges.
     private val rowHeight = 51 * d * scale
-    private val gapX = 1.25f * d
-    private val gapY = 3.25f * d
+    /** "soft": big rounded keys with clear gaps and an emoji key (like the Type/Act mock-up); "iphone": iOS proportions. */
+    private val soft = shape == "soft"
+    private val iphone = shape == "iphone"
+    private val gapX = when { iphone -> 3.5f * d; soft -> 2.25f * d; else -> 1.25f * d }
+    private val gapY = when { iphone -> 5.5f * d; soft -> 4.5f * d; else -> 3.25f * d }
     private val flat = shape == "flat"
     private val raised = shape == "raised"
     private val glass = shape == "glass"
     private val outline = shape == "outline"
-    private val radius = when (shape) { "square" -> 3 * d; "bubble" -> rowHeight; "raised" -> 9 * d; else -> 8 * d }
+    private val radius = when (shape) { "square" -> 3 * d; "bubble" -> rowHeight; "raised" -> 9 * d; "soft" -> 11 * d; "iphone" -> 5.5f * d; else -> 8 * d }
     /** How far the key face stands above its base. Raised keys are tall and sink by this much when pressed. */
-    private val depth = when { raised -> 4 * d; flat || glass || outline -> 0f; else -> 1.5f * d }
+    private val depth = when { raised -> 4 * d; flat || glass || outline -> 0f; soft -> 2 * d; iphone -> 1 * d; else -> 1.5f * d }
     private val edge = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 1.2f * d }
     private val shaders = HashMap<Long, android.graphics.Shader>()
     private var rows = ArrayList<List<Key>>()
@@ -190,6 +206,8 @@ class KeyboardView(
     private val icons = HashMap<Int, Drawable>()
     private var lift = 0f
 
+    private fun blend(a: Int, b: Int, t: Float) = Color.rgb(
+        (Color.red(a) + (Color.red(b) - Color.red(a)) * t).toInt(), (Color.green(a) + (Color.green(b) - Color.green(a)) * t).toInt(), (Color.blue(a) + (Color.blue(b) - Color.blue(a)) * t).toInt())
     private fun lighten(c: Int, by: Float) = Color.rgb(
         (Color.red(c) + (255 - Color.red(c)) * by).toInt(), (Color.green(c) + (255 - Color.green(c)) * by).toInt(), (Color.blue(c) + (255 - Color.blue(c)) * by).toInt())
     private fun darken(c: Int, to: Float) = Color.rgb((Color.red(c) * to).toInt(), (Color.green(c) * to).toInt(), (Color.blue(c) * to).toInt())
@@ -220,11 +238,16 @@ class KeyboardView(
                 rows += listOf(Key(Type.MODE, "?123", 1.5f, Mode.SYMBOLS)) + chars("%<>[]✓™") + Key(Type.BACKSPACE, "", 1.5f)
             }
         }
-        rows += listOf(
-            Key(Type.MODE, if (mode == Mode.LETTERS) "?123" else "ABC", 1.5f, if (mode == Mode.LETTERS) Mode.SYMBOLS else Mode.LETTERS),
-            Key(Type.CHAR, ",", 1f), Key(Type.BAR, "", 4.5f), Key(Type.CHAR, ".", 1f), Key(Type.ENTER, "", 1.5f),
-        )
+        val modeKey = Key(Type.MODE, if (mode == Mode.LETTERS) (if (iphone) "123" else "?123") else "ABC", 1.5f, if (mode == Mode.LETTERS) Mode.SYMBOLS else Mode.LETTERS)
+        rows += when {
+            // iOS: 123, emoji, a wide space and return; a full stop comes from a double space.
+            iphone -> listOf(Key(Type.MODE, modeKey.label, 1.25f, modeKey.target), Key(Type.EMOJI, "", 1.25f), Key(Type.BAR, "", 5f), Key(Type.ENTER, "", 2.5f))
+            soft -> listOf(Key(Type.MODE, modeKey.label, 1.4f, modeKey.target), Key(Type.EMOJI, "", 1f), Key(Type.CHAR, ",", 0.9f),
+                Key(Type.BAR, "", 4.1f), Key(Type.CHAR, ".", 0.9f), Key(Type.ENTER, "", 1.7f))
+            else -> listOf(modeKey, Key(Type.CHAR, ",", 1f), Key(Type.BAR, "", 4.5f), Key(Type.CHAR, ".", 1f), Key(Type.ENTER, "", 1.5f))
+        }
         rows.forEachIndexed { i, row -> row.forEach { it.row = i } }
+        if (mode == Mode.LETTERS) TouchDebug.layoutKeys = rows.flatten().map { keyName(it) }
         presses.clear()
         place(width)
     }
@@ -233,8 +256,9 @@ class KeyboardView(
         if (width == 0) return
         val side = 1f * d
         rows.forEachIndexed { r, row ->
-            // The second letter row is one key narrower, so it sits half a key in from each side.
-            val inset = if (row[0].inset) (width - 2 * side) / 20f else 0f
+            // The second letter row is one key narrower, so it sits in from each side: a little under half a key
+            // (0.42), which brings A and L a touch nearer the edges, where thumbs reach for them.
+            val inset = if (row[0].inset) (width - 2 * side) / 10f * INSET else 0f
             val unit = (width - 2 * side - 2 * inset) / row.sumOf { it.weight.toDouble() }.toFloat()
             var x = side + inset
             val top = r * rowHeight
@@ -272,8 +296,14 @@ class KeyboardView(
             val down = key in pressed
             val r = key.rect
             val color = when {
+                key.type == Type.ENTER && iphone -> if (down) theme.key else theme.fnKey
                 key.type == Type.ENTER -> if (down) theme.accentPressed else theme.accent
                 down -> theme.keyPressed
+                // Soft: a lavender shift key; iPhone: shift turns white while it is on.
+                key.type == Type.SHIFT && soft -> blend(theme.key, theme.accent, if (shift > 0) 0.32f else 0.16f)
+                key.type == Type.SHIFT && iphone && shift > 0 -> theme.key
+                key.type == Type.CHAR && soft && key.label.length == 1 && !key.label[0].isLetterOrDigit() && key.row == rows.size - 1 -> theme.key
+                key.type == Type.EMOJI && soft -> theme.key
                 key.type == Type.CHAR || key.type == Type.BAR -> theme.key
                 else -> theme.fnKey
             }
@@ -330,10 +360,30 @@ class KeyboardView(
                     letters.textSize = 15 * d
                     canvas.drawText(key.label, r.centerX(), r.centerY() + lift - (letters.descent() + letters.ascent()) / 2, letters)
                 }
-                Type.SHIFT -> drawIcon(canvas, if (shift == 2) R.drawable.ic_shift_lock else R.drawable.ic_arrow_big_up, key, if (shift > 0) theme.accent else theme.text, 24f)
+                Type.SHIFT -> drawIcon(canvas, if (shift == 2) R.drawable.ic_shift_lock else R.drawable.ic_arrow_big_up, key,
+                    if (shift > 0 && !iphone || soft) theme.accent else theme.text, 24f)
+                Type.EMOJI -> drawIcon(canvas, R.drawable.ic_smile, key, theme.text, 24f)
                 Type.BACKSPACE -> drawIcon(canvas, R.drawable.ic_delete, key, theme.text, 24f)
-                Type.ENTER -> drawIcon(canvas, R.drawable.ic_corner_down_left, key, theme.onAccent, 22f)
-                Type.BAR -> if (barLabel.isNotEmpty()) {
+                Type.ENTER -> if (iphone) {
+                    letters.color = theme.text
+                    letters.textSize = 15 * d
+                    canvas.drawText("return", r.centerX(), r.centerY() + lift - (letters.descent() + letters.ascent()) / 2, letters)
+                } else drawIcon(canvas, R.drawable.ic_corner_down_left, key, theme.onAccent, 22f)
+                Type.BAR -> if (iphone) {
+                    letters.color = theme.text
+                    letters.textSize = 15 * d
+                    canvas.drawText("space", r.centerX(), r.centerY() + lift - (letters.descent() + letters.ascent()) / 2, letters)
+                } else if (soft) {
+                    // A globe and the language, as on the mock-up; holding still opens the wheel.
+                    letters.color = theme.muted
+                    letters.textSize = 15 * d
+                    val textWidth = letters.measureText(spaceLanguage)
+                    val iconSize = 18f
+                    val total = iconSize * d + 8 * d + textWidth
+                    val start = r.centerX() - total / 2
+                    drawIcon(canvas, R.drawable.ic_globe, key, theme.muted, iconSize, start + iconSize * d / 2)
+                    canvas.drawText(spaceLanguage, start + iconSize * d + 8 * d + textWidth / 2, r.centerY() + lift - (letters.descent() + letters.ascent()) / 2, letters)
+                } else if (barLabel.isNotEmpty()) {
                     letters.color = theme.muted
                     letters.textSize = 13 * d
                     val textWidth = letters.measureText(barLabel)
@@ -373,6 +423,7 @@ class KeyboardView(
         Type.BAR -> "Space"
         Type.ENTER -> "Enter"
         Type.MODE -> k.label
+        Type.EMOJI -> "Emoji"
     }
 
     /** The key whose face (what is drawn) is under a point, or null in a gap. */
@@ -425,7 +476,8 @@ class KeyboardView(
         val aimed = press.aimed
         TouchDebug.pressEnded(keyName(press.key), aimed?.let { keyName(it) }, gesture || press.swiping || press.held, press.repeat,
             press.downX, press.downY, x, y, android.os.SystemClock.uptimeMillis(), press.edge,
-            if (aimed == null) 0f else (press.downX - aimed.rect.centerX()) / d, if (aimed == null) 0f else (press.downY - aimed.rect.centerY()) / d)
+            if (aimed == null) 0f else (press.downX - aimed.rect.centerX()) / d, if (aimed == null) 0f else (press.downY - aimed.rect.centerY()) / d,
+            smart = press.smart && aimed !== press.key)
         handler.removeCallbacks(clearHighlight)
         handler.postDelayed(clearHighlight, 700)
     }
@@ -486,6 +538,45 @@ class KeyboardView(
         dbg.textAlign = Paint.Align.CENTER
     }
 
+    // ---------- smart touch ----------
+
+    private fun isLetter(k: Key) = k.type == Type.CHAR && k.label.length == 1 && k.label[0] in 'a'..'z'
+
+    private fun oddsOf(k: Key, odds: FloatArray) = odds[k.label[0] - 'a']
+
+    /**
+     * Like the iPhone keyboard: near the border between two letters, the one more likely to come next in the
+     * word gets the touch. Each letter's area grows into its neighbour's by up to [SMART_BAND_X] of a key
+     * sideways ([SMART_BAND_Y] of a row up or down), and the closer the touch is to the neighbour's centre the
+     * likelier the neighbour has to be ([SMART_STRENGTH] times at the far end of the band). Taps on the middle
+     * of a key are never moved, and nothing changes without odds (another language, symbols, a new word that
+     * nothing known starts with). Returns the key and whether smart touch moved the touch to it.
+     */
+    private fun smartKeyAt(x: Float, y: Float, odds: FloatArray?): Pair<Key?, Boolean> {
+        val base = keyAt(x, y) ?: return null to false
+        if (odds == null || mode != Mode.LETTERS || !isLetter(base)) return base to false
+        val row = rows[base.row]
+        val i = row.indexOf(base)
+        val baseOdds = oddsOf(base, odds) + SMART_FLOOR
+        var best: Key? = null
+        var bestScore = 1f
+        fun consider(n: Key?, distance: Float, band: Float) {
+            if (n == null || n === base || !isLetter(n) || distance >= band) return
+            val need = Math.pow(SMART_STRENGTH.toDouble(), (distance / band).toDouble()).toFloat()
+            val score = (oddsOf(n, odds) + SMART_FLOOR) / baseOdds / need
+            if (score > bestScore) { bestScore = score; best = n }
+        }
+        val pitch = touchRect(base).width()
+        // Sideways: the neighbour on the side the finger is on, measured from the border between the two.
+        if (x < base.rect.centerX()) row.getOrNull(i - 1)?.let { n -> consider(n, x - (n.rect.right + base.rect.left) / 2, pitch * SMART_BAND_X) }
+        else row.getOrNull(i + 1)?.let { n -> consider(n, (base.rect.right + n.rect.left) / 2 - x, pitch * SMART_BAND_X) }
+        // Up or down: the letter in the next row under the same spot.
+        val top = base.row * rowHeight
+        if (y < top + rowHeight / 2) rows.getOrNull(base.row - 1)?.let { consider(keyAt(x, top - 1f), y - top, rowHeight * SMART_BAND_Y) }
+        else rows.getOrNull(base.row + 1)?.let { consider(keyAt(x, top + rowHeight + 1f), top + rowHeight - y, rowHeight * SMART_BAND_Y) }
+        return (best ?: base) to (best != null)
+    }
+
     /** The key under a point; touches that land in the gaps go to the closest key in that row. */
     private fun keyAt(x: Float, y: Float): Key? {
         val row = rows.getOrNull((y / rowHeight).toInt().coerceIn(0, rows.size - 1)) ?: return null
@@ -501,6 +592,7 @@ class KeyboardView(
             Type.BAR -> listener?.onChar(" ")
             Type.ENTER -> listener?.onEnter()
             Type.MODE -> key.target?.let { mode = it }
+            Type.EMOJI -> listener?.onEmoji()
             else -> {}
         }
     }
@@ -694,7 +786,7 @@ class KeyboardView(
 
     private fun down(id: Int, x: Float, y: Float) {
         if (wheelOpen) return // other fingers are ignored while the wheel is up
-        val key = keyAt(x, y) ?: return
+        if (keyAt(x, y) == null) return
         // A second finger landing means the first key was meant: commit it now, in order.
         // Committing can switch the layout (space in the symbols page), which rebuilds the keys and
         // clears the press map, so walk a copy and stop as soon as the layout has changed under us.
@@ -704,7 +796,13 @@ class KeyboardView(
             commit(other)
             if (rows !== layout) break
         }
+        // The earlier letter is in the word now, so the odds are for the letter this finger is typing.
+        val odds = if (mode == Mode.LETTERS) listener?.letterOdds() else null
+        val (picked, smart) = smartKeyAt(x, y, odds)
+        val key = picked ?: return
         val press = Press(key)
+        press.odds = odds
+        press.smart = smart
         if (touchDebug) debugDown(press, x, y)
         presses[id] = press
         listener?.onPress(key.type)
@@ -823,7 +921,7 @@ class KeyboardView(
                     }
                     if (press.swiping) { invalidate(); continue }
                 }
-                val now = keyAt(e.getX(i), e.getY(i))
+                val now = smartKeyAt(e.getX(i), e.getY(i), press.odds).first
                 if (now != null && now !== press.key && now.type == Type.CHAR) { press.key = now; handler.removeCallbacks(keyHold) }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
@@ -851,6 +949,18 @@ class KeyboardView(
         }
         invalidate()
         return true
+    }
+
+    companion object {
+        /** How far the middle letter row sits in from each side, in keys (half a key would be 0.5). */
+        const val INSET = 0.42f
+        /** Smart touch reaches this share of a key into the neighbour sideways, and this share of a row up or down. */
+        const val SMART_BAND_X = 0.3f
+        const val SMART_BAND_Y = 0.22f
+        /** At the far end of the band the neighbour must be this many times likelier to take the touch. */
+        const val SMART_STRENGTH = 12f
+        /** Added to every letter's odds so a letter no word continues with can still be typed. */
+        const val SMART_FLOOR = 0.01f
     }
 
     override fun onDetachedFromWindow() {

@@ -32,6 +32,9 @@ object TouchDebug {
     /** The letter layout's keys: what the acceptance test should cover (QWERTY, modifiers, space). */
     val ALL_KEYS: List<String> = "qwertyuiopasdfghjklzxcvbnm".map { it.toString() } + listOf("Shift", "Backspace", "?123", ",", "Space", ".", "Enter")
 
+    /** The keys of the letter layout on screen now (the Soft and iPhone styles add Emoji and drop some), for coverage. */
+    @Volatile var layoutKeys: List<String> = ALL_KEYS
+
     const val REPEAT_MS = 90L
     const val TOOLBAR_AFTER_TYPING_MS = 600L
     const val TOOLBAR_EDGE_DP = 8f
@@ -57,6 +60,8 @@ object TouchDebug {
     var gestures = 0; private set
     var edgeHits = 0; private set
     var lost = 0; private set
+    /** Touches near a border that smart touch gave to the likelier letter (counted as correct). */
+    var smartPicks = 0; private set
     var toolbarTaps = 0; private set
     var toolbarAccidental = 0; private set
     private var lastKeyAt = 0L
@@ -76,7 +81,7 @@ object TouchDebug {
     fun reset() {
         presses.clear(); lastDown.clear(); tested.clear(); perKey.clear(); toolbarHits.clear()
         correct = 0; incorrect = 0; missed = 0; repeated = 0; gestures = 0; toolbarTaps = 0; toolbarAccidental = 0; lastKeyAt = 0L
-        edgeHits = 0; lost = 0; offsets.clear()
+        edgeHits = 0; lost = 0; smartPicks = 0; offsets.clear()
     }
 
     /** Logs a raw MotionEvent point: ACTION_DOWN, ACTION_MOVE or ACTION_UP, in px and dp, with the key under it. */
@@ -100,16 +105,17 @@ object TouchDebug {
     @Synchronized
     fun pressEnded(received: String, aimed: String?, gesture: Boolean, repeat: Boolean,
                    downX: Float, downY: Float, upX: Float, upY: Float, at: Long,
-                   edge: Boolean = false, dxDp: Float = 0f, dyDp: Float = 0f): Press? {
+                   edge: Boolean = false, dxDp: Float = 0f, dyDp: Float = 0f, smart: Boolean = false): Press? {
         if (!enabled) return null
         val outcome = when {
             gesture -> Outcome.GESTURE
+            smart -> Outcome.CORRECT
             aimed == null -> Outcome.MISSED
             aimed != received -> Outcome.INCORRECT
             else -> Outcome.CORRECT
         }
         when (outcome) {
-            Outcome.CORRECT -> { correct++; tested += received; if (edge) edgeHits++ }
+            Outcome.CORRECT -> { correct++; tested += received; if (smart) smartPicks++ else if (edge) edgeHits++ }
             Outcome.INCORRECT -> incorrect++
             Outcome.MISSED -> missed++
             Outcome.GESTURE -> gestures++
@@ -128,7 +134,7 @@ object TouchDebug {
         val p = Press(received, aimed, outcome, repeat, downX, downY, upX, upY, at)
         presses += p
         if (presses.size > 400) presses.removeAt(0)
-        log("PRESS $outcome${if (edge) " (edge)" else ""}${if (repeat) " +REPEATED" else ""} received=$received aimed=${aimed ?: "gap"} offset=${"%.1f".format(dxDp)}dp,${"%.1f".format(dyDp)}dp")
+        log("PRESS $outcome${if (smart) " (smart touch)" else if (edge) " (edge)" else ""}${if (repeat) " +REPEATED" else ""} received=$received aimed=${aimed ?: "gap"} offset=${"%.1f".format(dxDp)}dp,${"%.1f".format(dyDp)}dp")
         return p
     }
 
@@ -172,7 +178,7 @@ object TouchDebug {
         val worst = perKey.filter { it.value[1] > 0 }.entries.sortedByDescending { it.value[1].toDouble() / it.value[0] }.take(5)
         return buildString {
             appendLine("Touch accuracy: ${pct(accuracy)}  ·  Error rate: ${pct(errorRate)}")
-            appendLine("Key presses: $keyPresses  (correct $correct of which edge hits $edgeHits, incorrect $incorrect, missed $missed, lost $lost)")
+            appendLine("Key presses: $keyPresses  (correct $correct of which edge hits $edgeHits, smart touch $smartPicks, incorrect $incorrect, missed $missed, lost $lost)")
             appendLine("Repeated: $repeated  ·  Gestures (not counted): $gestures")
             appendLine("Toolbar taps: $toolbarTaps  (likely accidental: $toolbarAccidental)" +
                 if (toolbarHits.isNotEmpty()) "  " + toolbarHits.entries.joinToString(", ") { "${it.key} ${it.value}" } else "")
@@ -205,7 +211,7 @@ object TouchDebug {
     }
 
     /** Writes the session summary to logcat, one line per item. */
-    fun logSummary() { if (enabled) summary(ALL_KEYS).lines().forEach { log("SUMMARY $it") } }
+    fun logSummary() { if (enabled) summary(layoutKeys).lines().forEach { log("SUMMARY $it") } }
 
     private fun log(message: String) {
         try { android.util.Log.d(TAG, message) } catch (e: Throwable) { }

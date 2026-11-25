@@ -110,7 +110,7 @@ class SyncTest {
         assertEquals("ocean", store.theme)
         assertEquals(110, store.heightPercent)
         assertEquals(true, store.numberRow)
-        assertEquals("raised", store.keyShape)
+        assertEquals("soft", store.keyShape)
         assertEquals(listOf("ai", "voice", "skill:Polish"), store.wheel)
     }
 

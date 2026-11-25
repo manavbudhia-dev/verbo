@@ -26,6 +26,7 @@ class TouchTargetTest {
     private val typed = StringBuilder()
     private var backspaces = 0
     private var enters = 0
+    private var odds: FloatArray? = null
     private lateinit var keys: KeyboardView
 
     @Before
@@ -43,6 +44,7 @@ class TouchTargetTest {
             override fun onKeyHeld(letter: Char) {}
             override fun onWheel(index: Int) {}
             override fun onPress(type: KeyboardView.Type) {}
+            override fun letterOdds(): FloatArray? = odds
         }
         keys.touchDebug = true
         val width = context.resources.displayMetrics.widthPixels
@@ -227,5 +229,106 @@ class TouchTargetTest {
         keys.draw(Canvas(bitmap))
         val dir = java.io.File("build/shots").apply { mkdirs() }
         java.io.File(dir, "keyboard-touch-debug.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+    }
+
+    // ---------- smart touch and the A/L inset ----------
+
+    private fun likely(c: Char, vararg others: Pair<Char, Float>) = FloatArray(26).also { o ->
+        o[c - 'a'] = 0.9f
+        for ((k, v) in others) o[k - 'a'] = v
+    }
+
+    @Test
+    fun smartTouchGivesABorderTapToTheLikelierLetter() {
+        val e = target("e")
+        val r = target("r")
+        val border = e.touch.right
+        val pitch = r.touch.width()
+        // "th|": E is far likelier than R. A tap just inside R, near E, goes to E.
+        odds = likely('e', 'r' to 0.02f)
+        tap(border + pitch * 0.1f, r.face.centerY())
+        assertEquals("near the border the likelier letter wins", "e", typed.toString())
+        // The middle of R stays R, however unlikely.
+        tap(r.face.centerX(), r.face.centerY())
+        tap(r.face.centerX() + pitch * 0.15f, r.face.centerY())
+        assertEquals("taps on the middle of a key are never moved", "err", typed.toString())
+        // Without odds (symbols, another language, smart touch off) nothing moves.
+        odds = null
+        tap(border + pitch * 0.1f, r.face.centerY())
+        assertEquals("errr", typed.toString())
+        // A slight preference is not enough deep into the band.
+        odds = likely('r', 'e' to 0.5f)
+        typed.setLength(0)
+        tap(border + pitch * 0.25f, r.face.centerY())
+        assertEquals("a near tie keeps the key under the finger", "r", typed.toString())
+        // Up and down too: between rows, near the border, the likelier letter in the other row.
+        typed.setLength(0)
+        val s = target("s")
+        val w = target("w")
+        odds = likely('w', 's' to 0.01f)
+        tap(s.face.centerX(), s.touch.top + 2f)
+        assertEquals("w", typed.toString())
+        // Debug mode counts these as smart picks, not as errors.
+        assertEquals(0, TouchDebug.incorrect)
+        assertTrue("smart picks are counted: ${TouchDebug.summary(TouchDebug.layoutKeys)}", TouchDebug.smartPicks >= 2)
+        assertTrue(TouchDebug.summary(TouchDebug.layoutKeys).contains("smart touch"))
+    }
+
+    @Test
+    fun smartTouchNeverTakesATapFromShiftSpaceOrBackspace() {
+        odds = likely('z', 'm' to 0.9f)
+        val shift = target("Shift")
+        tap(shift.touch.right - 2f, shift.face.centerY())
+        assertEquals("" , typed.toString())
+        assertEquals(0, backspaces)
+        val bs = target("Backspace")
+        tap(bs.touch.left + 2f, bs.face.centerY())
+        assertEquals(1, backspaces)
+    }
+
+    @Test
+    fun aAndLSitALittleNearerTheEdgesThanHalfAKey() {
+        val q = target("q").face
+        val pitch = target("w").touch.width()
+        val a = target("a").face
+        val l = target("l").face
+        val inA = (a.centerX() - q.centerX()) / pitch
+        val inL = (target("p").face.centerX() - l.centerX()) / pitch
+        assertTrue("A is a little under half a key in: $inA", inA in 0.38f..0.47f)
+        assertTrue("L is a little under half a key in: $inL", inL in 0.38f..0.47f)
+        assertEquals("and the row still fills the width", 0f, target("a").touch.left, 0.5f)
+    }
+
+    @Test
+    fun softAndIphoneStylesHaveAnEmojiKey() {
+        val context = RuntimeEnvironment.getApplication()
+        val width = context.resources.displayMetrics.widthPixels
+        for ((shape, names) in listOf("soft" to listOf("?123", "Emoji", ",", "Space", ".", "Enter"), "iphone" to listOf("123", "Emoji", "Space", "Enter"))) {
+            val v = KeyboardView(context, KeyTheme.of(context, "light", 0), 1f, shape)
+            var emoji = 0
+            v.listener = object : KeyboardView.Listener {
+                override fun onChar(text: String) { typed.append(text) }
+                override fun onBackspace() {}
+                override fun onEnter() {}
+                override fun onShift() {}
+                override fun onBarHeld() {}
+                override fun onKeyHeld(letter: Char) {}
+                override fun onWheel(index: Int) {}
+                override fun onPress(type: KeyboardView.Type) {}
+                override fun onEmoji() { emoji++ }
+            }
+            v.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
+            v.layout(0, 0, v.measuredWidth, v.measuredHeight)
+            assertEquals("$shape bottom row", names, v.keyNames().takeLast(names.size))
+            assertEquals("the layout's keys are what debug coverage checks", v.keyNames(), TouchDebug.layoutKeys)
+            val face = v.touchTargets().first { it.name == "Emoji" }.face
+            v.onTouchEvent(event(MotionEvent.ACTION_DOWN, face.centerX(), face.centerY()))
+            v.onTouchEvent(event(MotionEvent.ACTION_UP, face.centerX(), face.centerY()))
+            assertEquals("$shape emoji key opens emoji", 1, emoji)
+            val bitmap = Bitmap.createBitmap(v.width, v.height, Bitmap.Config.ARGB_8888)
+            v.draw(Canvas(bitmap))
+            val dir = java.io.File("build/shots").apply { mkdirs() }
+            java.io.File(dir, "keys-$shape.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        }
     }
 }
