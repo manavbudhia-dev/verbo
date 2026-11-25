@@ -1054,7 +1054,8 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
      * The card with the three replies: tap one to pick it, Retry writes three new ones, Edit opens the picked one
      * for changes with the keys under it, Apply puts it in the message field.
      */
-    internal fun showReplyCard(editing: Boolean = false, failed: Boolean = false): Unit = showPanel(dp(250), keepKeys = editing) {
+    // Tall enough for all three replies at once, as on the mock-up; while editing only the picked one shows above the keys.
+    internal fun showReplyCard(editing: Boolean = false, failed: Boolean = false): Unit = showPanel(if (editing) dp(250) else dp(440), keepKeys = editing) {
         val options = replyOptions
         val card = LinearLayout(this@VerboIme).apply {
             orientation = LinearLayout.VERTICAL
