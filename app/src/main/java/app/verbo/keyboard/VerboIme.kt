@@ -57,6 +57,8 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     private var typingViews: List<View> = emptyList()
     private var welcome: TextView? = null
     private var botEdit: android.widget.EditText? = null
+    /** What Enter does while [botEdit] has focus, when it isn't the bot's request (editing a reply applies it). */
+    private var botEditEnter: (() -> Unit)? = null
     private var contextBox: LinearLayout? = null
     private var contextText: String? = null
     private var wheelIds: List<String> = emptyList()
@@ -555,11 +557,24 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         val replyStamp = if (fromIncoming) store.incomingAt else if (clip != null) clipStamp() else 0L
         if (clip != null && replyStamp != 0L && replyStamp != lastHistoryClip) { lastHistoryClip = replyStamp; store.addClipHistory(clip) }
         if (clip != null && store.smartReplies && replyStamp != 0L) {
-            if (repliesFor == replyStamp) for (r in replies) {
-                val chip = chipView("↩ $r", p.key, p.keyPressed, p.text)
-                chip.setOnClickListener { feedback(KeyboardView.Type.MODE); insert(r) }
-                row.addView(chip, chipParams())
-            } else if (repliesAsked != replyStamp && looksLikeMessage(clip) && store.activeKey.isNotBlank() && !store.overLimit) fetchReplies(clip, replyStamp)
+            if (repliesFor == replyStamp) {
+                // The card with all three, then each reply as a one-tap chip.
+                val all = chipView("💬 Reply 3 ways", p.accent, p.accentPressed, p.onAccent)
+                all.setOnClickListener { feedback(KeyboardView.Type.MODE); showReplyCard() }
+                row.addView(all, chipParams())
+                for (o in replyOptions) {
+                    val chip = chipView("${o.style.emoji} ${o.text}", p.key, p.keyPressed, p.text)
+                    chip.ellipsize = TextUtils.TruncateAt.END
+                    chip.maxWidth = dp(220)
+                    chip.setOnClickListener { feedback(KeyboardView.Type.MODE); insert(o.text) }
+                    row.addView(chip, chipParams())
+                }
+                // A message that came in while the keyboard was closed: the card pops up once when it opens.
+                if (fromIncoming && replyCardShown != replyStamp && canPopReplyCard()) {
+                    replyCardShown = replyStamp
+                    main.post { if (!busy && panel?.visibility != View.VISIBLE) showReplyCard() }
+                }
+            } else if (repliesAsked != replyStamp && looksLikeMessage(clip) && store.activeKey.isNotBlank() && !store.overLimit) fetchReplies(clip, replyStamp, fromIncoming)
         }
         for (t in matched) {
             val chip = chipView("⚡ " + Cards.chipLabel(t, clip!!), p.accent, p.accentPressed, p.onAccent)
@@ -807,6 +822,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     }
 
     override fun onEnter() {
+        botEditEnter?.let { go -> if (botEdit?.isFocused == true) { go(); return } }
         botEdit?.takeIf { it.isFocused }?.let { runBotPrompt(it.text.toString()); return }
         val ic = currentInputConnection ?: return
         clearResult()
@@ -985,22 +1001,218 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
     private fun looksLikeMessage(text: String) = text.length in 2..500 && text.count { it.isLetter() } >= 2 &&
         !Regex("""^\s*https?://\S+\s*$""").matches(text)
 
-    private fun fetchReplies(clip: String, stamp: Long) {
+    /** The three ways to answer the current message (Polite, Dodge, Savage), and which one is picked on the card. */
+    internal var replyOptions: List<Replies.Option> = emptyList()
+    private var replyPick = 0
+    /** The incoming message whose reply card was already shown by itself (it pops up once per message). */
+    private var replyCardShown = 0L
+
+    /**
+     * Writes three ways to answer [clip] in one request. For a message that just came in (WhatsApp and other
+     * chats) the reply card then opens by itself when the field is empty; for a copied one they are chips.
+     */
+    private fun fetchReplies(clip: String, stamp: Long, incoming: Boolean = false, force: Boolean = false) {
         repliesAsked = stamp
         val engine = Engine(store)
         worker.execute {
             val got = try {
-                val r = engine.run(Ai.SMART_REPLY_TASK, Ai.userMessage("", clip), false, emptyList(), label = "Quick replies")
-                Cards.options(r.text) ?: r.text.lines().map { it.trim().removePrefix("-").trim() }.filter { it.isNotEmpty() && it.length < 80 }.take(3)
+                val r = engine.run(Replies.TASK, Ai.userMessage("", clip), false, emptyList(), label = "Reply 3 ways")
+                Replies.parse(r.text).orEmpty()
             } catch (e: Exception) { emptyList() }
             main.post {
-                if (got.isEmpty() || clipStamp() != stamp) return@post
-                replies = got.take(3)
+                val current = if (incoming) store.incomingAt == stamp else clipStamp() == stamp
+                if (!current) return@post
+                if (got.isEmpty()) {
+                    if (force) showReplyCard(failed = true)
+                    return@post
+                }
+                replyOptions = got
+                replies = got.map { it.text }
                 repliesFor = stamp
+                if (force) replyPick = 0
                 buildChips()
+                if (force || (incoming && replyCardShown != stamp && canPopReplyCard())) {
+                    replyCardShown = stamp
+                    showReplyCard()
+                }
             }
         }
     }
+
+    /** The reply card may pop up by itself: the keyboard is up in that chat, the field is empty and nothing else is open. */
+    private fun canPopReplyCard(): Boolean {
+        if (!isInputViewShown || busy || listening || panel?.visibility == View.VISIBLE) return false
+        if (store.incomingApp != currentInputEditorInfo?.packageName) return false
+        return try { readTarget()?.text.isNullOrBlank() } catch (e: Exception) { false }
+    }
+
+    // ---------- the reply card ----------
+
+    private val replyBlue = Color.parseColor("#3D9BE9")
+
+    /**
+     * The card with the three replies: tap one to pick it, Retry writes three new ones, Edit opens the picked one
+     * for changes with the keys under it, Apply puts it in the message field.
+     */
+    internal fun showReplyCard(editing: Boolean = false, failed: Boolean = false): Unit = showPanel(dp(250), keepKeys = editing) {
+        val options = replyOptions
+        val card = LinearLayout(this@VerboIme).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(10), dp(14), dp(12))
+            background = rounded(blendColor(p.bg, p.text, 0.05f), 22)
+        }
+        // Header: the sparkle and the name on the left, Retry (and close) on the right.
+        val header = LinearLayout(this@VerboIme).apply { gravity = Gravity.CENTER_VERTICAL }
+        header.addView(ImageView(this@VerboIme).apply { setImageResource(R.drawable.ic_sparkles); setColorFilter(p.text) }, LinearLayout.LayoutParams(dp(18), dp(18)))
+        header.addView(TextView(this@VerboIme).apply {
+            text = "Verbo"
+            setTextColor(p.text)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(dp(8), 0, 0, 0)
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        val retry = LinearLayout(this@VerboIme).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(8), dp(4), dp(8), dp(4))
+            background = pressable(Color.TRANSPARENT, p.keyPressed, 14)
+            contentDescription = "Retry"
+            addView(ImageView(this@VerboIme).apply { setImageResource(R.drawable.ic_refresh_cw); setColorFilter(p.text) }, LinearLayout.LayoutParams(dp(16), dp(16)))
+            addView(TextView(this@VerboIme).apply {
+                text = "Retry"
+                setTextColor(p.text)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                setPadding(dp(8), 0, 0, 0)
+            })
+            setOnClickListener { feedback(KeyboardView.Type.MODE); retryReplies() }
+        }
+        header.addView(retry)
+        header.addView(iconButton(R.drawable.ic_x, "Close") { hidePanel(); showTyping() }, LinearLayout.LayoutParams(dp(36), dp(36)))
+        card.addView(header, LinearLayout.LayoutParams(-1, dp(40)))
+        // A foreign message's translation, when the phone already made one.
+        if (store.incomingFresh && store.incomingResult.isNotBlank() && contextText == store.incomingText) card.addView(TextView(this@VerboIme).apply {
+            text = store.incomingResult.lines().drop(1).joinToString(" ").ifBlank { store.incomingResult }
+            setTextColor(p.muted)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            maxLines = 2
+            ellipsize = TextUtils.TruncateAt.END
+            setPadding(dp(4), 0, dp(4), dp(4))
+        })
+        val list = LinearLayout(this@VerboIme).apply { orientation = LinearLayout.VERTICAL }
+        if (options.isEmpty()) list.addView(TextView(this@VerboIme).apply {
+            text = if (failed) "Couldn't write replies just now. Tap Retry." else "Writing three replies…"
+            setTextColor(p.muted)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            setPadding(dp(6), dp(18), dp(6), dp(18))
+        })
+        options.forEachIndexed { i, option ->
+            if (editing && i != replyPick) return@forEachIndexed
+            val picked = i == replyPick
+            val slot = FrameLayout(this@VerboIme)
+            val body: TextView = if (editing) android.widget.EditText(this@VerboIme).apply {
+                setText(option.text)
+                setSelection(text.length)
+                showSoftInputOnFocus = false
+                background = null
+                imeOptions = EditorInfo.IME_ACTION_DONE
+                setHorizontallyScrolling(false)
+            } else TextView(this@VerboIme).apply { text = option.text }
+            body.apply {
+                setTextColor(p.text)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
+                typeface = Typeface.SERIF
+                setLineSpacing(dp(2).toFloat(), 1f)
+            }
+            val box = LinearLayout(this@VerboIme).apply {
+                setPadding(dp(14), dp(20), dp(14), dp(12))
+                background = GradientDrawable().apply {
+                    setColor(blendColor(p.key, p.bg, 0.25f))
+                    cornerRadius = dp(18).toFloat()
+                    if (picked) setStroke(dp(2), replyBlue)
+                }
+                addView(body, LinearLayout.LayoutParams(-1, -2))
+                if (!editing) setOnClickListener { feedback(KeyboardView.Type.MODE); replyPick = i; showReplyCard() }
+            }
+            slot.addView(box, FrameLayout.LayoutParams(-1, -2).apply { topMargin = dp(13) })
+            // The style's label sits on the card's top edge: blue when picked.
+            slot.addView(TextView(this@VerboIme).apply {
+                text = option.style.emoji + " " + option.style.name
+                setTextColor(if (picked) Color.WHITE else p.text)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                typeface = Typeface.DEFAULT_BOLD
+                setPadding(dp(10), dp(3), dp(12), dp(3))
+                background = rounded(if (picked) replyBlue else p.key, 14)
+                elevation = dp(2).toFloat()
+            }, FrameLayout.LayoutParams(-2, -2).apply { leftMargin = dp(12) })
+            list.addView(slot, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
+            if (editing) {
+                botEdit = body as android.widget.EditText
+                botEditEnter = { applyReply((body as android.widget.EditText).text.toString()) }
+                window?.window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
+                main.post { if (botEdit === body) body.requestFocus() }
+            }
+        }
+        card.addView(android.widget.ScrollView(this@VerboIme).apply { addView(list); isVerticalScrollBarEnabled = false },
+            LinearLayout.LayoutParams(-1, if (editing) -2 else 0, if (editing) 0f else 1f))
+        // Edit (outlined white) and Apply (solid black, the main action).
+        val buttons = LinearLayout(this@VerboIme).apply { gravity = Gravity.CENTER_VERTICAL }
+        buttons.addView(TextView(this@VerboIme).apply {
+            text = if (editing) "Back" else "Edit"
+            setTextColor(p.text)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            background = pressable(p.key, p.keyPressed, 26)
+            isEnabled = options.isNotEmpty()
+            setOnClickListener { feedback(KeyboardView.Type.MODE); showReplyCard(editing = !editing) }
+        }, LinearLayout.LayoutParams(0, dp(50), 1f).apply { rightMargin = dp(10) })
+        buttons.addView(TextView(this@VerboIme).apply {
+            text = "Apply"
+            setTextColor(p.bg)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            background = pressable(p.text, blendColor(p.text, p.bg, 0.25f), 26)
+            isEnabled = options.isNotEmpty()
+            setOnClickListener {
+                feedback(KeyboardView.Type.MODE)
+                val edited = (botEdit as? android.widget.EditText)?.text?.toString()
+                applyReply(edited ?: options.getOrNull(replyPick)?.text.orEmpty())
+            }
+        }, LinearLayout.LayoutParams(0, dp(50), 1.4f))
+        card.addView(buttons, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
+        addView(card, LinearLayout.LayoutParams(-1, if (editing) -2 else 0, if (editing) 0f else 1f).apply { setMargins(0, dp(2), 0, dp(4)) })
+    }
+
+    /** Writes three new replies to the same message. */
+    private fun retryReplies() {
+        val incoming = store.incomingFresh && contextText == store.incomingText
+        val message = contextText ?: return
+        replyOptions = emptyList()
+        replyPick = 0
+        showReplyCard()
+        fetchReplies(message, if (incoming) store.incomingAt else clipStamp(), incoming, force = true)
+    }
+
+    /** Puts the chosen reply in the message field, in place of anything there, ready to send. */
+    private fun applyReply(text: String) {
+        if (text.isBlank()) return
+        botEditEnter = null
+        hidePanel()
+        val ic = currentInputConnection ?: return
+        val target = readTarget()
+        ic.beginBatchEdit()
+        if (target != null) ic.deleteSurroundingText(target.before.length, target.after.length)
+        ic.commitText(text, 1)
+        ic.endBatchEdit()
+        undo = (target?.text ?: "") to text
+        contextText = null
+        refreshContext()
+        showStatus("Reply ready to send", "Undo" to { undoLast() })
+    }
+
+    private fun blendColor(a: Int, b: Int, t: Float) = Color.rgb(
+        (Color.red(a) + (Color.red(b) - Color.red(a)) * t).toInt(), (Color.green(a) + (Color.green(b) - Color.green(a)) * t).toInt(),
+        (Color.blue(a) + (Color.blue(b) - Color.blue(a)) * t).toInt())
     private var lastActsClip = 0L
 
     private fun clipStamp(): Long = try {
@@ -1415,7 +1627,8 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         // An older incoming message gives way to the new one; something the user copied on purpose stays.
         if (contextText != null && contextText != store.incomingText && contextFromIncoming) contextText = null
         buildChips()
-        if (ready && store.incomingResult.isNotBlank() && !busy && panel?.visibility != View.VISIBLE) {
+        // The reply card already shows this message (with its translation on top): it isn't replaced.
+        if (ready && store.incomingResult.isNotBlank() && !busy && panel?.visibility != View.VISIBLE && replyCardShown != store.incomingAt) {
             val empty = try { readTarget()?.text.isNullOrBlank() } catch (e: Exception) { true }
             if (empty) showIncomingResult()
         }
@@ -2383,6 +2596,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         box.removeAllViews()
         box.background = null
         botEdit = null
+        botEditEnter = null
         listenBot = null
         window?.window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
         // Same height as the keys, strip and suggestion row it replaces, so the app above doesn't jump.
@@ -2408,6 +2622,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         box.background = null
         box.visibility = View.GONE
         botEdit = null
+        botEditEnter = null
         listenBot = null
         window?.window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
         typingViews.forEach { it.visibility = View.VISIBLE }

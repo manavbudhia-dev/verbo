@@ -2105,6 +2105,66 @@ class KeyboardTest {
         assertTrue("off: ${field.text}", field.text.toString().endsWith("thr"))
         store.smartTouch = true
     }
+
+    @Test
+    fun repliesParseThreeWaysInAnyCommonForm() {
+        val r = Replies.parse("Polite: Just me this year! Can't wait to see everyone 🦃\nDodge: Only if you bring your famous pie 👀\nSavage: Yep — my phone. We're very happy together. 📱")!!
+        assertEquals(listOf("Polite", "Dodge", "Savage"), r.map { it.style.name })
+        assertEquals("Only if you bring your famous pie 👀", r[1].text)
+        // Bold names, other order, dashes: still sorted into Polite, Dodge, Savage.
+        val r2 = Replies.parse("**Savage** - nahi yaar, bas main hi 😎\n**Polite** – haan, aa raha hoon\n**Dodge**: dekhte hain 🙃")!!
+        assertEquals("haan, aa raha hoon", r2[0].text)
+        assertEquals("nahi yaar, bas main hi 😎", r2[2].text)
+        assertEquals("three numbered lines are taken in order", "c", Replies.parse("1) a\n2) b\n3) c")!![2].text)
+        assertEquals(null, Replies.parse("Sorry, I can't help with that."))
+    }
+
+    @Test
+    fun anIncomingMessageGetsTheReplyCardPickEditAndApply() {
+        val store = Store(RuntimeEnvironment.getApplication())
+        store.theme = "light"
+        store.keyShape = "soft"
+        ime.onStartInputView(field.info, false)
+        layout(ime.keys!!.parent as View)
+        val card = ime.keys!!.parent as View
+        ime.replyOptions = Replies.parse("Polite: Just me this year! Can't wait to see everyone 🦃\nDodge: Only if you bring your famous pie 👀\nSavage: Yep — my phone. We're very happy together. 📱")!!
+        ime.showReplyCard()
+        layout(card)
+        snap(card, "panel-reply-card")
+        for (s in listOf("😇 Polite", "🙃 Dodge", "💀 Savage", "Retry", "Edit", "Apply")) assertTrue("the card shows $s", findText(card, s) != null)
+        // Tap Savage, then Apply: it goes into the message field.
+        clickLabel(card, "Yep — my phone. We're very happy together. 📱")
+        layout(card)
+        snap(card, "panel-reply-card-savage")
+        clickLabel(card, "Apply")
+        assertEquals("Yep — my phone. We're very happy together. 📱", field.text.toString())
+        assertEquals(View.VISIBLE, ime.keys!!.visibility)
+        // Edit: the picked reply opens for changes with the keys under it; Enter applies the edited text.
+        field.text.clear()
+        ime.showReplyCard()
+        clickLabel(card, "Edit")
+        layout(card)
+        snap(card, "panel-reply-card-edit")
+        assertEquals("the keys stay up to edit with", View.VISIBLE, ime.keys!!.visibility)
+        fun edit(v: View): android.widget.EditText? = when {
+            v is android.widget.EditText -> v
+            v is ViewGroup -> (0 until v.childCount).firstNotNullOfOrNull { edit(v.getChildAt(it)) }
+            else -> null
+        }
+        val e = edit(card)!!
+        e.requestFocus()
+        e.setText("Yep — my phone 📱")
+        if (e.isFocused) {
+            // The keys type into the reply and Enter applies it.
+            ime.onChar("!")
+            ime.onEnter()
+            assertEquals("Yep — my phone 📱!", field.text.toString())
+        } else {
+            clickLabel(card, "Apply")
+            assertEquals("the edited reply is applied", "Yep — my phone 📱", field.text.toString())
+        }
+        store.keyShape = "raised"
+    }
 }
 
 private const val PERSON = "Ada Lovelace\nMathematician and writer\nLocation: London, England\nCurrent: Countess of Lovelace\nPrevious: Analytical Engine notes with Charles Babbage\nEducation: Private tutoring in mathematics and science\nhttps://www.linkedin.com/search/results/people/?keywords=Ada%20Lovelace"
