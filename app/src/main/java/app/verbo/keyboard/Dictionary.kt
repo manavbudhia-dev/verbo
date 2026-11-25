@@ -80,9 +80,12 @@ class Dictionary {
             }
             i++
         }
+        // The list's tiers say little about how often a word is typed ("the" weighs as much as "throat"), so the
+        // words people type all day count many times over, and so does the user's own Hinglish.
+        for (w in TOP) if (w.length > n && w.startsWith(prefix)) odds[w[n] - 'a'] += TOP_WEIGHT
         for (w in extra) if (w.length > n && w.startsWith(prefix)) {
             val c = w[n]
-            if (c in 'a'..'z') odds[c - 'a'] += TIER_WEIGHT[1] * 2
+            if (c in 'a'..'z') odds[c - 'a'] += EXTRA_WEIGHT
         }
         val total = odds.sum()
         if (total <= 0f) { oddsCache[key] = FloatArray(0); return null }
@@ -148,6 +151,22 @@ class Dictionary {
 
     companion object {
         /** Weight of one word by its tier / 10: the most common words count far more than rare ones. */
+        private const val TOP_WEIGHT = 25f
+        private const val EXTRA_WEIGHT = 20f
+        /** The words typed most every day: they steer smart touch far more than their tier alone would. */
+        private val TOP = listOf(
+            "the", "be", "to", "of", "and", "a", "in", "that", "have", "i", "it", "for", "not", "on", "with", "he", "as",
+            "you", "do", "at", "this", "but", "his", "by", "from", "they", "we", "say", "her", "she", "or", "an", "will",
+            "my", "one", "all", "would", "there", "their", "what", "so", "up", "out", "if", "about", "who", "get",
+            "which", "go", "me", "when", "make", "can", "like", "time", "no", "just", "him", "know", "take", "people",
+            "into", "year", "your", "good", "some", "could", "them", "see", "other", "than", "then", "now", "look",
+            "only", "come", "its", "over", "think", "also", "back", "after", "use", "two", "how", "our", "work", "first",
+            "well", "way", "even", "new", "want", "because", "any", "these", "give", "day", "most", "us", "is", "was",
+            "are", "been", "has", "had", "were", "said", "did", "am", "does", "got", "going", "went", "made", "very",
+            "much", "more", "many", "such", "here", "why", "where", "while", "should", "may", "might", "must", "let",
+            "tell", "call", "need", "feel", "try", "ask", "yes", "okay", "ok", "thanks", "thank", "please", "hi",
+            "hello", "love", "today", "tomorrow"
+        )
         private val TIER_WEIGHT = floatArrayOf(1f, 1f, 0.3f, 0.09f, 0.03f, 0.01f, 0.004f, 0.002f, 0.001f, 0.001f, 0.001f)
         private val FIXED = mapOf(
             "i" to "I", "im" to "I'm", "ive" to "I've", "dont" to "don't", "cant" to "can't", "wont" to "won't",
