@@ -353,10 +353,10 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
 
     // ---------- emoji ----------
 
-    override fun onEmoji() = showEmoji(if (store.recentEmoji.isEmpty()) 1 else 0)
+    override fun onEmoji() { showEmoji(if (store.recentEmoji.isEmpty()) 1 else 0) }
 
     /** The emoji panel: recent ones first, then a few sets; tapping one types it, ABC goes back to the letters. */
-    private fun showEmoji(tab: Int) = showPanel {
+    private fun showEmoji(tab: Int): Unit = showPanel {
         val header = LinearLayout(this@VerboIme).apply { gravity = Gravity.CENTER_VERTICAL }
         header.addView(chipView("ABC", p.fnKey, p.keyPressed, p.text).apply {
             setOnClickListener { feedback(KeyboardView.Type.MODE); hidePanel() }
