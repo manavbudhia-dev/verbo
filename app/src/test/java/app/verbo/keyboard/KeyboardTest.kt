@@ -856,9 +856,8 @@ class KeyboardTest {
     fun theShortcutWheelReopensWhereItWasTurned() {
         val keys = ime.keys!!
         layout(root)
-        holdBar(keys)
-        touch(keys, MotionEvent.ACTION_MOVE, listOf(rimAt(keys, 80.0)))
-        touch(keys, MotionEvent.ACTION_MOVE, listOf(rimAt(keys, 100.0)))
+        val hold = holdBar(keys)
+        doubleTapWheel(keys, hold)
         org.robolectric.shadows.ShadowLooper.idleMainLooper(800, java.util.concurrent.TimeUnit.MILLISECONDS)
         val centre = Triple(0, keys.width / 2f, keys.height * 0.97f)
         touch(keys, MotionEvent.ACTION_MOVE, listOf(centre))
@@ -1146,20 +1145,36 @@ class KeyboardTest {
         return Triple(0, keys.width / 2f + (wr * 1.05f * Math.cos(a)).toFloat(), keys.height - (wr * 1.05f * Math.sin(a)).toFloat())
     }
 
+    /** A second finger taps twice while the first holds the wheel. */
+    private fun doubleTapWheel(keys: KeyboardView, hold: Triple<Int, Float, Float>) {
+        val tap = Triple(1, keys.width * 0.1f, keys.height * 0.1f)
+        repeat(2) {
+            touch(keys, MotionEvent.ACTION_POINTER_DOWN, listOf(hold, tap), 1)
+            touch(keys, MotionEvent.ACTION_POINTER_UP, listOf(hold, tap), 1)
+        }
+    }
+
     @Test
-    fun rollingTheRimTurnsTheFanOneIconAtATimeAndReleaseRunsTheNewTool() {
+    fun aDoubleTapTurnsTheFanOneIconAtATimeAndReleaseRunsTheNewTool() {
         val keys = ime.keys!!
         layout(root)
-        holdBar(keys)
+        val hold = holdBar(keys)
+        // Rolling the rim no longer turns it: only a double tap does, so it never turns by accident.
         touch(keys, MotionEvent.ACTION_MOVE, listOf(rimAt(keys, 80.0)))
         touch(keys, MotionEvent.ACTION_MOVE, listOf(rimAt(keys, 100.0)))
-        assertEquals("a roll queues a turn instead of jumping", 0f, keys.wheelRotation, 0.001f)
-        // A fast second flick while the first icon is still gliding is ignored: no fast spin.
-        touch(keys, MotionEvent.ACTION_MOVE, listOf(rimAt(keys, 150.0)))
+        org.robolectric.shadows.ShadowLooper.idleMainLooper(800, java.util.concurrent.TimeUnit.MILLISECONDS)
+        assertEquals("rolling the rim does nothing", 0f, keys.wheelRotation, 0.001f)
+        // One tap of a second finger does nothing either.
+        val tap = Triple(1, keys.width * 0.1f, keys.height * 0.1f)
+        touch(keys, MotionEvent.ACTION_POINTER_DOWN, listOf(hold, tap), 1)
+        touch(keys, MotionEvent.ACTION_POINTER_UP, listOf(hold, tap), 1)
+        org.robolectric.shadows.ShadowLooper.idleMainLooper(800, java.util.concurrent.TimeUnit.MILLISECONDS)
+        assertEquals("a single tap does nothing", 0f, keys.wheelRotation, 0.001f)
+        doubleTapWheel(keys, hold)
         org.robolectric.shadows.ShadowLooper.idleMainLooper(150, java.util.concurrent.TimeUnit.MILLISECONDS)
         assertTrue("the icon glides over slowly", keys.wheelRotation > 0f && keys.wheelRotation < 1f)
         org.robolectric.shadows.ShadowLooper.idleMainLooper(700, java.util.concurrent.TimeUnit.MILLISECONDS)
-        assertEquals("one roll locks exactly one icon", 1f, keys.wheelRotation, 0.001f)
+        assertEquals("a double tap locks exactly one icon", 1f, keys.wheelRotation, 0.001f)
         // Slot 6 now holds the first extra tool, Auto-translate.
         val last = Triple(0, keys.width * 0.86f, keys.height * 0.80f)
         touch(keys, MotionEvent.ACTION_MOVE, listOf(Triple(0, keys.width / 2f, keys.height * 0.97f)))
@@ -1169,20 +1184,16 @@ class KeyboardTest {
     }
 
     @Test
-    fun restingAtTheFanEndKeepsTurningButSlowly() {
+    fun restingAtTheFanEndNoLongerTurnsIt() {
         val keys = ime.keys!!
         layout(root)
         holdBar(keys)
         val wr = minOf(keys.width * 0.47f, keys.height * 0.80f)
         val end = Triple(0, keys.width / 2f + wr * 0.7f, keys.height - wr * 0.06f)
         touch(keys, MotionEvent.ACTION_MOVE, listOf(end))
-        org.robolectric.shadows.ShadowLooper.idleMainLooper(300, java.util.concurrent.TimeUnit.MILLISECONDS)
-        assertTrue("the first icon is on its way", keys.wheelRotation > 0f && keys.wheelRotation < 1f)
-        org.robolectric.shadows.ShadowLooper.idleMainLooper(2100, java.util.concurrent.TimeUnit.MILLISECONDS)
-        assertTrue("it keeps turning, one locked icon at a time (${keys.wheelRotation})", keys.wheelRotation >= 3f && keys.wheelRotation <= 4f)
-        // Lifting at the end runs nothing.
+        org.robolectric.shadows.ShadowLooper.idleMainLooper(2400, java.util.concurrent.TimeUnit.MILLISECONDS)
+        assertEquals("it stays where it is", 0f, keys.wheelRotation, 0.001f)
         touch(keys, MotionEvent.ACTION_UP, listOf(end))
-        assertEquals(View.VISIBLE, keys.visibility)
     }
 
     private fun chipTexts(): List<String> {

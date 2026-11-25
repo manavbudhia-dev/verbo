@@ -80,6 +80,8 @@ class Store(context: Context) {
     /** Key style, one of SHAPES. "raised" is a 3D key that sinks when pressed; "flat" shows letters only. */
     var keyShape: String get() = str("key_shape", "soft"); set(v) = put("key_shape", v)
     /** Smart touch: near a border between two letters, the one likelier to come next in the word gets the tap. */
+    /** Translation models download on Wi-Fi only; off by default, so offline translation also gets ready on mobile data. */
+    var modelsWifiOnly: Boolean get() = bool("models_wifi_only", false); set(v) = put("models_wifi_only", v)
     var smartTouch: Boolean get() = bool("smart_touch", true); set(v) = put("smart_touch", v)
     /** Emoji picked lately, newest first, for the emoji panel's first tab. */
     var recentEmoji: List<String>
@@ -129,6 +131,12 @@ class Store(context: Context) {
         if (app.isNullOrEmpty()) return null
         return try { JSONObject(str("auto_translate", "{}")).optString(app).takeIf { it in ALL_LANGUAGES } } catch (e: Exception) { null }
     }
+
+    /** Every language some app auto-translates into. */
+    fun autoTranslateLanguages(): List<String> = try {
+        val o = JSONObject(str("auto_translate", "{}"))
+        o.keys().asSequence().map { o.optString(it) }.filter { it in ALL_LANGUAGES }.distinct().toList()
+    } catch (e: Exception) { emptyList() }
 
     fun setAutoTranslate(app: String?, language: String?) {
         if (app.isNullOrEmpty()) return

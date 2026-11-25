@@ -59,7 +59,13 @@ class MessageListener : NotificationListenerService() {
             // A foreign message is translated on the phone first: instant and free once the model is there.
             val quick = if (skill.name.equals("Understand any language", true)) {
                 val from = Acts.foreignLanguage(text)?.takeIf { it != "another language" }
-                if (from == null) null else Offline.quick(text, "English")?.takeIf { it != text }?.let { ActionResult("From $from\n$it", null) }
+                // A missing language model is downloaded now (once) rather than skipped: without it a phone with
+                // no API key, or a slow connection, would never translate.
+                val code = Offline.sourceCode(text)
+                Offline.wifiOnly = store.modelsWifiOnly
+                if (from == null || code == null) null
+                else (Offline.quickFrom(text, code, "English") ?: Offline.translateWaiting(text, code, "English"))
+                    ?.takeIf { it != text }?.let { ActionResult("From $from\n$it", null) }
             } else null
             val result = quick ?: try {
                 engine.run(Ai.skillTask(skill.instruction), Ai.userMessage("", text), web = false, tools = emptyList(), label = skill.name)

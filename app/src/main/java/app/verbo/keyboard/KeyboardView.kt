@@ -649,9 +649,12 @@ class KeyboardView(
         return dist >= wheelR * 0.90f && dist <= wheelR * 1.25f
     }
 
-    /** -1 / +1 when the finger rests low at the fan's left / right end: the ring keeps turning that way. */
+    /**
+     * -1 / +1 when the finger rests low at the fan's left / right end. Off now: the ring turns only on a double
+     * tap (so it never turns by accident), and the ends are ordinary slots again.
+     */
     private fun edgeAt(x: Float, y: Float): Int {
-        if (!wheelTurns) return 0
+        if (!wheelTurns || !TURN_BY_DRAG) return 0
         val dx = x - wheelCx
         val dy = wheelCy - y
         val dist = kotlin.math.hypot(dx, dy)
@@ -762,7 +765,7 @@ class KeyboardView(
         val label = when {
             entry >= 0 -> wheelItems[entry].label
             hint != null -> hint
-            turns -> "Roll the rim for more tools"
+            turns -> "Double-tap with another finger for more tools"
             else -> "Slide to choose · release to cancel"
         }
         val color = if (entry >= 0 || hint != null) WheelLook.blue else WheelLook.ink
@@ -784,8 +787,21 @@ class KeyboardView(
         return Pair(wheelCx + (wheelR * 0.74f * kotlin.math.cos(angle)).toFloat(), wheelCy - (wheelR * 0.74f * kotlin.math.sin(angle)).toFloat())
     }
 
+    /** When another finger last tapped while the wheel was up: two taps close together turn it. */
+    private var wheelTapAt = 0L
+
     private fun down(id: Int, x: Float, y: Float) {
-        if (wheelOpen) return // other fingers are ignored while the wheel is up
+        if (wheelOpen) {
+            // The finger holding the wheel stays put; a second finger double-tapping anywhere turns the ring one step.
+            if (id != wheelPointer && wheelTurns) {
+                val now = android.os.SystemClock.uptimeMillis()
+                if (wheelTapAt > 0 && now - wheelTapAt < DOUBLE_TAP_MS) {
+                    wheelTapAt = 0L
+                    if (spin.turn(1)) { wheelPick = wheelAt(wheelX, wheelY); listener?.onPress(Type.MODE) }
+                } else wheelTapAt = now
+            }
+            return
+        }
         if (keyAt(x, y) == null) return
         // A second finger landing means the first key was meant: commit it now, in order.
         // Committing can switch the layout (space in the symbols page), which rebuilds the keys and
@@ -889,7 +905,7 @@ class KeyboardView(
                     wheelX = e.getX(i)
                     wheelY = e.getY(i)
                     // Rolling the rim turns the ring one icon at a time, following the finger's direction.
-                    if (wheelTurns && onBezel(wheelX, wheelY)) {
+                    if (TURN_BY_DRAG && wheelTurns && onBezel(wheelX, wheelY)) {
                         val a = fanAngle(wheelX, wheelY)
                         if (!rimLastAngle.isNaN()) spin.drag(a - rimLastAngle)
                         rimLastAngle = a
@@ -954,6 +970,9 @@ class KeyboardView(
     companion object {
         /** How far the middle letter row sits in from each side, in keys (half a key would be 0.5). */
         const val INSET = 0.42f
+        /** The wheel turns on a second finger's double tap, not by sliding along the rim or resting at an end. */
+        const val TURN_BY_DRAG = false
+        const val DOUBLE_TAP_MS = 350L
         /** Smart touch reaches this share of a key into the neighbour sideways, and this share of a row up or down. */
         const val SMART_BAND_X = 0.3f
         const val SMART_BAND_Y = 0.22f

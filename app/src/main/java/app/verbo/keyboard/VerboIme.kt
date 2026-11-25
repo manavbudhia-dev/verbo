@@ -115,8 +115,10 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         super.onCreate()
         store = Store(this)
         fb = Feedback(this)
-        // Translation models for your languages download quietly on Wi-Fi, so translating is instant and free.
-        try { Offline.prefetch(store.languages) } catch (e: Throwable) { }
+        // Translation models for your languages (and every auto-translate language) download quietly, on mobile data
+        // too unless Wi-Fi only is set, so translating is instant, free and works with a weak connection.
+        Offline.wifiOnly = store.modelsWifiOnly
+        try { Offline.prefetch((store.languages + store.autoTranslateLanguages()).distinct()) } catch (e: Throwable) { }
         MessageListener.onIncoming = { ready -> onIncomingMessage(ready) }
         Thread { try { dictionary.load(assets.open("words.txt")) } catch (e: Exception) { } }.start()
         main.postDelayed(autoSync, Sync.EVERY_MS)
@@ -1056,7 +1058,10 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         showStatus("Translating from $from…")
         val token = ++generation
         worker.execute {
+            Offline.wifiOnly = store.modelsWifiOnly
+            val code = Offline.sourceCode(message)
             val done = Offline.quick(message, "English")
+                ?: if (code != null && (store.activeKey.isBlank() || !Offline.online(this))) Offline.translateWaiting(message, code, "English", 60) else null
             main.post {
                 if (token != generation) return@post
                 busy = false
@@ -2089,7 +2094,10 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
             showStatus("Into $one…")
             val token = ++generation
             worker.execute {
+                Offline.wifiOnly = store.modelsWifiOnly
+                val code = Offline.sourceCode(text)
                 val done = Offline.quick(text, one) ?: Hinglish.quick(store, text, one) { dictionary.contains(it) }
+                    ?: if (code != null && (store.activeKey.isBlank() || !Offline.online(this))) Offline.translateWaiting(text, code, one, 60) else null
                 main.post {
                     if (token != generation) return@post
                     busy = false
@@ -2137,7 +2145,7 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         autoLang = language
         lastAuto = ""
         store.setAutoTranslate(currentInputEditorInfo?.packageName, language)
-        if (language != null) try { Offline.prefetch(listOf(language)) } catch (e: Throwable) { }
+        if (language != null) try { Offline.wifiOnly = store.modelsWifiOnly; Offline.prefetch(listOf(language)) } catch (e: Throwable) { }
         main.removeCallbacks(autoRun)
         refreshMode()
         showTyping()
@@ -2179,7 +2187,10 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
 
     private fun autoTranslateNow() {
         val language = autoLang ?: return
-        if (busy || listening || panel?.visibility == View.VISIBLE || isPasswordField()) return
+        if (isPasswordField()) return
+        // Busy with something else (an earlier translation, voice, a panel): try again shortly instead of giving
+        // up, which used to leave auto-translate silent until the next keystroke.
+        if (busy || listening || panel?.visibility == View.VISIBLE) { main.removeCallbacks(autoRun); main.postDelayed(autoRun, 800); return }
         val target = readTarget() ?: return
         val text = target.text
         // Nothing to do for an empty field, for text we just produced, or for a selection the user is working on.
@@ -2187,14 +2198,23 @@ open class VerboIme : InputMethodService(), KeyboardView.Listener {
         // On the phone first: instant and free once the language's model is downloaded.
         busy = true
         val token = ++generation
+        // Only when it takes a moment (a download or the AI service): an instant on-phone result shows no flicker.
+        main.postDelayed({ if (busy && token == generation) showStatus("→ $language…") }, 400)
         worker.execute {
+            Offline.wifiOnly = store.modelsWifiOnly
+            val code = Offline.sourceCode(text)
+            val noKey = store.activeKey.isBlank()
+            // With no API key, or no connection fast enough for the service, the language model is downloaded
+            // (once) and waited for: slower the first time, then instant.
             val done = Offline.quick(text, language) ?: Hinglish.quick(store, text, language) { dictionary.contains(it) }
+                ?: if (code != null && (noKey || !Offline.online(this))) Offline.translateWaiting(text, code, language, 60) else null
             main.post {
                 if (token != generation) return@post
                 busy = false
                 val learn = if (Hinglish.isHinglish(text, { dictionary.contains(it) })) Hinglish.LEARN else ""
                 if (done != null) applyAuto(target, text, ActionResult(done, null), language)
-                else if (store.activeKey.isBlank()) showStatus("Auto-translate needs your API key", "Set up" to { openApp() })
+                else if (!Offline.online(this)) showStatus("No connection, and the $language model isn't downloaded yet")
+                else if (store.activeKey.isBlank()) showStatus("Auto-translate needs your API key for this text", "Set up" to { openApp() })
                 else launch("→ $language…", Ai.autoTranslateTask(language) + learn, text, connected = false) { result -> applyAuto(target, text, Hinglish.learn(store, result), language) }
             }
         }

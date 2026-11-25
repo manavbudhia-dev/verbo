@@ -100,6 +100,9 @@ object Offline {
 
     // ---------- instant translation ----------
 
+    /** Download translation models on Wi-Fi only (a setting); by default mobile data is used too, so translation works away from Wi-Fi. */
+    @Volatile var wifiOnly = false
+
     private val clients = HashMap<String, com.google.mlkit.nl.translate.Translator>()
     @Volatile private var downloaded: Set<String>? = null
     private val fetching = java.util.Collections.synchronizedSet(HashSet<String>())
@@ -143,7 +146,32 @@ object Offline {
         }
     } catch (e: Throwable) { null }
 
-    /** Downloads the translation models for these languages in the background, on Wi-Fi only. */
+    /** True when every model needed for [from] -> [target] is on the phone. */
+    fun ready(from: String, target: String): Boolean {
+        val to = languageCode(target) ?: return false
+        val have = downloadedModels() + TranslateLanguage.ENGLISH
+        return from in have && to in have
+    }
+
+    /**
+     * Like [quickFrom], but a missing model is downloaded first (about 30 MB, once) and waited for, up to
+     * [waitSeconds]. For background work, such as an incoming message, where waiting beats paying for a request.
+     */
+    fun translateWaiting(text: String, from: String, target: String, waitSeconds: Long = 90): String? = try {
+        val to = languageCode(target)
+        if (to == null) null else if (from == to) text else {
+            if (!ready(from, target)) {
+                val manager = RemoteModelManager.getInstance()
+                val conditions = if (wifiOnly) DownloadConditions.Builder().requireWifi().build() else DownloadConditions.Builder().build()
+                for (code in listOf(from, to).distinct().filter { it != TranslateLanguage.ENGLISH })
+                    Tasks.await(manager.download(TranslateRemoteModel.Builder(code).build(), conditions), waitSeconds, TimeUnit.SECONDS)
+                downloaded = null
+            }
+            quickFrom(text, from, target)
+        }
+    } catch (e: Throwable) { null }
+
+    /** Downloads the translation models for these languages in the background (on Wi-Fi only when [wifiOnly]). */
     fun prefetch(languages: List<String>) = fetch(languages.mapNotNull { languageCode(it) } + TranslateLanguage.ENGLISH + TranslateLanguage.HINDI)
 
     private fun fetch(codes: List<String>) {
@@ -152,9 +180,9 @@ object Offline {
         Thread {
             try {
                 val manager = RemoteModelManager.getInstance()
-                val wifi = DownloadConditions.Builder().requireWifi().build()
+                val conditions = if (wifiOnly) DownloadConditions.Builder().requireWifi().build() else DownloadConditions.Builder().build()
                 for (code in need) try {
-                    Tasks.await(manager.download(TranslateRemoteModel.Builder(code).build(), wifi), 10, TimeUnit.MINUTES)
+                    Tasks.await(manager.download(TranslateRemoteModel.Builder(code).build(), conditions), 10, TimeUnit.MINUTES)
                 } catch (e: Throwable) { }
             } catch (e: Throwable) {
             } finally {

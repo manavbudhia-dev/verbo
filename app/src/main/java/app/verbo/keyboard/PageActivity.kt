@@ -315,6 +315,8 @@ class PageActivity : Activity() {
         note(column, "Polish, Shorter, Formal and Casual can run on Gemini Nano on phones that have it, and translation into one language runs on downloaded models. That is free, private and works offline. Anything else, or anything with copied text, still uses your AI service.")
         val status = ui.text("Checking…", 14f, ui.muted).apply { setPadding(ui.dp(2), 0, 0, ui.dp(8)) }
         column.addView(ui.rows(ui.row(R.drawable.ic_zap, "Use on-device AI for small jobs", "Falls back to your AI service when it can't", ui.toggle(store.onDevice) { store.onDevice = it })))
+        column.addView(ui.rows(ui.row(R.drawable.ic_download, "Language models on Wi-Fi only", "Off: they also download on mobile data (about 30 MB per language, once)",
+            ui.toggle(store.modelsWifiOnly) { store.modelsWifiOnly = it; Offline.wifiOnly = it })))
         column.addView(status)
         Thread { val s = Offline.status(this); runOnUiThread { status.text = s } }.start()
         column.addView(ui.button("Download offline models", R.drawable.ic_upload) {
